@@ -35,7 +35,7 @@ class AlpacaBroker(BrokerAdapter):
     # Common crypto assets supported by Alpaca (single-ticker form)
     _CRYPTO_TICKERS = {
         "BTC", "ETH", "LTC", "BCH", "LINK", "UNI", "AAVE", "SOL", "ADA", "DOT",
-        "AVAX", "MATIC", "DOGE", "SHIB", "XRP", "ETC", "ALGO", "FIL", "XTZ",
+        "AVAX", "MATIC", "POL", "DOGE", "SHIB", "XRP", "ETC", "ALGO", "FIL", "XTZ",
         "TRX", "ATOM", "MANA", "SAND", "AXS", "GRT", "FTM", "ICP", "NEAR",
         "HBAR", "VET", "THETA", "EOS", "CHZ", "BAT", "ZIL", "DASH", "NEO",
         "LRC", "SKL", "CELO", "KNC", "SNX", "YFI", "BAL", "SUSHI", "1INCH",
@@ -112,6 +112,11 @@ class AlpacaBroker(BrokerAdapter):
         sym = symbol.upper()
         if "/" in sym or sym.endswith("-USD") or sym.endswith("USDT"):
             return True
+        # Handle BTCUSD format (no dash/slash) — check base against known tickers
+        if sym.endswith("USD") and not sym.endswith("USDT"):
+            base = sym[:-3]
+            if base in self._CRYPTO_TICKERS:
+                return True
         base = sym.replace("-USD", "").replace("USDT", "").replace("/USD", "")
         return base in self._CRYPTO_TICKERS
 
@@ -124,6 +129,10 @@ class AlpacaBroker(BrokerAdapter):
             return sym.replace("-USD", "/USD")
         if sym.endswith("USDT"):
             return sym.replace("USDT", "/USD")
+        if sym.endswith("USD") and not sym.endswith("USDT"):
+            base = sym[:-3]
+            if base in self._CRYPTO_TICKERS:
+                return f"{base}/USD"
         return f"{sym}/USD"
 
     def get_price(self, symbol: str) -> float:
@@ -139,8 +148,9 @@ class AlpacaBroker(BrokerAdapter):
                 price = float(trade.get("p", 0))
                 if price:
                     return price
-            except Exception:
-                pass
+                logger.warning(f"Alpaca crypto trade price empty for {norm} — response: {data}")
+            except Exception as exc:
+                logger.warning(f"Alpaca crypto trade fetch failed for {norm}: {exc}")
             # Fallback: use last quote midpoint
             url = f"{self._data_url}/v1beta3/crypto/us/latest/quotes"
             try:
@@ -153,7 +163,8 @@ class AlpacaBroker(BrokerAdapter):
                 if bid and ask:
                     return (bid + ask) / 2
                 return bid or ask or 0.0
-            except Exception:
+            except Exception as exc:
+                logger.warning(f"Alpaca crypto quote fetch failed for {norm}: {exc}")
                 return 0.0
 
         # Stock path
@@ -164,17 +175,23 @@ class AlpacaBroker(BrokerAdapter):
             data = response.json()
             trade = data.get("trade", {})
             return float(trade.get("p", 0))  # 'p' is price
-        except Exception:
+        except Exception as exc:
+            logger.warning(f"Alpaca stock trade fetch failed for {symbol}: {exc}")
             # Fallback: use last quote midpoint
             url = f"{self._data_url}/v2/stocks/{symbol}/quotes/latest"
-            response = self._session.get(url, timeout=10)
-            data = response.json()
-            quote = data.get("quote", {})
-            bid = float(quote.get("bp", 0))
-            ask = float(quote.get("ap", 0))
-            if bid and ask:
-                return (bid + ask) / 2
-            return bid or ask or 0.0
+            try:
+                response = self._session.get(url, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                quote = data.get("quote", {})
+                bid = float(quote.get("bp", 0))
+                ask = float(quote.get("ap", 0))
+                if bid and ask:
+                    return (bid + ask) / 2
+                return bid or ask or 0.0
+            except Exception as exc2:
+                logger.warning(f"Alpaca stock quote fetch failed for {symbol}: {exc2}")
+                return 0.0
 
     def place_order(self, order: Order) -> FillResult:
         if not self._api_key:
