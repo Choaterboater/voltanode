@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from news.fetcher import NewsFetcher
+from news.models import NewsArticle
 from news.sentiment import SentimentEngine
 from news.storage import NewsStorage
 
@@ -179,6 +180,35 @@ async def news_status() -> Dict[str, Any]:
         "vader_available": engine._get_vader() is not None,
         "ollama_available": ollama_available,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.post("/analyze")
+async def analyze_headline(
+    headline: str,
+    summary: str = "",
+    source: str = "manual",
+    symbols: List[str] = Query(default_factory=list),
+) -> Dict[str, Any]:
+    """Analyze sentiment of a raw headline (no Alpaca required)."""
+    syms = list(symbols) if symbols else []
+    article = NewsArticle(
+        id="manual-" + datetime.now(timezone.utc).isoformat(),
+        headline=headline,
+        summary=summary,
+        source=source,
+        symbols=syms,
+    )
+    engine = _get_engine()
+    # If no symbols provided, analyze generically with a placeholder
+    if syms:
+        results = engine.analyze(article)
+    else:
+        results = engine.analyze(article, symbol="GENERAL")
+    return {
+        "headline": headline,
+        "symbols": syms or ["GENERAL"],
+        "results": [r.to_dict() for r in results],
     }
 
 

@@ -98,7 +98,10 @@ class SentimentEngine:
 
         Returns None if no provider is configured or the call fails.
         """
-        if not self.llm_provider or not self.llm_api_key:
+        if not self.llm_provider:
+            return None
+        # Ollama runs locally and does not need an API key
+        if not self.llm_api_key and self.llm_provider.lower() != "ollama":
             return None
 
         prompt = self._build_prompt(article, symbol)
@@ -278,14 +281,18 @@ class SentimentEngine:
             # Decide whether to run LLM
             run_llm = False
             if self.llm_provider:
-                if self.hybrid_mode and vader_result:
-                    # Run LLM if VADER is uncertain
-                    if vader_result.confidence < self.hybrid_threshold:
+                if self.hybrid_mode:
+                    if vader_result:
+                        # Run LLM if VADER is uncertain
+                        if vader_result.confidence < self.hybrid_threshold:
+                            run_llm = True
+                        # Run LLM if sentiment is near-neutral (borderline)
+                        if abs(vader_result.compound_score) < 0.15:
+                            run_llm = True
+                    else:
+                        # VADER not available — fall back to LLM
                         run_llm = True
-                    # Run LLM if sentiment is near-neutral (borderline)
-                    if abs(vader_result.compound_score) < 0.15:
-                        run_llm = True
-                elif not self.hybrid_mode:
+                else:
                     run_llm = True
 
             if run_llm:
