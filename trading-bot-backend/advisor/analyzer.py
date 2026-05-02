@@ -126,11 +126,13 @@ class SymbolAnalyzer:
             if asset_type == "crypto":
                 df = await self.market_data.get_crypto_ohlcv(symbol, days=lookback_days)
             else:
-                period_map = {30: "1mo", 90: "3mo", 180: "6mo", 365: "1y"}
+                period_map = {7: "5d", 28: "1mo", 90: "3mo", 180: "6mo", 365: "1y"}
                 period = period_map.get(lookback_days, "1y")
                 df = self.market_data.get_stock_ohlcv(symbol, period=period)
             if df is not None and not df.empty:
-                return self._normalise_df(df)
+                df = self._normalise_df(df)
+                df.attrs["lookback_days"] = lookback_days
+                return df
         except Exception:
             pass
 
@@ -187,6 +189,7 @@ class SymbolAnalyzer:
             "volume": volumes,
         })
         df.attrs["symbol"] = symbol
+        df.attrs["lookback_days"] = periods
         return df
 
     # ------------------------------------------------------------------
@@ -443,10 +446,12 @@ class SymbolAnalyzer:
             entry_low = current_price - atr * 0.5
             entry_high = current_price + atr * 0.5
 
-        # Time horizon
-        if confidence > 80 and atr_pct < 0.02:
+        # Time horizon based on user's selected lookback period
+        # (passed via data.attrs set in _normalise_df / _synthetic_data)
+        lookback_days = getattr(data, 'attrs', {}).get('lookback_days', 90)
+        if lookback_days <= 7:
             time_horizon = "short_term"
-        elif confidence > 60 and atr_pct < 0.04:
+        elif lookback_days <= 28:
             time_horizon = "medium_term"
         else:
             time_horizon = "long_term"

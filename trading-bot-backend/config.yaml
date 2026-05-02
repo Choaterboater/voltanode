@@ -303,8 +303,8 @@ strategies:
       volume_trend:
         weight: 0.15
 live_mode:
-  enabled: false
-  default_broker: mock
+  enabled: true
+  default_broker: alpaca
   confirmation_required: true
 brokers:
   binance:
@@ -315,8 +315,8 @@ brokers:
   alpaca:
     testnet: false
     paper: true
-    api_key_encrypted: gAAAAABp9XqpHMk4WuaoetUDHj6HcBWf3ba--O8WTykBhC7li7LX---a8QDtmwt3zjlult-OMT4By0-pu6j_1P5fyXixyKApCgYrSXnmy8FEZbMezOTJq0g=
-    api_secret_encrypted: gAAAAABp9XqpMzHyAYg8nbI-acSaKkfZ3diI8A3PhHTJQnuFi4nRxE9GzVAvNdQvTV7EJUw9nob5F6FYNDdnUElRNg79la2zOv5G14EUQ6tElZ4YaZMS6PMw4dB-V5FoTkFy8GfXuwY3
+    api_key_encrypted: gAAAAABp9ndtnGe6GFRN9RH8Gbdkl4TPu918altSwITn72g9XxvB4xzLNzH5e2BiKdtIoB7pxMjkS4AepYhZ4RoGF0Cs5NF8IrQenvuQ0_y_aQwo0qAP6CI=
+    api_secret_encrypted: gAAAAABp9ndtJ8bnvGdahoVH7VSOcEiKmy4zygywyxX_YOAwbdxaHmmGkPlfe4T7dUjRB6ksFVFfdPfRmfogoKnjCEodttcQhLKhER9_f7gMnSg4EpX_94zsvaazxZCgTNtAzCo577lk
   mock:
     testnet: false
     paper: false
@@ -331,3 +331,11 @@ safety:
   max_orders_per_minute: 10
   allowed_symbols: []
   blocked_symbols: []
+  webhook_url: ''
+  webhook_headers: {}
+  smtp_host: ''
+  smtp_port: 587
+  smtp_user: ''
+  smtp_password_encrypted: ''
+  alert_email_from: ''
+  alert_email_to: ''

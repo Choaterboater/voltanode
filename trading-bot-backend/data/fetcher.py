@@ -433,8 +433,8 @@ class MarketData:
         """
         ticker = normalize_stock_symbol(ticker)
 
-        # Check cache first
-        cached = self.cache.get_ohlcv(ticker, interval)
+        # Check cache first (key includes period to avoid stale data across ranges)
+        cached = self.cache.get_ohlcv(ticker, f"{interval}_{period}")
         if cached is not None:
             return cached
 
@@ -472,7 +472,7 @@ class MarketData:
             df = df[["timestamp", "open", "high", "low", "close", "volume"]]
             df.attrs["symbol"] = ticker
 
-            self.cache.store_ohlcv(df, ticker, interval)
+            self.cache.store_ohlcv(df, ticker, f"{interval}_{period}")
             return df
 
         except Exception as e:
