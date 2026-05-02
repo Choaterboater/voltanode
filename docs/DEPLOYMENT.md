@@ -1,200 +1,125 @@
 # Deployment Guide
 
-## Frontend Deployment
+## Quick Start (Docker Compose)
 
-### Build the Production Bundle
+The fastest way to deploy both frontend and backend together:
 
 ```bash
-cd app-qa-team
-npm install
-npm run build
+# 1. Set your encryption key
+export VOLTANODE_SECRET_KEY="your-secure-random-string"
+
+# 2. Build and start both services
+docker-compose up --build -d
+
+# 3. Check health
+curl http://localhost:8000/health
+# Frontend: http://localhost
+# Backend API: http://localhost:8000
 ```
 
-This creates a `dist/` folder containing:
-- `index.html`
-- `assets/index-*.js` (bundled JavaScript)
-- `assets/index-*.css` (bundled CSS)
-
-### Deployment Targets
-
-#### Static Hosting (Recommended)
-
-The frontend uses `HashRouter`, making it ideal for static file hosts:
-
-**Vercel / Netlify / Cloudflare Pages:**
+To stop:
 ```bash
-# Vercel
-npx vercel --prod dist/
-
-# Netlify
-npx netlify deploy --prod --dir=dist
-
-# Cloudflare Pages
-npx wrangler pages deploy dist/
-```
-
-**AWS S3 + CloudFront:**
-```bash
-aws s3 sync dist/ s3://your-bucket-name --delete
-aws cloudfront create-invalidation --distribution-id YOUR_DIST_ID --paths "/*"
-```
-
-**GitHub Pages:**
-Push the `dist/` folder contents to the `gh-pages` branch or use `gh-pages` npm package.
-
-#### Docker
-
-```dockerfile
-# Dockerfile
-FROM nginx:alpine
-COPY dist/ /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
-```
-
-```nginx
-# nginx.conf — SPA fallback for HashRouter
-server {
-    listen 80;
-    root /usr/share/nginx/html;
-    index index.html;
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-```
-
-### Base Path
-
-The Vite config uses `base: './'` for relative paths. If deploying to a subdirectory, update:
-
-```ts
-// vite.config.ts
-export default defineConfig({
-  base: '/trading-bot/',  // Change if needed
-  // ...
-});
+docker-compose down
 ```
 
 ---
 
-## Backend Deployment
+## Manual Deployment
 
-### Requirements
+### Frontend
 
-- Python 3.11+
-- All dependencies from `requirements.txt`
-- `config.yaml` in the working directory
+```bash
+cd newbuild/app
+npm install
+npm run build
+```
 
-### Run with Uvicorn Directly
+Builds to `newbuild/app/dist/`.
+
+#### Docker (Frontend Only)
+
+```bash
+cd newbuild/app
+docker build -t voltanode-frontend .
+docker run -p 80:80 voltanode-frontend
+```
+
+### Backend
 
 ```bash
 cd trading-bot-backend
 pip install -r requirements.txt
-uvicorn api.main:app --host 0.0.0.0 --port 8000
-```
-
-Or use the provided entry point:
-
-```bash
 python run.py --mode api --host 0.0.0.0 --port 8000
 ```
 
-### Docker
-
-```dockerfile
-# Dockerfile.backend
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-EXPOSE 8000
-
-CMD ["python", "run.py", "--mode", "api", "--host", "0.0.0.0", "--port", "8000"]
-```
+#### Docker (Backend Only)
 
 ```bash
-docker build -f Dockerfile.backend -t trading-bot-api .
-docker run -p 8000:8000 trading-bot-api
+cd trading-bot-backend
+docker build -t voltanode-backend .
+docker run -p 8000:8000 -e VOLTANODE_SECRET_KEY=your-key voltanode-backend
 ```
 
-### Environment Configuration for Production
+---
 
-Set environment variables or update `config.yaml`:
+## Production Configuration
 
-```yaml
-api:
-  host: "0.0.0.0"
-  port: 8000
-  cors_origins:
-    - "https://your-frontend-domain.com"
-    - "https://app.your-domain.com"
-
-app:
-  log_level: "WARNING"
-  json_logs: true
-  data_dir: "/var/lib/trading-bot/data"
-
-risk:
-  max_drawdown_pct: 0.05
-  max_position_size_pct: 0.10
-```
-
-### Production Checklist
-
-- [ ] Set `BOT_API__CORS_ORIGINS` to your frontend domain(s) only
-- [ ] Change default log level from `INFO` to `WARNING`
-- [ ] Mount persistent volume for `./data` directory
-- [ ] Run behind a reverse proxy (nginx, traefik, or cloud load balancer)
-- [ ] Enable HTTPS (Let's Encrypt, Cloudflare, or AWS ACM)
-- [ ] Configure firewall rules (only expose 8000 to the reverse proxy)
-- [ ] Set up health check monitoring on `/health`
-- [ ] Use a process manager (systemd, supervisor, or Kubernetes) for auto-restart
-
-### systemd Service Example
-
-```ini
-# /etc/systemd/system/trading-bot.service
-[Unit]
-Description=Paper Trading Bot API
-After=network.target
-
-[Service]
-Type=simple
-User=tradingbot
-WorkingDirectory=/opt/trading-bot-backend
-Environment=BOT_API__PORT=8000
-Environment=BOT_APP__LOG_LEVEL=WARNING
-ExecStart=/opt/trading-bot-backend/venv/bin/python run.py --mode api
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
+Copy and customize the production config:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable trading-bot
-sudo systemctl start trading-bot
+cp trading-bot-backend/config.production.yaml trading-bot-backend/config.yaml
+# Edit CORS origins, log level, and safety limits
 ```
 
-### Reverse Proxy (nginx)
+Key changes for production:
+- `api.cors_origins`: Set to your frontend domain(s) only
+- `app.log_level`: Change to `WARNING`
+- `app.data_dir`: Use a persistent volume path (`/app/data` in Docker)
+- `risk.*`: Tighten limits (examples in `config.production.yaml`)
 
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name api.your-domain.com;
+Environment variables override config values:
+- `BOT_API__CORS_ORIGINS`
+- `BOT_APP__LOG_LEVEL`
+- `BOT_APP__DATA_DIR`
+- `VOLTANODE_SECRET_KEY` (required for API key encryption)
 
-    location / {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
+---
+
+## Architecture
+
 ```
+┌─────────────┐      ┌─────────────┐
+│   Nginx     │─────▶│  Frontend   │
+│   (port 80) │      │  (React)    │
+└─────────────┘      └─────────────┘
+        │
+        │ /api/* proxy
+        ▼
+┌─────────────┐
+│   FastAPI   │
+│  (port 8000)│
+└─────────────┘
+```
+
+---
+
+## Health Checks
+
+- Backend: `GET /health` → `{"status":"ok"}`
+- Docker Compose includes automatic health checks
+
+---
+
+## Troubleshooting
+
+**Frontend shows "Backend offline"**
+- Check `api.cors_origins` includes your frontend URL
+- Verify backend is running: `curl http://localhost:8000/health`
+
+**API keys fail to save**
+- Ensure `VOLTANODE_SECRET_KEY` is set
+- Check backend logs for encryption errors
+
+**Build fails**
+- Use Node 20+: `node --version`
+- Clear `node_modules` and reinstall: `rm -rf node_modules && npm install`

@@ -315,8 +315,8 @@ brokers:
   alpaca:
     testnet: false
     paper: true
-    api_key_encrypted: gAAAAABp9XhdpnmjwIemd0tl2YeCj3OSMOgRVI6AdaW64NPQw3UZ1rwfboqaLjtblwXZje5CBj9ywogLDLp9hqOJu80t8z1PuA==
-    api_secret_encrypted: gAAAAABp9XhdAvvrp-3IKduqVOPHowhedScvW22XFLJhycgIgDAIrqbgVLFxKGaoCot5f93c1_EH8cvecva_X58MprPV3StqyFKkUNIaNKIrSFh9iB0vu7Y=
+    api_key_encrypted: gAAAAABp9XqpHMk4WuaoetUDHj6HcBWf3ba--O8WTykBhC7li7LX---a8QDtmwt3zjlult-OMT4By0-pu6j_1P5fyXixyKApCgYrSXnmy8FEZbMezOTJq0g=
+    api_secret_encrypted: gAAAAABp9XqpMzHyAYg8nbI-acSaKkfZ3diI8A3PhHTJQnuFi4nRxE9GzVAvNdQvTV7EJUw9nob5F6FYNDdnUElRNg79la2zOv5G14EUQ6tElZ4YaZMS6PMw4dB-V5FoTkFy8GfXuwY3
   mock:
     testnet: false
     paper: false

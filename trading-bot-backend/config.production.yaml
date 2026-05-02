@@ -1,0 +1,74 @@
+# Production configuration for VoltaNode
+# Mount this over config.yaml in production
+
+app:
+  name: "VoltaNode"
+  log_level: WARNING
+  json_logs: true
+  data_dir: "/app/data"
+
+engine:
+  tick_interval_seconds: 5.0
+  max_accounts: 10
+  auto_start_strategies: true
+
+market_data:
+  coingecko:
+    enabled: true
+    base_url: "https://api.coingecko.com/api/v3"
+    rate_limit_per_minute: 30
+  yfinance:
+    enabled: true
+  cache:
+    enabled: true
+    ttl_seconds: 300
+    max_entries: 10000
+  default_timeframe: "1h"
+
+risk:
+  max_drawdown_pct: 0.05
+  max_position_size_pct: 0.10
+  max_exposure_per_asset_pct: 0.20
+  default_stop_loss_pct: 0.02
+  default_take_profit_pct: 0.06
+  position_sizing_method: "percentage"
+  position_sizing_value: 0.02
+  fee_rate: 0.001
+  slippage_model: "fixed"
+  slippage_bps: 5.0
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "https://your-domain.com"
+
+backtest:
+  default_initial_balance:
+    USDT: 10000.0
+    USD: 10000.0
+  allow_short: true
+
+live_mode:
+  enabled: false
+  default_broker: "mock"
+  confirmation_required: true
+
+brokers:
+  binance:
+    testnet: true
+    paper: false
+  alpaca:
+    testnet: false
+    paper: true
+  mock:
+    testnet: false
+    paper: false
+
+safety:
+  max_daily_loss_pct: 5.0
+  max_position_size_pct: 10.0
+  max_exposure_pct: 20.0
+  require_confirmation: true
+  kill_switch_on_disconnect: true
+  max_orders_per_minute: 10

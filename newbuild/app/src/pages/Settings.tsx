@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import Layout from '@/components/Layout';
 import Badge from '@/components/Badge';
-import { useSettings, type BrokerConfig } from '@/hooks/useSettings';
+import { useSettings, type BrokerConfig, type TestConnectionResult } from '@/hooks/useSettings';
 import { toast } from 'sonner';
 
 type TabKey = 'brokers' | 'safety' | 'live';

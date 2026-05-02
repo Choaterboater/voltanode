@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router';
 import {
@@ -51,7 +51,7 @@ const defaultStocks: WatchItem[] = [
 ];
 
 function recBadge(rec: WatchItem['recommendation']) {
-  const map: Record<string, { label: string; variant: 'success' | 'danger' | 'warning' | 'default' }> = {
+  const map: Record<string, { label: string; variant: 'success' | 'danger' | 'warning' | 'neutral' }> = {
     strong_buy: { label: 'Strong Buy', variant: 'success' },
     buy: { label: 'Buy', variant: 'success' },
     hold: { label: 'Hold', variant: 'warning' },

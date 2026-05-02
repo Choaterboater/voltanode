@@ -1,0 +1,35 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ./trading-bot-backend
+      dockerfile: Dockerfile
+    container_name: voltanode-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - BOT_API__CORS_ORIGINS=["http://localhost", "http://localhost:80"]
+      - BOT_APP__LOG_LEVEL=INFO
+      - BOT_APP__DATA_DIR=/app/data
+      - VOLTANODE_SECRET_KEY=${VOLTANODE_SECRET_KEY}
+    volumes:
+      - ./trading-bot-backend/data:/app/data
+      - ./trading-bot-backend/config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./newbuild/app
+      dockerfile: Dockerfile
+    container_name: voltanode-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
