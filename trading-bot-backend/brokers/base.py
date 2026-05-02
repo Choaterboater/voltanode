@@ -66,6 +66,20 @@ class BrokerAdapter(ABC):
         ...
 
     @abstractmethod
+    def get_order(self, order_id: str, **kwargs: Any) -> dict:
+        """Get order status by broker order ID.
+
+        Returns a normalized dict with keys:
+        - broker_order_id: str
+        - status: str ("pending", "partial", "filled", "canceled", "rejected")
+        - filled_qty: float
+        - filled_price: float
+        - symbol: str
+        - side: str
+        """
+        ...
+
+    @abstractmethod
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an open order by broker order ID."""
         ...

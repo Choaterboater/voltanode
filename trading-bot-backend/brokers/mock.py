@@ -169,6 +169,7 @@ class MockBroker(BrokerAdapter):
             timestamp=datetime.now(timezone.utc),
             side=order.side,
             realized_pnl=None,
+            broker_order_id=broker_order_id,
         )
 
     def _update_state(self, order: Order, qty: float, price: float, fee: float) -> None:
@@ -216,6 +217,21 @@ class MockBroker(BrokerAdapter):
             }
             for p in self._positions.values()
         ]
+
+    def get_order(self, order_id: str) -> dict:
+        """Get mock order status by broker order ID."""
+        info = self._orders.get(order_id, {})
+        if not info:
+            return {"broker_order_id": order_id, "status": "rejected", "filled_qty": 0.0, "filled_price": 0.0, "symbol": "", "side": ""}
+        order = info["order"]
+        return {
+            "broker_order_id": order_id,
+            "status": "filled",
+            "filled_qty": info.get("filled_qty", 0.0),
+            "filled_price": info.get("filled_price", 0.0),
+            "symbol": order.symbol,
+            "side": order.side.value,
+        }
 
     def cancel_order(self, order_id: str) -> bool:
         self._latency()

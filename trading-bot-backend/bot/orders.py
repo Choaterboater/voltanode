@@ -154,6 +154,7 @@ class FillResult:
     timestamp: datetime
     side: OrderSide
     realized_pnl: float | None = None
+    broker_order_id: str | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert fill result to dictionary."""
@@ -167,6 +168,7 @@ class FillResult:
             "timestamp": self.timestamp.isoformat(),
             "side": self.side.value,
             "realized_pnl": self.realized_pnl,
+            "broker_order_id": self.broker_order_id,
         }
 
 

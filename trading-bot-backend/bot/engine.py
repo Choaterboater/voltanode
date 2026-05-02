@@ -497,6 +497,9 @@ class LiveTradingEngine(PaperTradingEngine):
             )
         self.notifier = notifier
 
+        # Map internal order ID -> broker order ID for live tracking
+        self._broker_order_ids: Dict[str, str] = {}
+
     def execute_order(
         self, order: Order, current_price: float | None = None
     ) -> FillResult:
@@ -538,16 +541,110 @@ class LiveTradingEngine(PaperTradingEngine):
         # 5. Execute via broker
         fill = self.broker.place_order(order)
 
-        # 6. Record fill
-        self.daily_tracker.record(fill)
-        self._fills.append(fill)
-        self._update_portfolio_on_fill(order, fill, portfolio)
-        self.on_fill(fill)
+        # 5a. Track broker order ID for later polling/cancel
+        if fill.broker_order_id:
+            self._broker_order_ids[order.id] = fill.broker_order_id
+
+        # 5b. Always store order locally so it appears in get_orders()
+        self.submit_order(order, order.account_id)
+
+        # 5c. Update order status based on fill result
+        if fill.filled_qty >= order.quantity:
+            order.status = OrderStatus.FILLED
+            order.filled_quantity = fill.filled_qty
+            order.avg_fill_price = fill.filled_price
+            order.fee = fill.fee
+        elif fill.filled_qty > 0:
+            order.status = OrderStatus.PARTIAL
+            order.filled_quantity = fill.filled_qty
+            order.avg_fill_price = fill.filled_price
+            order.fee = fill.fee
+        else:
+            order.status = OrderStatus.PENDING
+
+        # 6. Record fill only if something was actually filled
+        if fill.filled_qty > 0:
+            self.daily_tracker.record(fill)
+            self._fills.append(fill)
+            self._update_portfolio_on_fill(order, fill, portfolio)
+            self.on_fill(fill)
 
         # 7. Post-fill safety check (daily loss limit)
         self._check_safety_after_fill()
 
         return fill
+
+    def cancel_order(self, order_id: str, account_id: str = "default") -> bool:
+        """Cancel an order via the broker in live mode."""
+        broker_id = self._broker_order_ids.get(order_id)
+        if broker_id:
+            try:
+                if self.broker.cancel_order(broker_id):
+                    # Update local state
+                    orders = self._orders.get(account_id, {})
+                    local_order = orders.get(order_id)
+                    if local_order and local_order.status == OrderStatus.PENDING:
+                        local_order.status = OrderStatus.CANCELED
+                    return True
+            except Exception as exc:
+                logging.getLogger("volta.engine").warning(f"Broker cancel failed: {exc}")
+        # Fallback to local cancel if broker cancel fails or no mapping
+        return super().cancel_order(order_id, account_id)
+
+    def get_order_status(self, order_id: str, account_id: str = "default") -> OrderStatus | None:
+        """Get order status, syncing with broker if in live mode."""
+        orders = self._orders.get(account_id, {})
+        local_order = orders.get(order_id)
+        if local_order is None:
+            return None
+
+        broker_id = self._broker_order_ids.get(order_id)
+        if broker_id and self.broker.is_connected():
+            try:
+                broker_info = self.broker.get_order(broker_id)
+                status_str = broker_info.get("status", "pending")
+                status_map = {
+                    "pending": OrderStatus.PENDING,
+                    "partial": OrderStatus.PARTIAL,
+                    "filled": OrderStatus.FILLED,
+                    "canceled": OrderStatus.CANCELED,
+                    "rejected": OrderStatus.REJECTED,
+                }
+                new_status = status_map.get(status_str, OrderStatus.PENDING)
+
+                # If status changed to filled/partial, update local order
+                if new_status in (OrderStatus.FILLED, OrderStatus.PARTIAL):
+                    filled_qty = broker_info.get("filled_qty", 0.0)
+                    filled_price = broker_info.get("filled_price", 0.0)
+                    if filled_qty > local_order.filled_quantity:
+                        # New fill occurred since last check
+                        new_fill_qty = filled_qty - local_order.filled_quantity
+                        fill = FillResult(
+                            order_id=order_id,
+                            symbol=local_order.symbol,
+                            filled_qty=new_fill_qty,
+                            filled_price=filled_price,
+                            fee=0.0,
+                            slippage=0.0,
+                            timestamp=datetime.now(timezone.utc),
+                            side=local_order.side,
+                            realized_pnl=None,
+                            broker_order_id=broker_id,
+                        )
+                        self.daily_tracker.record(fill)
+                        self._fills.append(fill)
+                        portfolio = self.get_portfolio(account_id)
+                        self._update_portfolio_on_fill(local_order, fill, portfolio)
+                        self.on_fill(fill)
+
+                    local_order.filled_quantity = filled_qty
+                    local_order.avg_fill_price = filled_price
+
+                local_order.status = new_status
+            except Exception as exc:
+                logging.getLogger("volta.engine").warning(f"Broker order sync failed: {exc}")
+
+        return local_order.status
 
     def _check_safety_after_fill(self) -> None:
         """Check safety limits after a fill and activate kill switch if needed."""

@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+import logging
 import requests
 
 from bot.config import OrderSide, OrderType
@@ -239,6 +240,8 @@ class AlpacaBroker(BrokerAdapter):
         fee = 0.0  # Alpaca commission-free for equities
         slippage = 0.0
 
+        broker_order_id = data.get("id", "")
+
         # If not yet filled, return zero fill — caller should poll
         if status in ("accepted", "new", "pending_new", "submitted"):
             return FillResult(
@@ -251,6 +254,7 @@ class AlpacaBroker(BrokerAdapter):
                 timestamp=datetime.now(timezone.utc),
                 side=order.side,
                 realized_pnl=None,
+                broker_order_id=broker_order_id,
             )
 
         return FillResult(
@@ -263,6 +267,7 @@ class AlpacaBroker(BrokerAdapter):
             timestamp=datetime.now(timezone.utc),
             side=order.side,
             realized_pnl=None,
+            broker_order_id=broker_order_id,
         )
 
     def get_positions(self) -> List[dict]:
@@ -276,6 +281,28 @@ class AlpacaBroker(BrokerAdapter):
             }
             for p in (data if isinstance(data, list) else [])
         ]
+
+    def get_order(self, order_id: str) -> dict:
+        """Get order status from Alpaca by broker order ID."""
+        data = self._request("GET", f"/v2/orders/{order_id}")
+        status_map = {
+            "new": "pending",
+            "accepted": "pending",
+            "pending_new": "pending",
+            "submitted": "pending",
+            "partially_filled": "partial",
+            "filled": "filled",
+            "canceled": "canceled",
+            "rejected": "rejected",
+        }
+        return {
+            "broker_order_id": data.get("id", order_id),
+            "status": status_map.get(data.get("status", "").lower(), "pending"),
+            "filled_qty": float(data.get("filled_qty", 0)),
+            "filled_price": float(data.get("filled_avg_price", 0) or data.get("price", 0) or 0),
+            "symbol": data.get("symbol", ""),
+            "side": data.get("side", ""),
+        }
 
     def cancel_order(self, order_id: str) -> bool:
         try:

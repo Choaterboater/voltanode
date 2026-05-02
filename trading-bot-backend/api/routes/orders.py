@@ -95,9 +95,15 @@ async def place_order(request: Request, body: OrderRequest) -> OrderResponse:
     if _is_live_mode():
         try:
             fill = engine.execute_order(order)
+            if fill.filled_qty >= order.quantity:
+                status = "filled"
+            elif fill.filled_qty > 0:
+                status = "partial"
+            else:
+                status = "pending"
             return OrderResponse(
                 order_id=order.id,
-                status="filled",
+                status=status,
                 filled_qty=fill.filled_qty,
                 avg_fill_price=fill.filled_price,
                 fee=fill.fee,

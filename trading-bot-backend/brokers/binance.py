@@ -169,6 +169,8 @@ class BinanceBroker(BrokerAdapter):
                 f"Response: {data}"
             )
 
+        broker_order_id = str(data.get("orderId", ""))
+
         # If order is pending, return zero fill — caller should poll
         if status in ("NEW", "PENDING_NEW"):
             return FillResult(
@@ -181,6 +183,7 @@ class BinanceBroker(BrokerAdapter):
                 timestamp=datetime.now(timezone.utc),
                 side=order.side,
                 realized_pnl=None,
+                broker_order_id=broker_order_id,
             )
 
         slippage = abs(avg_price - float(data.get("price", avg_price) or avg_price))
@@ -195,6 +198,7 @@ class BinanceBroker(BrokerAdapter):
             timestamp=datetime.now(timezone.utc),
             side=order.side,
             realized_pnl=None,
+            broker_order_id=broker_order_id,
         )
 
     def get_positions(self) -> List[dict]:
@@ -206,6 +210,32 @@ class BinanceBroker(BrokerAdapter):
             {"symbol": asset, "size": qty, "entry_price": 0.0, "side": "long"}
             for asset, qty in balances.items() if qty > 0 and asset not in ("USDT", "USD", "BUSD")
         ]
+
+    def get_order(self, order_id: str, symbol: str | None = None) -> dict:
+        """Get order status from Binance by broker order ID."""
+        lookup_symbol = self._to_binance_symbol(symbol) if symbol else "BTCUSDT"
+        data = self._request(
+            "GET",
+            "/api/v3/order",
+            params={"symbol": lookup_symbol, "orderId": order_id},
+            signed=True,
+        )
+        status_map = {
+            "NEW": "pending",
+            "PENDING_NEW": "pending",
+            "PARTIALLY_FILLED": "partial",
+            "FILLED": "filled",
+            "CANCELED": "canceled",
+            "REJECTED": "rejected",
+        }
+        return {
+            "broker_order_id": str(data.get("orderId", order_id)),
+            "status": status_map.get(data.get("status", ""), "pending"),
+            "filled_qty": float(data.get("executedQty", 0)),
+            "filled_price": float(data.get("price", 0) or 0),
+            "symbol": symbol or "",
+            "side": data.get("side", "").lower(),
+        }
 
     def cancel_order(self, order_id: str, symbol: str | None = None) -> bool:
         # order_id here is the Binance orderId, not our internal uuid
