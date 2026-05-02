@@ -12,6 +12,7 @@ const BotLab = lazy(() => import('./pages/BotLab'))
 const Settings = lazy(() => import('./pages/Settings'))
 const Advisor = lazy(() => import('./pages/Advisor'))
 const About = lazy(() => import('./pages/About'))
+const Watchlist = lazy(() => import('./pages/Watchlist'))
 
 function PageLoader() {
   return (
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/advisor" element={<Advisor />} />
           <Route path="/about" element={<About />} />
+          <Route path="/watchlist" element={<Watchlist />} />
         </Routes>
       </Suspense>
     </ErrorBoundary>

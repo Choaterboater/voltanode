@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useLocation } from 'react-router';
 import {
   Search,
   Loader2,
@@ -226,10 +227,21 @@ function PriceChart({ chartData }: { chartData: { timestamps: string[]; close: n
 
 // ── Main Advisor Page ──
 export default function Advisor() {
-  const [symbol, setSymbol] = useState('');
-  const [assetType, setAssetType] = useState<'crypto' | 'stock'>('crypto');
+  const location = useLocation();
+  const navState = location.state as { symbol?: string; assetType?: 'crypto' | 'stock' } | null;
+
+  const [symbol, setSymbol] = useState(navState?.symbol || '');
+  const [assetType, setAssetType] = useState<'crypto' | 'stock'>(navState?.assetType || 'crypto');
   const [timeRange, setTimeRange] = useState<TimeRange>('28d');
   const { result, loading, error, analyze } = useAdvisor();
+
+  useEffect(() => {
+    if (navState?.symbol) {
+      analyze(navState.symbol, navState.assetType || 'crypto', rangeToDays(timeRange));
+      // Clear state so refresh doesn't re-trigger
+      window.history.replaceState({}, document.title);
+    }
+  }, []);
 
   const handleAnalyze = async () => {
     if (!symbol.trim()) {

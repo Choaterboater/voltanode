@@ -11,12 +11,14 @@ import {
   Settings,
   Plug,
   Loader2,
+  Eye,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useSettings } from '@/hooks/useSettings';
 
 const navItems = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard },
+  { label: 'Watchlist', path: '/watchlist', icon: Eye },
   { label: 'Advisor', path: '/advisor', icon: Sparkles },
   { label: 'Paper Trading', path: '/paper', icon: Wallet },
   { label: 'Strategies', path: '/strategies', icon: LineChart },
