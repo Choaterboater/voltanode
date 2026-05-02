@@ -32,6 +32,18 @@ class AlpacaBroker(BrokerAdapter):
     DATA_PAPER = "https://data.sandbox.alpaca.markets"
     DATA_LIVE = "https://data.alpaca.markets"
 
+    # Common crypto assets supported by Alpaca (single-ticker form)
+    _CRYPTO_TICKERS = {
+        "BTC", "ETH", "LTC", "BCH", "LINK", "UNI", "AAVE", "SOL", "ADA", "DOT",
+        "AVAX", "MATIC", "DOGE", "SHIB", "XRP", "ETC", "ALGO", "FIL", "XTZ",
+        "TRX", "ATOM", "MANA", "SAND", "AXS", "GRT", "FTM", "ICP", "NEAR",
+        "HBAR", "VET", "THETA", "EOS", "CHZ", "BAT", "ZIL", "DASH", "NEO",
+        "LRC", "SKL", "CELO", "KNC", "SNX", "YFI", "BAL", "SUSHI", "1INCH",
+        "BAND", "APT", "SUI", "SEI", "TIA", "DYM", "STRK", "WLD", "ARB", "OP",
+        "IMX", "GALA", "BLUR", "PEPE", "BONK", "FLOKI", "JUP", "PYTH", "RNDR",
+        "TAO", "ARKM", "PORTAL", "DEGEN",
+    }
+
     def __init__(self, paper: bool = True) -> None:
         self._paper = paper
         self._base_url = self.PAPER_BASE if paper else self.LIVE_BASE
@@ -95,9 +107,56 @@ class AlpacaBroker(BrokerAdapter):
             "BUYING_POWER": float(account.get("buying_power", 0)),
         }
 
+    def _is_crypto_symbol(self, symbol: str) -> bool:
+        """Detect if symbol is a crypto asset."""
+        sym = symbol.upper()
+        if "/" in sym or sym.endswith("-USD") or sym.endswith("USDT"):
+            return True
+        base = sym.replace("-USD", "").replace("USDT", "").replace("/USD", "")
+        return base in self._CRYPTO_TICKERS
+
+    def _normalize_crypto_symbol(self, symbol: str) -> str:
+        """Normalize crypto symbol to Alpaca format (BTC/USD)."""
+        sym = symbol.upper()
+        if "/USD" in sym:
+            return sym
+        if sym.endswith("-USD"):
+            return sym.replace("-USD", "/USD")
+        if sym.endswith("USDT"):
+            return sym.replace("USDT", "/USD")
+        return f"{sym}/USD"
+
     def get_price(self, symbol: str) -> float:
-        """Get latest trade price for a stock symbol."""
-        # Use data API for snapshot
+        """Get latest trade price for a stock or crypto symbol."""
+        if self._is_crypto_symbol(symbol):
+            norm = self._normalize_crypto_symbol(symbol)
+            url = f"{self._data_url}/v1beta3/crypto/us/latest/trades"
+            try:
+                response = self._session.get(url, params={"symbols": norm}, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                trade = data.get("trades", {}).get(norm, {})
+                price = float(trade.get("p", 0))
+                if price:
+                    return price
+            except Exception:
+                pass
+            # Fallback: use last quote midpoint
+            url = f"{self._data_url}/v1beta3/crypto/us/latest/quotes"
+            try:
+                response = self._session.get(url, params={"symbols": norm}, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                quote = data.get("quotes", {}).get(norm, {})
+                bid = float(quote.get("bp", 0))
+                ask = float(quote.get("ap", 0))
+                if bid and ask:
+                    return (bid + ask) / 2
+                return bid or ask or 0.0
+            except Exception:
+                return 0.0
+
+        # Stock path
         url = f"{self._data_url}/v2/stocks/{symbol}/trades/latest"
         try:
             response = self._session.get(url, timeout=10)
@@ -130,8 +189,12 @@ class AlpacaBroker(BrokerAdapter):
             OrderType.STOP_LIMIT: "stop_limit",
         }
 
+        sym = order.symbol.upper()
+        if self._is_crypto_symbol(sym):
+            sym = self._normalize_crypto_symbol(sym)
+
         body = {
-            "symbol": order.symbol.upper(),
+            "symbol": sym,
             "qty": str(order.quantity),
             "side": side_map[order.side],
             "type": type_map.get(order.order_type, "market"),

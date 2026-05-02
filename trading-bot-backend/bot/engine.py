@@ -202,6 +202,15 @@ class PaperTradingEngine:
         """Get pending orders for an account."""
         return [o for o in self.get_orders(account_id) if o.status == OrderStatus.PENDING]
 
+    def _get_quote_asset(self, symbol: str) -> str:
+        """Derive quote asset from symbol (e.g. BTC/USD -> USD, BTCUSDT -> USDT)."""
+        sym = symbol.upper()
+        if "/USD" in sym or sym.endswith("-USD"):
+            return "USD"
+        if sym.endswith("USDT"):
+            return "USDT"
+        return "USD"
+
     def execute_order(self, order: Order, current_price: float) -> FillResult | None:
         """Simulate order execution.
 
@@ -217,7 +226,7 @@ class PaperTradingEngine:
             return None
 
         # Balance sufficiency check
-        quote_asset = "USDT"
+        quote_asset = self._get_quote_asset(order.symbol)
         order_cost = order.quantity * current_price
         if order.side == OrderSide.BUY:
             if portfolio.get_balance(quote_asset) < order_cost:
@@ -258,8 +267,8 @@ class PaperTradingEngine:
         is_buy = order.side == OrderSide.BUY
         is_sell = order.side == OrderSide.SELL
 
-        # Update cash balance (simplified: use USDT as quote)
-        quote_asset = "USDT"
+        # Update cash balance (derive quote asset from symbol)
+        quote_asset = self._get_quote_asset(order.symbol)
         cost = fill.filled_qty * fill.filled_price + fill.fee
 
         if is_buy:

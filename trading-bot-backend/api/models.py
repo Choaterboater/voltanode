@@ -52,6 +52,7 @@ class OrderRequest(BaseModel):
     stop_price: float | None = None
     account_id: str = "default"
     strategy_id: str | None = None
+    asset_class: AssetClass | None = None
 
 
 class OrderResponse(BaseModel):

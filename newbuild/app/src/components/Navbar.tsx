@@ -32,10 +32,20 @@ export default function Navbar() {
   const navigate = useNavigate();
   const { liveMode, getLiveMode, loading } = useSettings();
 
+  const [backendOffline, setBackendOffline] = useState(false);
+
   useEffect(() => {
-    getLiveMode();
+    const check = async () => {
+      try {
+        await getLiveMode();
+        setBackendOffline(false);
+      } catch {
+        setBackendOffline(true);
+      }
+    };
+    check();
     // Poll connection status every 15s
-    const interval = setInterval(() => getLiveMode(), 15000);
+    const interval = setInterval(() => check(), 15000);
     return () => clearInterval(interval);
   }, [getLiveMode]);
 
@@ -104,7 +114,9 @@ export default function Navbar() {
             ) : (
               <span
                 className={`h-2 w-2 rounded-full ${
-                  brokerConnected
+                  backendOffline
+                    ? 'bg-danger-red'
+                    : brokerConnected
                     ? isLive
                       ? 'bg-danger-red animate-pulse'
                       : 'bg-success-green'
@@ -113,7 +125,9 @@ export default function Navbar() {
               />
             )}
             <span className="text-text-secondary truncate">
-              {loading
+              {backendOffline
+                ? 'Backend offline'
+                : loading
                 ? 'Checking...'
                 : brokerConnected
                 ? `${brokerName.charAt(0).toUpperCase() + brokerName.slice(1)} · ${isLive ? 'LIVE' : 'Paper'}`

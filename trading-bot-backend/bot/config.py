@@ -104,8 +104,15 @@ class MarketDataConfig(BaseModel):
     cache: CacheConfig = CacheConfig()
     default_timeframe: str = "1h"
     symbols: Dict[str, List[str]] = Field(default_factory=lambda: {
-        "crypto": ["bitcoin", "ethereum", "solana", "cardano"],
-        "stocks": ["AAPL", "TSLA", "MSFT", "GOOGL"],
+        "crypto": [
+            # CoinGecko IDs (for paper mode / backtest)
+            "bitcoin", "ethereum", "solana", "cardano",
+            # Common tickers (also valid for CoinGecko normalizer)
+            "BTC", "ETH", "SOL", "ADA", "XRP", "DOT", "LINK", "AVAX", "MATIC",
+            "DOGE", "SHIB", "LTC", "BCH", "UNI", "AAVE", "ETC", "ALGO", "FIL",
+            "ATOM", "MANA", "SAND", "AXS", "GRT", "FTM", "ICP", "NEAR", "XTZ",
+        ],
+        "stocks": ["AAPL", "TSLA", "MSFT", "GOOGL", "NVDA", "AMZN", "META", "AMD"],
     })
 
 

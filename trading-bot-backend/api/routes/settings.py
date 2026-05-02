@@ -157,7 +157,11 @@ async def get_live_mode(request: Request) -> dict:
     broker_name = config.live_mode.default_broker
     if engine and hasattr(engine, "broker"):
         broker_connected = engine.broker.is_connected()
-        broker_name = engine.broker.name
+        # When live mode is OFF, show the configured default broker (not the mock
+        # broker the engine swaps to internally). When live mode is ON, report
+        # the actual connected broker.
+        if config.live_mode.enabled:
+            broker_name = engine.broker.name
 
     return {
         "live_mode": config.live_mode.enabled,
@@ -227,6 +231,14 @@ async def set_live_mode(request: Request, body: LiveModeToggleRequest) -> dict:
     config.live_mode.enabled = body.enabled
     if body.broker_name:
         config.live_mode.default_broker = body.broker_name
+
+    # Persist config to disk so default_broker survives restarts
+    try:
+        import os
+        config_path = os.environ.get("BOT_CONFIG", "config.yaml")
+        config.to_yaml(config_path)
+    except Exception as exc:
+        logger.warning(f"Failed to persist config: {exc}")
 
     return {
         "live_mode": config.live_mode.enabled,

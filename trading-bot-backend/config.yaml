@@ -1,220 +1,254 @@
-# Paper Trading Bot Configuration
-
 app:
-  name: "PaperTradingBot"
+  name: PaperTradingBot
   log_level: INFO
   json_logs: true
-  data_dir: "./data"
-
+  data_dir: ./data
 engine:
   tick_interval_seconds: 5.0
   max_accounts: 10
   auto_start_strategies: true
-
 market_data:
   coingecko:
     enabled: true
-    base_url: "https://api.coingecko.com/api/v3"
+    base_url: https://api.coingecko.com/api/v3
     rate_limit_per_minute: 30
   yfinance:
     enabled: true
   cache:
     enabled: true
-    ttl_seconds: 300
+    ttl_seconds: 300.0
     max_entries: 10000
-  default_timeframe: "1h"
+  default_timeframe: 1h
   symbols:
     crypto:
-      - bitcoin
-      - ethereum
-      - solana
-      - cardano
-      - ripple
-      - polkadot
-      - chainlink
-      - avalanche-2
-      - matic-network
-      - binancecoin
-      - dogecoin
-      - shiba-inu
-      - tron
-      - litecoin
-      - bitcoin-cash
-      - uniswap
-      - cosmos
-      - ethereum-classic
-      - stellar
-      - filecoin
-      - algorand
-      - vechain
-      - theta-token
-      - eos
-      - aave
-      - the-sandbox
-      - decentraland
-      - axie-infinity
-      - fantom
-      - the-graph
-      - tezos
-      - internet-computer
-      - near
-      - flow
-      - pancakeswap-token
-      - elrond-erd-2
-      - hedera-hashgraph
-      - klay-token
-      - quant-network
-      - maker
-      - curve-dao-token
-      - compound-governance-token
-      - enjincoin
-      - chiliz
-      - basic-attention-token
-      - zilliqa
-      - waves
-      - harmony
-      - dash
-      - neo
-      - holotoken
-      - ravencoin
-      - horizen
-      - kusama
-      - arweave
-      - loopring
-      - skale
-      - celo
-      - amp-token
-      - storj
-      - kyber-network-crystal
-      - synthetix-network-token
-      - yearn-finance
-      - balancer
-      - sushiswap
-      - 1inch
-      - band-protocol
-      - aptos
-      - sui
-      - sei-network
-      - celestia
-      - dymension
-      - starknet
-      - worldcoin-wld
-      - arbitrum
-      - optimism
-      - immutable-x
-      - gala
-      - blur
-      - pepe
-      - dogwifcoin
-      - bonk
-      - floki
-      - jupiter-exchange-solana
-      - pyth-network
-      - render-token
-      - bittensor
-      - arkham
-      - portal-2
-      - degen-base
+    - bitcoin
+    - ethereum
+    - solana
+    - cardano
+    - ripple
+    - polkadot
+    - chainlink
+    - avalanche-2
+    - matic-network
+    - dogecoin
+    - shiba-inu
+    - tron
+    - litecoin
+    - bitcoin-cash
+    - uniswap
+    - cosmos
+    - ethereum-classic
+    - stellar
+    - filecoin
+    - algorand
+    - vechain
+    - theta-token
+    - eos
+    - aave
+    - the-sandbox
+    - decentraland
+    - axie-infinity
+    - fantom
+    - the-graph
+    - tezos
+    - internet-computer
+    - near
+    - flow
+    - pancakeswap-token
+    - elrond-erd-2
+    - hedera-hashgraph
+    - klay-token
+    - quant-network
+    - maker
+    - curve-dao-token
+    - compound-governance-token
+    - enjincoin
+    - chiliz
+    - basic-attention-token
+    - zilliqa
+    - waves
+    - harmony
+    - dash
+    - neo
+    - holotoken
+    - ravencoin
+    - horizen
+    - kusama
+    - arweave
+    - loopring
+    - skale
+    - celo
+    - amp-token
+    - storj
+    - kyber-network-crystal
+    - synthetix-network-token
+    - yearn-finance
+    - balancer
+    - sushiswap
+    - 1inch
+    - band-protocol
+    - aptos
+    - sui
+    - sei-network
+    - celestia
+    - dymension
+    - starknet
+    - worldcoin-wld
+    - arbitrum
+    - optimism
+    - immutable-x
+    - gala
+    - blur
+    - pepe
+    - dogwifcoin
+    - bonk
+    - floki
+    - jupiter-exchange-solana
+    - pyth-network
+    - render-token
+    - bittensor
+    - arkham
+    - portal-2
+    - degen-base
+    - BTC
+    - ETH
+    - SOL
+    - ADA
+    - XRP
+    - DOT
+    - LINK
+    - AVAX
+    - MATIC
+    - DOGE
+    - SHIB
+    - LTC
+    - BCH
+    - UNI
+    - AAVE
+    - ETC
+    - ALGO
+    - FIL
+    - ATOM
+    - MANA
+    - SAND
+    - AXS
+    - GRT
+    - FTM
+    - ICP
+    - NEAR
+    - XTZ
     stocks:
-      - AAPL
-      - TSLA
-      - NVDA
-      - MSFT
-      - GOOGL
-      - AMZN
-      - META
-      - AMD
-      - NFLX
-      - CRM
-      - PYPL
-      - INTC
-      - IBM
-      - ORCL
-      - CSCO
-      - ADBE
-      - DIS
-      - NKE
-      - BA
-      - JPM
-      - GS
-      - V
-      - MA
-      - WFC
-      - BAC
-      - C
-      - UNH
-      - JNJ
-      - PFE
-      - LLY
-      - ABBV
-      - MRK
-      - TMO
-      - ABT
-      - DHR
-      - BMY
-      - AMGN
-      - GILD
-      - REGN
-      - VRTX
-      - XOM
-      - CVX
-      - COP
-      - OXY
-      - SLB
-      - HAL
-      - PSX
-      - MPC
-      - WMT
-      - TGT
-      - COST
-      - HD
-      - LOW
-      - MCD
-      - SBUX
-      - CMG
-      - KO
-      - PEP
-      - PG
-      - UL
-      - CL
-      - KMB
-      - GIS
-      - CPB
-      - CAG
-      - HSY
-      - MDLZ
-      - SPY
-      - QQQ
-      - DIA
-      - IWM
-      - VOO
-      - VTI
-      - GLD
-      - SLV
-      - USO
-
+    - AAPL
+    - TSLA
+    - NVDA
+    - MSFT
+    - GOOGL
+    - AMZN
+    - META
+    - AMD
+    - NFLX
+    - CRM
+    - PYPL
+    - INTC
+    - IBM
+    - ORCL
+    - CSCO
+    - ADBE
+    - DIS
+    - NKE
+    - BA
+    - JPM
+    - GS
+    - V
+    - MA
+    - WFC
+    - BAC
+    - C
+    - UNH
+    - JNJ
+    - PFE
+    - LLY
+    - ABBV
+    - MRK
+    - TMO
+    - ABT
+    - DHR
+    - BMY
+    - AMGN
+    - GILD
+    - REGN
+    - VRTX
+    - XOM
+    - CVX
+    - COP
+    - OXY
+    - SLB
+    - HAL
+    - PSX
+    - MPC
+    - WMT
+    - TGT
+    - COST
+    - HD
+    - LOW
+    - MCD
+    - SBUX
+    - CMG
+    - KO
+    - PEP
+    - PG
+    - UL
+    - CL
+    - KMB
+    - GIS
+    - CPB
+    - CAG
+    - HSY
+    - MDLZ
+    - SPY
+    - QQQ
+    - DIA
+    - IWM
+    - VOO
+    - VTI
+    - GLD
+    - SLV
+    - USO
 risk:
-  max_drawdown_pct: 0.10
-  max_position_size_pct: 0.20
-  max_exposure_per_asset_pct: 0.30
+  max_drawdown_pct: 0.1
+  max_position_size_pct: 0.2
+  max_exposure_per_asset_pct: 0.3
   default_stop_loss_pct: 0.02
   default_take_profit_pct: 0.06
-  position_sizing_method: "percentage"
+  position_sizing_method: !!python/object/apply:bot.config.SizingMethod
+  - percentage
   position_sizing_value: 0.02
   fee_rate: 0.001
-  slippage_model: "fixed"
+  slippage_model: fixed
   slippage_bps: 5.0
-
+api:
+  host: 0.0.0.0
+  port: 8000
+  cors_origins:
+  - http://localhost:3000
+backtest:
+  default_initial_balance:
+    USDT: 10000.0
+    USD: 10000.0
+  allow_short: true
 strategies:
   momentum:
     enabled: true
-    symbols: ["bitcoin", "ethereum"]
+    symbols:
+    - bitcoin
+    - ethereum
     fast_ema: 12
     slow_ema: 26
     trend_filter_ema: 200
   mean_reversion:
     enabled: true
-    symbols: ["bitcoin"]
+    symbols:
+    - bitcoin
     rsi_period: 14
     rsi_overbought: 70
     rsi_oversold: 30
@@ -222,45 +256,79 @@ strategies:
     bb_std: 2.0
   grid:
     enabled: false
-    symbols: ["bitcoin"]
+    symbols:
+    - bitcoin
     grid_levels: 10
     grid_spacing_pct: 0.01
     quantity_per_grid: 0.01
   breakout:
     enabled: false
-    symbols: ["ethereum"]
+    symbols:
+    - ethereum
     lookback_period: 20
     volume_multiplier: 1.5
     breakout_threshold_pct: 0.005
   arbitrage:
     enabled: false
-    symbols: ["bitcoin", "ethereum"]
+    symbols:
+    - bitcoin
+    - ethereum
     min_spread_pct: 0.5
   macd:
     enabled: true
-    symbols: ["bitcoin"]
+    symbols:
+    - bitcoin
     fast: 12
     slow: 26
     signal: 9
   ensemble_ml:
     enabled: true
-    symbols: ["bitcoin", "ethereum"]
+    symbols:
+    - bitcoin
+    - ethereum
     buy_threshold: 0.6
     sell_threshold: 0.4
     indicators:
-      rsi: { weight: 0.2, period: 14 }
-      macd: { weight: 0.3 }
-      ema_cross: { weight: 0.2, fast: 12, slow: 26 }
-      bb_position: { weight: 0.15, period: 20 }
-      volume_trend: { weight: 0.15 }
-
-api:
-  host: "0.0.0.0"
-  port: 8000
-  cors_origins: ["http://localhost:3000"]
-
-backtest:
-  default_initial_balance:
-    USDT: 10000.0
-    USD: 10000.0
-  allow_short: true
+      rsi:
+        weight: 0.2
+        period: 14
+      macd:
+        weight: 0.3
+      ema_cross:
+        weight: 0.2
+        fast: 12
+        slow: 26
+      bb_position:
+        weight: 0.15
+        period: 20
+      volume_trend:
+        weight: 0.15
+live_mode:
+  enabled: false
+  default_broker: mock
+  confirmation_required: true
+brokers:
+  binance:
+    testnet: true
+    paper: false
+    api_key_encrypted: ''
+    api_secret_encrypted: ''
+  alpaca:
+    testnet: false
+    paper: true
+    api_key_encrypted: gAAAAABp9Xdq02LKfiVGFeELpU3RlE_lxDO96sNq5vu2zp7QRsgKMpzmhVyjTsEVjRci7EIFhJUB8vvZoyVG7g1pVSYdvZ1y19X9SivMjXLoXA5S-EOOvIq8ID-gBmSGCu61UfN4oj7d
+    api_secret_encrypted: gAAAAABp9Xdq7OsJifmDKPyPeaRerLwWPy_kQiy89QyUxTPZCdGXPd3VKyFIh6KGNc7vqRqTsahSfZ-VZidU20qeeeG6v4J7WbJfO68jvb5qvv6IXObBjkthcbtee6b4PJO5-CzP6zIJ
+  mock:
+    testnet: false
+    paper: false
+    api_key_encrypted: gAAAAABp9XdrDpTUrsTXd-i1hHUCXQyf2f42qu4fx9_X9U7sO7KOZM7uFSgSGM5vLBVJgMFGQbMxYc9ZUwgsgPY0C2sPwKP7sg==
+    api_secret_encrypted: gAAAAABp9XdrxiQMpFOjlLV1wYDX7fHbj_aiApDNZkMxct2aOp216tp1O2prIizqEwqVgVwnqb6lT0aonLQeDwW70xoC8ZzQDQ==
+safety:
+  max_daily_loss_pct: 5.0
+  max_position_size_pct: 20.0
+  max_exposure_pct: 50.0
+  require_confirmation: true
+  kill_switch_on_disconnect: true
+  max_orders_per_minute: 10
+  allowed_symbols: []
+  blocked_symbols: []

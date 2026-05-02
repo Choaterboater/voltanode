@@ -18,7 +18,7 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0", help="API host")
     parser.add_argument("--port", type=int, default=8000, help="API port")
     parser.add_argument("--config", default="config.yaml", help="Config file path")
-    parser.add_argument("--broker", default="mock", choices=["mock", "binance", "alpaca"], help="Broker for live-demo mode")
+    parser.add_argument("--broker", default="mock", help="Broker for live-demo mode (mock, binance, alpaca, etc.)")
 
     args = parser.parse_args()
 

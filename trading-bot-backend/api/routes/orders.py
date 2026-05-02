@@ -12,6 +12,27 @@ from bot.engine import PaperTradingEngine, LiveTradingEngine
 from bot.orders import Order, OrderType
 from bot.config import OrderSide, AssetClass
 
+
+def _detect_asset_class(symbol: str) -> AssetClass:
+    """Heuristic to detect asset class from symbol."""
+    sym = symbol.upper()
+    # Crypto indicators: slash pair, -USD suffix, USDT suffix, or common crypto tickers
+    if "/" in sym or sym.endswith("-USD") or sym.endswith("USDT"):
+        return AssetClass.CRYPTO
+    crypto_tickers = {
+        "BTC", "ETH", "SOL", "ADA", "XRP", "DOT", "LINK", "AVAX", "MATIC",
+        "DOGE", "SHIB", "LTC", "BCH", "UNI", "ETC", "ALGO", "FIL", "ATOM",
+        "MANA", "SAND", "AXS", "GRT", "FTM", "ICP", "NEAR", "HBAR", "VET",
+        "XTZ", "TRX", "THETA", "EOS", "AAVE", "CHZ", "BAT", "ZIL", "DASH",
+        "NEO", "LRC", "SKL", "CELO", "KNC", "SNX", "YFI", "BAL", "SUSHI",
+        "1INCH", "BAND", "APT", "SUI", "SEI", "TIA", "DYM", "STRK", "WLD",
+        "ARB", "OP", "IMX", "GALA", "BLUR", "PEPE", "BONK", "FLOKI", "JUP",
+        "PYTH", "RNDR", "TAO", "ARKM", "PORTAL", "DEGEN",
+    }
+    if sym in crypto_tickers:
+        return AssetClass.CRYPTO
+    return AssetClass.STOCK
+
 router = APIRouter()
 
 engine: PaperTradingEngine | None = None
@@ -91,7 +112,8 @@ async def place_order(request: Request, body: OrderRequest) -> OrderResponse:
     # Try to execute immediately for market orders
     if body.order_type == OrderType.MARKET and engine.market_data:
         try:
-            price = await engine.market_data.get_price(body.symbol, AssetClass.CRYPTO)
+            asset_class = body.asset_class or _detect_asset_class(body.symbol)
+            price = await engine.market_data.get_price(body.symbol, asset_class)
             fill = engine.execute_order(order, price)
             if fill:
                 return OrderResponse(

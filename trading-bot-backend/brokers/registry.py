@@ -37,6 +37,6 @@ def list_brokers() -> Dict[str, str]:
     """Return a mapping of broker names to descriptions."""
     return {
         "binance": "Binance Spot (testnet/live)",
-        "alpaca": "Alpaca Markets (paper/live US equities)",
+        "alpaca": "Alpaca Markets (paper/live US equities & crypto)",
         "mock": "Mock broker for testing (no API keys)",
     }
