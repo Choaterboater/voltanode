@@ -60,7 +60,11 @@ class PricePredictor:
         # Deduplicate near-identical prices (within 0.5 %)
         unique: List[_RawTarget] = []
         for t in sorted(targets, key=lambda x: x.probability, reverse=True):
-            if not any(abs(t.price / u.price - 1) < 0.005 for u in unique):
+            if not any(
+                (t.price == u.price == 0)
+                or (u.price != 0 and abs(t.price / u.price - 1) < 0.005)
+                for u in unique
+            ):
                 unique.append(t)
 
         # Convert to PriceTarget dataclass
