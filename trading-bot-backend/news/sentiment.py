@@ -210,11 +210,16 @@ class SentimentEngine:
         """Call local Ollama instance.
 
         Requires Ollama running locally (http://localhost:11434).
+        Supports optional API key for authenticated instances.
         """
         import requests
         model = self.llm_model or "llama3.2:3b"
+        headers = {}
+        if self.llm_api_key:
+            headers["Authorization"] = f"Bearer {self.llm_api_key}"
         resp = requests.post(
             "http://localhost:11434/api/generate",
+            headers=headers,
             json={
                 "model": model,
                 "prompt": prompt,

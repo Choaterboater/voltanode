@@ -170,3 +170,72 @@ export const runBacktest = (payload: BacktestPayload) =>
 
 export const getBacktestResults = () =>
   fetchJson<{ results: unknown[] }>('/backtest/results');
+
+// ── News & Sentiment ──
+export interface NewsStatus {
+  alpaca_configured: boolean;
+  llm_provider: string | null;
+  llm_configured: boolean;
+  hybrid_mode: boolean;
+  hybrid_threshold: number;
+  vader_available: boolean;
+  ollama_available: boolean;
+  timestamp: string;
+}
+
+export interface SentimentResult {
+  article_id: string;
+  symbol: string;
+  compound_score: number;
+  positive_score: number;
+  negative_score: number;
+  neutral_score: number;
+  confidence: number;
+  model: string;
+  impact_assessment: string;
+  key_themes: string[];
+  analyzed_at: string;
+}
+
+export interface AnalyzeResponse {
+  headline: string;
+  symbols: string[];
+  results: SentimentResult[];
+}
+
+export interface SymbolSentimentSummary {
+  symbol: string;
+  article_count: number;
+  avg_compound: number;
+  sentiment_label: string;
+  latest_headlines: string[];
+  trending: boolean;
+  updated_at: string;
+}
+
+export interface SymbolSentimentResponse {
+  symbol: string;
+  scores: SentimentResult[];
+  summary: SymbolSentimentSummary | null;
+}
+
+export interface TrendingSymbol {
+  symbol: string;
+  article_count: number;
+  avg_compound: number;
+  sentiment_label: string;
+  latest_headlines: string[];
+  trending: boolean;
+  updated_at: string;
+}
+
+export const getNewsStatus = () => fetchJson<NewsStatus>('/news/status');
+
+export const analyzeHeadline = (headline: string, summary = '', source = 'manual', symbols: string[] = []) =>
+  fetchJson<AnalyzeResponse>(`/news/analyze?headline=${encodeURIComponent(headline)}&summary=${encodeURIComponent(summary)}&source=${encodeURIComponent(source)}${symbols.map(s => `&symbols=${encodeURIComponent(s)}`).join('')}`, { method: 'POST' });
+
+export const getSymbolSentiment = (symbol: string, hours = 24) =>
+  fetchJson<SymbolSentimentResponse>(`/news/sentiment/${symbol}?hours=${hours}`);
+
+export const getTrendingSymbols = (hours = 24, minArticles = 3) =>
+  fetchJson<TrendingSymbol[]>(`/news/trending?hours=${hours}&min_articles=${minArticles}`);

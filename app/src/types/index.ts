@@ -152,3 +152,48 @@ export interface AssetAllocation {
   value: number;
   color: string;
 }
+
+export interface SentimentResult {
+  articleId: string;
+  symbol: string;
+  compoundScore: number;
+  positiveScore: number;
+  negativeScore: number;
+  neutralScore: number;
+  confidence: number;
+  model: string;
+  impactAssessment: string;
+  keyThemes: string[];
+  analyzedAt: string;
+}
+
+export interface SymbolSentimentSummary {
+  symbol: string;
+  articleCount: number;
+  avgCompound: number;
+  sentimentLabel: string;
+  latestHeadlines: string[];
+  trending: boolean;
+  updatedAt: string;
+}
+
+export interface TrendingSymbol {
+  symbol: string;
+  articleCount: number;
+  avgCompound: number;
+  sentimentLabel: string;
+  latestHeadlines: string[];
+  trending: boolean;
+  updatedAt: string;
+}
+
+export interface NewsStatus {
+  alpacaConfigured: boolean;
+  llmProvider: string | null;
+  llmConfigured: boolean;
+  hybridMode: boolean;
+  hybridThreshold: number;
+  vaderAvailable: boolean;
+  ollamaAvailable: boolean;
+  timestamp: string;
+}

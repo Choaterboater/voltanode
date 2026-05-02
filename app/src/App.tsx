@@ -5,6 +5,7 @@ import Strategies from './pages/Strategies'
 import Backtest from './pages/Backtest'
 import Analytics from './pages/Analytics'
 import BotLab from './pages/BotLab'
+import NewsSentiment from './pages/NewsSentiment'
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
       <Route path="/backtest" element={<Backtest />} />
       <Route path="/analytics" element={<Analytics />} />
       <Route path="/bots" element={<BotLab />} />
+      <Route path="/news" element={<NewsSentiment />} />
     </Routes>
   )
 }

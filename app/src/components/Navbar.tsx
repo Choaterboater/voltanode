@@ -6,6 +6,7 @@ import {
   BarChart3,
   PieChart,
   Bot,
+  Newspaper,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -16,6 +17,7 @@ const navItems = [
   { label: 'Backtest', path: '/backtest', icon: BarChart3 },
   { label: 'Analytics', path: '/analytics', icon: PieChart },
   { label: 'Bot Lab', path: '/bots', icon: Bot },
+  { label: 'News', path: '/news', icon: Newspaper },
 ];
 
 export default function Navbar() {
