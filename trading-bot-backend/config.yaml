@@ -220,8 +220,7 @@ risk:
   max_exposure_per_asset_pct: 0.3
   default_stop_loss_pct: 0.02
   default_take_profit_pct: 0.06
-  position_sizing_method: !!python/object/apply:bot.config.SizingMethod
-  - percentage
+  position_sizing_method: percentage
   position_sizing_value: 0.02
   fee_rate: 0.001
   slippage_model: fixed
