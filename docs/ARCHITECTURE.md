@@ -3,119 +3,138 @@
 ## Frontend Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  Browser / Client                    │
-├─────────────────────────────────────────────────────┤
-│  HashRouter  →  Routes  →  Page Components         │
-│                                                    │
-│  Layout (Navbar + Header + Main + Footer)         │
-│    ├── Home (Dashboard)                             │
-│    ├── PaperTrading                                 │
-│    ├── Strategies                                   │
-│    ├── Backtest                                     │
-│    ├── Analytics                                    │
-│    └── BotLab                                       │
-│                                                    │
-│  Shared Components                                  │
-│    ├── MetricCard, Badge, StatusDot, DataTable      │
-│    └── Recharts (AreaChart, PieChart, LineChart)    │
-│                                                    │
-│  Data Layer                                         │
-│    ├── mockData.ts (static demo data)               │
-│    └── types/index.ts (TypeScript interfaces)       │
-├─────────────────────────────────────────────────────┤
-│  Tailwind CSS  +  Custom Theme Tokens                │
-│  Framer Motion (page transitions & stagger)         │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    Browser / Client                          │
+├─────────────────────────────────────────────────────────────┤
+│  HashRouter → Routes → React.lazy() pages                   │
+│                                                             │
+│  ErrorBoundary → Suspense → PageLoader                      │
+│                                                             │
+│  Layout (Navbar + Header + Main + Footer)                   │
+│    ├── Home (Dashboard)                                     │
+│    ├── Watchlist                                            │
+│    ├── Advisor                                              │
+│    ├── PaperTrading                                         │
+│    ├── Strategies                                           │
+│    ├── Backtest                                             │
+│    ├── Analytics                                            │
+│    ├── BotLab                                               │
+│    ├── News & Sentiment                                     │
+│    ├── Settings                                             │
+│    └── About                                                │
+│                                                             │
+│  Shared Components                                          │
+│    ├── Layout, Navbar, Footer                               │
+│    ├── MetricCard, Badge, StatusDot, DataTable              │
+│    └── ErrorBoundary                                        │
+│                                                             │
+│  Charts: Recharts (AreaChart, PieChart, BarChart, Composed) │
+│                                                             │
+│  Data Layer                                                 │
+│    ├── lib/api.ts     (centralized fetch + types)           │
+│    ├── hooks/         (useAdvisor, useSettings, useApi)     │
+│    ├── types/index.ts (TypeScript interfaces)               │
+│    └── data/mockData.ts (static demo data fallback)         │
+├─────────────────────────────────────────────────────────────┤
+│  Tailwind CSS + Custom Theme Tokens                         │
+│  Framer Motion (page transitions & stagger)                 │
+│  Sonner (toast notifications)                               │
+│  Lucide React (icons)                                       │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### Component Hierarchy
 
 ```
-App.tsx
-└── HashRouter
-    └── Routes
-        ├── /           → Home.tsx (Layout)
-        ├── /paper      → PaperTrading.tsx (Layout)
-        ├── /strategies → Strategies.tsx (Layout)
-        ├── /backtest   → Backtest.tsx (Layout)
-        ├── /analytics  → Analytics.tsx (Layout)
-        └── /bots       → BotLab.tsx (Layout)
-
-Layout.tsx
-├── Navbar.tsx
-│   ├── Mobile toggle button
-│   ├── Overlay (mobile)
-│   └── Sidebar nav (NavLink items)
-├── Header (title + rightContent slot)
-├── <main> (page content)
-└── Footer.tsx
+main.tsx
+├── HashRouter
+│   ├── Toaster (sonner)
+│   └── App.tsx
+│       └── ErrorBoundary
+│           └── Suspense → PageLoader
+│               └── Routes
+│                   ├── /           → Home.tsx (Layout)
+│                   ├── /watchlist  → Watchlist.tsx (Layout)
+│                   ├── /advisor    → Advisor.tsx (Layout)
+│                   ├── /paper      → PaperTrading.tsx (Layout)
+│                   ├── /strategies → Strategies.tsx (Layout)
+│                   ├── /backtest   → Backtest.tsx (Layout)
+│                   ├── /analytics  → Analytics.tsx (Layout)
+│                   ├── /bots       → BotLab.tsx (Layout)
+│                   ├── /news       → NewsSentiment.tsx (Layout)
+│                   ├── /settings   → Settings.tsx (Layout)
+│                   └── /about      → About.tsx (Layout)
 ```
 
 ### State Management
 
 - **No global state library** (Redux/Zustand not used)
-- **Local React state** via `useState` for UI state (time ranges, mobile menu, view toggles)
-- **Mock data** served statically from `src/data/mockData.ts`
-- **Future**: Backend API integration via React Query or SWR recommended
+- **Local React state** via `useState` for UI state
+- **Backend API integration** via centralized `lib/api.ts` fetch functions
+- **Hooks** for domain-specific data: `useAdvisor`, `useSettings`, `useApi`, `useDashboard`
+- **Mock data fallback** in `useDashboard` for bots/equity curve when backend doesn't serve them
 
-### Data Flow
-
-1. `mockData.ts` exports typed static arrays/objects
-2. Page components import the data they need
-3. Components compute derived values (formatters, filters) in render
-4. Charts receive data directly via Recharts `<ResponsiveContainer>`
-5. No async data fetching in the current build
+---
 
 ## Backend Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  FastAPI Application                 │
-├─────────────────────────────────────────────────────┤
-│  Lifespan (startup / shutdown)                       │
-│    ├── DataCache initialization                      │
-│    ├── MarketData service                            │
-│    └── PaperTradingEngine initialization             │
-│                                                      │
-│  Router Registration                                 │
-│    ├── /portfolio   → portfolio.py                   │
-│    ├── /strategies  → strategies.py                  │
-│    ├── /trades      → trades.py                      │
-│    ├── /backtest    → backtest.py                    │
-│    ├── /market      → market.py                      │
-│    ├── /advisor     → advisor.py                     │
-│    └── /health, /engine/* (app-level)                │
-├─────────────────────────────────────────────────────┤
-│  Core Modules                                        │
-│    ├── bot/          → Engine, Portfolio, Orders, Risk│
-│    ├── strategies/   → 7 strategy implementations     │
-│    ├── backtest/     → Runner, Metrics, Config       │
-│    ├── data/         → Cache, Fetcher, Storage       │
-│    ├── advisor/      → Analyzer, Indicators, Predictor│
-│    ├── analytics/    → Reports, Export, Records      │
-│    └── api/          → Routes, Pydantic Models       │
-├─────────────────────────────────────────────────────┤
-│  External APIs                                       │
-│    ├── CoinGecko (crypto prices & OHLCV)            │
-│    └── Yahoo Finance (stock prices & OHLCV)           │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                  FastAPI Application                         │
+├─────────────────────────────────────────────────────────────┤
+│  Lifespan (startup / shutdown)                               │
+│    ├── DataCache initialization                              │
+│    ├── MarketData service                                    │
+│    └── PaperTradingEngine initialization                     │
+│                                                              │
+│  Router Registration                                         │
+│    ├── /portfolio   → portfolio.py                           │
+│    ├── /orders      → orders.py                              │
+│    ├── /strategies  → strategies.py                          │
+│    ├── /trades      → trades.py                              │
+│    ├── /backtest    → backtest.py                            │
+│    ├── /market      → market.py                              │
+│    ├── /advisor     → advisor.py                             │
+│    ├── /settings    → settings.py                            │
+│    ├── /news        → news.py                                │
+│    └── /health, /engine/* (app-level)                        │
+├─────────────────────────────────────────────────────────────┤
+│  Core Modules                                                │
+│    ├── bot/          → Engine, Portfolio, Orders, Risk       │
+│    ├── strategies/   → 9 strategy implementations            │
+│    ├── backtest/     → Runner, Metrics, Config               │
+│    ├── data/         → Cache, Fetcher, Storage               │
+│    ├── advisor/      → Analyzer, Indicators, Predictor       │
+│    ├── analytics/    → Reports, Export, Records              │
+│    ├── news/         → Fetcher, Sentiment (VADER + LLM)      │
+│    ├── brokers/      → Alpaca, Mock adapters                 │
+│    ├── safety/       → Kill switch, limits, notifier         │
+│    ├── security/     → PBKDF2 encryption                     │
+│    └── api/          → Routes, Pydantic Models               │
+├─────────────────────────────────────────────────────────────┤
+│  External APIs                                               │
+│    ├── CoinGecko     (crypto prices & OHLCV)                 │
+│    ├── Yahoo Finance (stock prices & OHLCV)                  │
+│    ├── Alpaca        (news, live trading)                    │
+│    └── Ollama        (local LLM for sentiment)               │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### File Structure Tree
+### File Structure
 
 ```
 trading-bot-backend/
 ├── api/
-│   ├── __init__.py
 │   ├── main.py              # FastAPI app factory & lifespan
 │   ├── models.py            # Pydantic request/response schemas
 │   └── routes/
-│       ├── __init__.py
-│       ├── advisor.py       # AI symbol analysis endpoints
-│       ├── backtest.py      # Backtest run & results endpoints
-│       ├── market.py        # Price & OHLCV data endpoints
-│       ├── portfolio.py     # Portfolio & positions endpoints
+│       ├── advisor.py       # AI symbol analysis
+│       ├── backtest.py      # Backtest run & results
+│       ├── market.py        # Price & OHLCV data
+│       ├── news.py          # News fetch & sentiment
+│       ├── orders.py        # Order placement & cancel
+│       ├── portfolio.py     # Portfolio & positions
+│       ├── settings.py      # Broker, live mode, safety
 │       ├── strategies.py    # Strategy registration & toggle
 │       └── trades.py        # Trade history & export
 ├── advisor/
@@ -125,7 +144,7 @@ trading-bot-backend/
 │   ├── predictor.py         # Price target prediction
 │   └── recommender.py       # Verdict & confidence engine
 ├── analytics/
-│   ├── export.py            # CSV/JSON export utilities
+│   ├── export.py            # CSV/JSON export
 │   ├── records.py           # Trade record management
 │   └── reports.py           # Daily report generation
 ├── backtest/
@@ -137,39 +156,62 @@ trading-bot-backend/
 │   ├── orders.py            # Order, FillResult, ExecutionSimulator
 │   ├── portfolio.py         # Portfolio & Position management
 │   └── risk.py              # RiskManager & PositionSizer
+├── brokers/
+│   ├── alpaca.py            # Alpaca broker adapter
+│   └── mock.py              # Mock/simulation broker
 ├── cli/
 │   └── main.py              # Typer CLI entry point
 ├── data/
 │   ├── cache.py             # In-memory + disk cache
 │   ├── fetcher.py           # MarketData unified fetcher
 │   └── storage.py           # Persistent storage helpers
+├── news/
+│   ├── fetcher.py           # Alpaca News API client
+│   ├── models.py            # NewsArticle, SentimentResult
+│   ├── sentiment.py         # VADER + LLM (Ollama/Claude/Kimi)
+│   └── storage.py           # SQLite persistence
+├── safety/
+│   ├── limits.py            # Safety limits & daily tracker
+│   ├── notifier.py          # SMTP email alerts
+│   └── switch.py            # Kill switch
+├── security/
+│   └── encrypt.py           # PBKDF2-based encryption
 ├── strategies/
-│   ├── __init__.py          # StrategyFactory & registry
+│   ├── __init__.py          # StrategyFactory & registry (9 strategies)
 │   ├── base.py              # BaseStrategy ABC
-│   ├── momentum.py          # Momentum strategy
-│   ├── mean_reversion.py    # Mean Reversion strategy
-│   ├── grid.py              # Grid Trading strategy
-│   ├── breakout.py          # Breakout strategy
-│   ├── macd.py              # MACD strategy
-│   ├── arbitrage.py         # Arbitrage strategy
-│   └── ensemble_ml.py       # ML Ensemble strategy
+│   ├── arbitrage.py
+│   ├── breakout.py
+│   ├── ensemble_ml.py
+│   ├── grid.py
+│   ├── macd.py
+│   ├── mean_reversion.py
+│   ├── momentum.py
+│   └── news_sentiment.py    # Trading via news sentiment
 ├── tests/
 │   ├── test_backtest.py
 │   ├── test_engine.py
 │   └── test_strategies.py
-├── config.yaml              # Default configuration
-├── requirements.txt         # Python dependencies
-└── run.py                   # Application entry point
+├── config.yaml
+├── requirements.txt
+└── run.py
 ```
+
+---
 
 ## Key Design Decisions
 
-1. **Static mock data in frontend**: The current build uses fully static TypeScript data for rapid UI iteration. Future iterations should replace this with API calls to the backend.
+1. **Lazy-loaded pages**: Each route is its own JS chunk via `React.lazy()` for faster initial load.
 
-2. **HashRouter**: Used instead of BrowserRouter to support static file hosting (e.g., GitHub Pages, S3) without server-side rewrite rules.
+2. **ErrorBoundary**: Catches React render errors and shows a reload UI instead of a white screen.
 
-3. **No ORM for portfolio**: The backend uses plain Python dataclasses and dictionaries for portfolio state, avoiding SQLAlchemy complexity for the demo phase. Persistence can be added via the `data/storage.py` module.
+3. **HashRouter**: Supports static file hosting without server-side rewrite rules.
 
-4. **Strategy pattern**: All trading strategies inherit from `BaseStrategy` and are registered in `STRATEGY_REGISTRY`. The factory function enables runtime strategy instantiation by name.
+4. **No ORM for portfolio**: Plain Python dataclasses for portfolio state. SQLite used for news, trades, and analytics.
 
-5. **Synthetic data fallback**: Both the market fetcher and advisor analyzer generate realistic synthetic OHLCV data when external APIs fail, ensuring the UI never crashes due to network issues.
+5. **Strategy pattern**: All strategies inherit from `BaseStrategy` and register in `STRATEGY_REGISTRY`.
+
+6. **Hybrid sentiment**: VADER (fast, local) for clear-cut headlines; Ollama LLM (smart, local) for ambiguous ones.
+
+7. **Synthetic data fallback**: Market fetcher and advisor generate realistic synthetic data when external APIs fail.
+
+8. **PBKDF2 encryption**: API keys are encrypted at rest with Fernet derived from `VOLTANODE_SECRET_KEY`.

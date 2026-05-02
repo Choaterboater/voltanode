@@ -2,8 +2,6 @@
 
 ## Quick Start (Docker Compose)
 
-The fastest way to deploy both frontend and backend together:
-
 ```bash
 # 1. Set your encryption key
 export VOLTANODE_SECRET_KEY="your-secure-random-string"
@@ -29,19 +27,16 @@ docker-compose down
 ### Frontend
 
 ```bash
-cd newbuild/app
+cd app
 npm install
 npm run build
 ```
 
-Builds to `newbuild/app/dist/`.
+Builds to `app/dist/`.
 
-#### Docker (Frontend Only)
-
+Serves on `http://localhost:3000` via Vite dev server:
 ```bash
-cd newbuild/app
-docker build -t voltanode-frontend .
-docker run -p 80:80 voltanode-frontend
+npm run dev -- --port 3000
 ```
 
 ### Backend
@@ -49,16 +44,45 @@ docker run -p 80:80 voltanode-frontend
 ```bash
 cd trading-bot-backend
 pip install -r requirements.txt
-python run.py --mode api --host 0.0.0.0 --port 8000
 ```
 
-#### Docker (Backend Only)
-
+Start the API server:
 ```bash
-cd trading-bot-backend
-docker build -t voltanode-backend .
-docker run -p 8000:8000 -e VOLTANODE_SECRET_KEY=your-key voltanode-backend
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+Or:
+```bash
+python run.py
+```
+
+---
+
+## Environment Variables
+
+### Required
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `VOLTANODE_SECRET_KEY` | Fernet key for API encryption (generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`) | `abcd1234...` |
+
+### Optional — News & Sentiment
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ALPACA_API_KEY` | Alpaca News API key | — |
+| `ALPACA_SECRET_KEY` | Alpaca News API secret | — |
+| `LLM_PROVIDER` | LLM for sentiment (`ollama`, `kimi`, `claude`, `openai`) | — |
+| `LLM_MODEL` | Model name (`llama3.2:3b`, `gpt-3.5-turbo`, etc.) | — |
+| `LLM_API_KEY` | API key for cloud LLM providers | — |
+| `SENTIMENT_HYBRID_MODE` | Use hybrid VADER+LLM (`true`/`false`) | `true` |
+| `SENTIMENT_HYBRID_THRESHOLD` | VADER confidence below this triggers LLM | `0.6` |
+
+### Optional — Live Trading
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OPENAI_BASE_URL` | Base URL for OpenRouter/Groq | `https://api.openai.com/v1` |
 
 ---
 
@@ -81,7 +105,7 @@ Environment variables override config values:
 - `BOT_API__CORS_ORIGINS`
 - `BOT_APP__LOG_LEVEL`
 - `BOT_APP__DATA_DIR`
-- `VOLTANODE_SECRET_KEY` (required for API key encryption)
+- `VOLTANODE_SECRET_KEY`
 
 ---
 
@@ -119,6 +143,10 @@ Environment variables override config values:
 **API keys fail to save**
 - Ensure `VOLTANODE_SECRET_KEY` is set
 - Check backend logs for encryption errors
+
+**Ollama not available**
+- Verify Ollama is running: `curl http://localhost:11434/api/tags`
+- Ensure `LLM_PROVIDER=ollama` is set
 
 **Build fails**
 - Use Node 20+: `node --version`

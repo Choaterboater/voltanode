@@ -1,14 +1,18 @@
 # Paper Trading Bot Backend
 
-A complete, runnable Python trading bot system with paper trading, 7+ algorithmic strategies, backtesting, data collection, and analytics.
+A complete Python trading bot system with paper trading, 9 algorithmic strategies, backtesting, data collection, AI advisor, news sentiment analysis, and live trading support.
 
 ## Features
 
 - **Paper Trading Engine**: Realistic order execution with slippage and fees
-- **7 Algorithmic Strategies**: Momentum, Mean Reversion, Grid, Breakout, Arbitrage, MACD, Ensemble ML
+- **9 Algorithmic Strategies**: Momentum, Mean Reversion, Grid, Breakout, Arbitrage, MACD, Ensemble ML, News Sentiment
 - **Backtesting**: Bar-by-bar backtest with walk-forward analysis
-- **Risk Management**: Position sizing (fixed, percentage, Kelly, volatility), drawdown monitoring, exposure limits
+- **AI Advisor**: 18+ technical indicators, price targets, risk assessment, position sizing
+- **News & Sentiment**: Alpaca News API + VADER + Ollama LLM hybrid sentiment analysis
+- **Risk Management**: Position sizing (fixed, percentage, Kelly, volatility), drawdown monitoring, exposure limits, kill switch
+- **Live Trading**: Alpaca broker adapter with paper/live mode toggle
 - **Market Data**: CoinGecko (crypto) + Yahoo Finance (stocks) with caching
+- **Security**: PBKDF2 encryption for API keys
 - **REST API**: FastAPI with full CRUD endpoints
 - **CLI**: Typer-based command-line interface
 - **Analytics**: Trade records, portfolio snapshots, performance reports, CSV/JSON export
@@ -28,12 +32,12 @@ pip install -r requirements.txt
 ### 1. Start the API Server
 
 ```bash
-python run.py
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Or with uvicorn directly:
+Or:
 ```bash
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+python run.py
 ```
 
 The API will be available at `http://localhost:8000`.
@@ -68,20 +72,38 @@ python -m cli.main backtest momentum bitcoin --start 2023-01-01 --end 2023-12-31
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
+| GET | `/engine/status` | Engine status |
+| POST | `/engine/start` | Start engine |
+| POST | `/engine/stop` | Stop engine |
 | GET | `/portfolio/{account_id}` | Get portfolio |
 | POST | `/portfolio/{account_id}/deposit` | Deposit funds |
-| GET | `/portfolio/{account_id}/positions` | Get open positions |
-| POST | `/orders` | Submit order |
+| GET | `/portfolio/{account_id}/positions` | Get positions |
+| GET | `/orders` | List orders |
+| POST | `/orders` | Place order |
+| POST | `/orders/{order_id}/cancel` | Cancel order |
 | GET | `/trades` | List trades |
 | GET | `/trades/export` | Export trades |
 | GET | `/strategies` | List strategies |
 | POST | `/strategies/register` | Register strategy |
+| POST | `/strategies/{strategy_id}/toggle` | Toggle strategy |
 | POST | `/backtest/run` | Run backtest |
-| GET | `/market/ohlcv/{symbol}` | Get OHLCV data |
-| GET | `/market/prices` | Get current prices |
-| GET | `/engine/status` | Engine status |
-| POST | `/engine/start` | Start engine |
-| POST | `/engine/stop` | Stop engine |
+| GET | `/backtest/results` | Backtest results |
+| GET | `/market/prices` | Get prices |
+| GET | `/market/ohlcv/{symbol}` | Get OHLCV |
+| GET | `/market/symbols` | List symbols |
+| GET | `/advisor/analyze` | AI advisor analysis |
+| GET | `/settings/live-mode` | Live mode status |
+| POST | `/settings/live-mode` | Toggle live mode |
+| GET | `/settings/brokers` | List brokers |
+| POST | `/settings/api-keys` | Store API keys |
+| POST | `/settings/test-connection` | Test broker connection |
+| GET | `/settings/safety-status` | Safety status |
+| POST | `/settings/kill-switch` | Kill switch control |
+| GET | `/news/status` | News module status |
+| POST | `/news/analyze` | Analyze headline sentiment |
+| POST | `/news/fetch` | Fetch news from Alpaca |
+| GET | `/news/sentiment/{symbol}` | Symbol sentiment |
+| GET | `/news/trending` | Trending symbols |
 
 ## Strategies
 
@@ -92,18 +114,40 @@ python -m cli.main backtest momentum bitcoin --start 2023-01-01 --end 2023-12-31
 5. **Arbitrage**: Cross-exchange price divergence scanner
 6. **MACD**: MACD line/signal line crossover with histogram confirmation
 7. **Ensemble ML**: Multi-indicator weighted scoring with optional Random Forest
+8. **News Sentiment**: Trading signals based on news sentiment analysis
+
+## Environment Variables
+
+```bash
+# Required
+export VOLTANODE_SECRET_KEY="your-fernet-key"
+
+# News & Sentiment (optional)
+export ALPACA_API_KEY=""
+export ALPACA_SECRET_KEY=""
+export LLM_PROVIDER="ollama"      # ollama, kim, claude, openai
+export LLM_MODEL="llama3.2:3b"
+export LLM_API_KEY=""             # not needed for Ollama
+export SENTIMENT_HYBRID_MODE="true"
+export SENTIMENT_HYBRID_THRESHOLD="0.6"
+```
 
 ## Project Structure
 
 ```
 trading-bot-backend/
-├── bot/                # Core engine, portfolio, orders, risk, config
-├── strategies/         # 7 algorithmic trading strategies
-├── data/               # Market data fetcher, storage, cache
-├── backtest/           # Backtest runner and metrics
-├── analytics/          # Records, reports, export
 ├── api/                # FastAPI app and routes
+├── advisor/            # AI analysis engine
+├── analytics/          # Reports, records, export
+├── backtest/           # Backtest runner and metrics
+├── bot/                # Core engine, portfolio, orders, risk
+├── brokers/            # Alpaca, Mock adapters
 ├── cli/                # Typer CLI commands
+├── data/               # Market data fetcher, cache, storage
+├── news/               # News fetcher, sentiment engine, storage
+├── safety/             # Kill switch, limits, notifier
+├── security/           # PBKDF2 encryption
+├── strategies/         # 9 algorithmic trading strategies
 ├── tests/              # pytest test suite
 ├── config.yaml         # Default configuration
 ├── requirements.txt    # Python dependencies
