@@ -12,6 +12,7 @@ from strategies.breakout import BreakoutStrategy
 from strategies.arbitrage import ArbitrageStrategy
 from strategies.macd import MACDStrategy
 from strategies.ensemble_ml import EnsembleMLStrategy
+from strategies.news_sentiment import NewsSentimentStrategy
 
 
 # Strategy registry
@@ -23,6 +24,7 @@ STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
     "arbitrage": ArbitrageStrategy,
     "macd": MACDStrategy,
     "ensemble_ml": EnsembleMLStrategy,
+    "news_sentiment": NewsSentimentStrategy,
 }
 
 
@@ -81,6 +83,7 @@ __all__ = [
     "ArbitrageStrategy",
     "MACDStrategy",
     "EnsembleMLStrategy",
+    "NewsSentimentStrategy",
     "StrategyFactory",
     "list_strategies",
     "STRATEGY_REGISTRY",

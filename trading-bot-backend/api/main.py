@@ -19,7 +19,7 @@ from data.cache import DataCache
 from data.fetcher import MarketData
 
 # Import routers
-from api.routes import portfolio, strategies, trades, backtest, market, advisor, settings, orders
+from api.routes import portfolio, strategies, trades, backtest, market, advisor, settings, orders, news
 
 
 def create_app() -> FastAPI:

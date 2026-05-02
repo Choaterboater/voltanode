@@ -56,8 +56,8 @@ class TestStrategyFactory:
 
     def test_list_strategies(self) -> None:
         strategies = list_strategies()
-        assert len(strategies) == 7
-        expected = ["momentum", "mean_reversion", "grid", "breakout", "arbitrage", "macd", "ensemble_ml"]
+        assert len(strategies) == 8
+        expected = ["momentum", "mean_reversion", "grid", "breakout", "arbitrage", "macd", "ensemble_ml", "news_sentiment"]
         for name in expected:
             assert name in strategies
 
