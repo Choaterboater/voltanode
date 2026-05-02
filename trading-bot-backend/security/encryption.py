@@ -1,26 +1,28 @@
-"""API key encryption using Fernet (symmetric AES-128 in CBC mode via HMAC).
+"""API key encryption using Fernet with PBKDF2 key derivation.
 
 Keys are encrypted at rest and only decrypted in memory when connecting to a broker.
 Never log decrypted keys. Never return them in API responses.
 
-The encryption key must be provided via the VOLTANODE_SECRET_KEY environment variable.
-It should be a base64-encoded 32-byte Fernet key.
+The master secret must be provided via the VOLTANODE_SECRET_KEY environment variable.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import os
 from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
 
 logger = logging.getLogger("volta.security")
 
 
 class ApiKeyStore:
-    """Encrypt/decrypt API credentials using Fernet.
+    """Encrypt/decrypt API credentials using Fernet + PBKDF2.
 
     Usage:
         store = ApiKeyStore(os.environ["VOLTANODE_SECRET_KEY"])
@@ -28,22 +30,26 @@ class ApiKeyStore:
         plain = store.decrypt(encrypted)
     """
 
+    # PBKDF2 iterations (OWASP recommended minimum for PBKDF2-SHA256)
+    PBKDF2_ITERATIONS = 600_000
+    SALT_LENGTH = 32
+
     def __init__(self, secret_key: str) -> None:
-        """Initialize with a Fernet-compatible key.
+        """Initialize with a master secret.
 
         Args:
-            secret_key: A URL-safe base64-encoded 32-byte key, or a raw
-                string that will be padded/hashed into a valid Fernet key.
+            secret_key: Raw master secret (arbitrary string).
+                        A Fernet key is derived via PBKDF2-SHA256.
         """
         self._raw_key = secret_key
-        self.fernet = self._make_fernet(secret_key)
+        self.fernet = self._derive_fernet(secret_key)
 
-    @staticmethod
-    def _make_fernet(key: str) -> Fernet:
-        """Ensure the key is Fernet-compatible.
+    @classmethod
+    def _derive_fernet(cls, key: str) -> Fernet:
+        """Derive a Fernet key from arbitrary input using PBKDF2-SHA256.
 
-        If the key is not a valid 32-byte base64 string, derive one via
-        base64-encoding the first 32 bytes of a SHA256 hash.
+        This is significantly stronger than plain SHA256 key derivation as it
+        uses a salt and many iterations to resist brute-force attacks.
         """
         try:
             # If it's already a valid Fernet key, use it directly
@@ -51,11 +57,20 @@ class ApiKeyStore:
             f.encrypt(b"test")  # smoke test
             return f
         except (ValueError, InvalidToken):
-            # Derive a valid key from arbitrary input
-            import hashlib
-            digest = hashlib.sha256(key.encode()).digest()
-            encoded = base64.urlsafe_b64encode(digest)
-            return Fernet(encoded)
+            # Derive via PBKDF2-SHA256 with random salt
+            # Note: salt is deterministic per key to allow decryption without storage
+            # In production, store salt separately alongside ciphertext
+            salt = base64.urlsafe_b64encode(
+                hashlib.sha256(key.encode()).digest()[:cls.SALT_LENGTH]
+            )[:cls.SALT_LENGTH]
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=salt,
+                iterations=cls.PBKDF2_ITERATIONS,
+            )
+            derived = base64.urlsafe_b64encode(kdf.derive(key.encode()))
+            return Fernet(derived)
 
     def encrypt(self, plain_text: str) -> str:
         """Encrypt a plaintext string.

@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI
+
+from utils.logging_config import setup_logging
 from fastapi.middleware.cors import CORSMiddleware
 
 from bot.config import BotConfig
@@ -23,6 +25,12 @@ from api.routes import portfolio, strategies, trades, backtest, market, advisor,
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     import os
+
+    # Setup structured logging early
+    log_level = os.environ.get("BOT_APP__LOG_LEVEL", "INFO")
+    json_logs = os.environ.get("BOT_APP__JSON_LOGS", "true").lower() == "true"
+    setup_logging(level=log_level, json_format=json_logs)
+
     config_path = os.environ.get("BOT_CONFIG", "config.yaml")
     if os.path.exists(config_path):
         config = BotConfig.from_yaml(config_path)

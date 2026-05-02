@@ -185,6 +185,16 @@ class SafetyConfig(BaseModel):
     max_orders_per_minute: int = 10
     allowed_symbols: List[str] = Field(default_factory=list)
     blocked_symbols: List[str] = Field(default_factory=list)
+    # Alert channels
+    webhook_url: str = ""
+    webhook_headers: Dict[str, str] = Field(default_factory=dict)
+    # Email alerts (SMTP)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password_encrypted: str = ""
+    alert_email_from: str = ""
+    alert_email_to: str = ""
 
 
 class BotConfig(BaseSettings):

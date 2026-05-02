@@ -6,12 +6,80 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
+import asyncio
+import logging
+
 import httpx
 import pandas as pd
 import yfinance as yf
 
 from data.cache import DataCache
 from bot.config import AssetClass, BotConfig
+
+logger = logging.getLogger("volta.market_data")
+
+
+async def _fetch_with_retry(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    params: dict | None = None,
+    json: dict | None = None,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+) -> httpx.Response:
+    """Execute HTTP request with exponential backoff on 429 / 5xx.
+
+    Args:
+        client: httpx AsyncClient.
+        method: HTTP method.
+        url: Request URL.
+        params: Query parameters.
+        json: JSON body.
+        max_retries: Maximum retry attempts.
+        base_delay: Initial delay in seconds (doubles each retry).
+
+    Returns:
+        httpx Response.
+
+    Raises:
+        RuntimeError: If all retries exhausted.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = await client.request(method, url, params=params, json=json, timeout=30.0)
+            if response.status_code == 429:
+                # Rate limited — backoff and retry
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Rate limited (429) on {url}, retrying in {delay}s (attempt {attempt + 1}/{max_retries + 1})")
+                await asyncio.sleep(delay)
+                last_exc = httpx.HTTPStatusError("Rate limited", request=response.request, response=response)
+                continue
+            if response.status_code >= 500:
+                # Server error — backoff and retry
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Server error ({response.status_code}) on {url}, retrying in {delay}s (attempt {attempt + 1}/{max_retries + 1})")
+                await asyncio.sleep(delay)
+                last_exc = httpx.HTTPStatusError(f"Server error {response.status_code}", request=response.request, response=response)
+                continue
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as e:
+            last_exc = e
+            if e.response.status_code >= 400 and e.response.status_code < 500 and e.response.status_code != 429:
+                raise  # Client errors are not retried
+            if attempt < max_retries:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"HTTP error on {url}, retrying in {delay}s: {e}")
+                await asyncio.sleep(delay)
+        except Exception as e:
+            last_exc = e
+            if attempt < max_retries:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Request failed on {url}, retrying in {delay}s: {e}")
+                await asyncio.sleep(delay)
+    raise RuntimeError(f"Request failed after {max_retries + 1} attempts: {last_exc}") from last_exc
 
 # ── Symbol Normalization Maps ──
 
@@ -203,16 +271,11 @@ class MarketData:
         params = {"ids": symbol, "vs_currencies": vs_currency}
 
         try:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
+            response = await _fetch_with_retry(client, "GET", url, params=params)
             data = response.json()
             price = float(data[symbol][vs_currency])
             self.cache.store_price(symbol, price)
             return price
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
-                raise RuntimeError("CoinGecko rate limit exceeded") from e
-            raise RuntimeError(f"CoinGecko API error: {e.response.status_code}") from e
         except Exception as e:
             raise RuntimeError(f"Failed to fetch crypto price: {e}") from e
 
@@ -246,8 +309,7 @@ class MarketData:
         params = {"vs_currency": vs_currency, "days": str(days)}
 
         try:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
+            response = await _fetch_with_retry(client, "GET", url, params=params)
             data = response.json()
 
             # CoinGecko returns prices, market_caps, total_volumes as [timestamp, value]
@@ -281,10 +343,6 @@ class MarketData:
             self.cache.store_ohlcv(df, symbol, interval)
             return df.tail(days).reset_index(drop=True)
 
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
-                raise RuntimeError("CoinGecko rate limit exceeded") from e
-            raise RuntimeError(f"CoinGecko API error: {e.response.status_code}") from e
         except Exception as e:
             raise RuntimeError(f"Failed to fetch crypto OHLCV: {e}") from e
 
@@ -302,8 +360,7 @@ class MarketData:
         params = {"vs_currency": vs_currency, "days": str(days)}
 
         try:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
+            response = await _fetch_with_retry(client, "GET", url, params=params)
             data = response.json()
 
             prices = data.get("prices", [])
@@ -354,8 +411,7 @@ class MarketData:
         }
 
         try:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
+            response = await _fetch_with_retry(client, "GET", url, params=params)
             return list(response.json())
         except Exception as e:
             raise RuntimeError(f"Failed to fetch top cryptos: {e}") from e

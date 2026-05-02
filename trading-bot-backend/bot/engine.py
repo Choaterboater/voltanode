@@ -477,7 +477,25 @@ class LiveTradingEngine(PaperTradingEngine):
         self.kill_switch = KillSwitch()
         self.daily_tracker = DailyPnlTracker()
         self.safety_validator = SafetyValidator()
-        self.notifier = notifier or SafetyNotifier()
+
+        if notifier is None:
+            # Build notifier from safety config
+            email_cfg = {}
+            if config.safety.smtp_host:
+                email_cfg = {
+                    "smtp_host": config.safety.smtp_host,
+                    "smtp_port": config.safety.smtp_port,
+                    "smtp_user": config.safety.smtp_user,
+                    "smtp_password": config.safety.smtp_password_encrypted,
+                    "email_from": config.safety.alert_email_from,
+                    "email_to": config.safety.alert_email_to,
+                }
+            notifier = SafetyNotifier(
+                webhook_url=config.safety.webhook_url or None,
+                webhook_headers=config.safety.webhook_headers or None,
+                email_config=email_cfg if email_cfg else None,
+            )
+        self.notifier = notifier
 
     def execute_order(
         self, order: Order, current_price: float | None = None
