@@ -183,7 +183,8 @@ async def set_live_mode(request: Request, body: LiveModeToggleRequest) -> dict:
         # Enabling live mode — validate everything
         if broker_name == "mock":
             # Mock broker: always OK, no keys needed
-            pass
+            if engine and hasattr(engine, "broker"):
+                engine.broker.connect("mock_key", "mock_secret")
         else:
             # Real broker: check API keys exist
             broker_cfg = config.brokers.get(broker_name)
@@ -195,27 +196,33 @@ async def set_live_mode(request: Request, body: LiveModeToggleRequest) -> dict:
                     detail=f"API keys for '{broker_name}' not stored. Use POST /settings/api-keys first.",
                 )
 
-        # If engine exists and has a broker, try connecting
-        if engine and hasattr(engine, "broker"):
-            try:
-                broker_cfg = config.brokers.get(broker_name)
-                if broker_cfg and broker_name != "mock":
+            # Swap to real broker on the existing engine
+            if engine and hasattr(engine, "broker"):
+                try:
+                    from brokers.registry import get_broker
+                    real_broker = get_broker(broker_name)
                     key_store = _get_key_store()
                     if key_store:
                         api_key = key_store.decrypt(broker_cfg.api_key_encrypted)
                         api_secret = key_store.decrypt(broker_cfg.api_secret_encrypted)
-                        engine.broker.connect(
+                        real_broker.connect(
                             api_key, api_secret,
                             testnet=getattr(broker_cfg, "testnet", True),
                             paper=getattr(broker_cfg, "paper", True),
                         )
+                        engine.broker = real_broker
                     else:
                         logger.warning("No encryption key available; cannot connect real broker")
-                elif broker_name == "mock":
-                    engine.broker.connect("mock_key", "mock_secret")
-            except Exception as exc:
-                logger.error(f"Broker connection failed: {exc}")
-                raise HTTPException(status_code=400, detail=f"Broker connection failed: {exc}")
+                except Exception as exc:
+                    logger.error(f"Broker connection failed: {exc}")
+                    raise HTTPException(status_code=400, detail=f"Broker connection failed: {exc}")
+    else:
+        # Disabling live mode — swap back to mock broker
+        if engine and hasattr(engine, "broker"):
+            from brokers.registry import get_broker
+            mock_broker = get_broker("mock")
+            mock_broker.connect("mock_key", "mock_secret")
+            engine.broker = mock_broker
 
     config.live_mode.enabled = body.enabled
     if body.broker_name:

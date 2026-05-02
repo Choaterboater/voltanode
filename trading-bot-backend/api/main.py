@@ -36,29 +36,12 @@ def create_app() -> FastAPI:
         cache = DataCache(cache_dir=str(Path(config.app.data_dir) / "cache"))
         market_data = MarketData(cache=cache, config=config)
 
-        # Use LiveTradingEngine if live mode is enabled and broker is configured
-        if config.live_mode.enabled and config.live_mode.default_broker != "mock":
-            from brokers.registry import get_broker
-            try:
-                broker = get_broker(config.live_mode.default_broker)
-                broker_cfg = config.brokers.get(config.live_mode.default_broker)
-                if broker_cfg and broker_cfg.api_key_encrypted and broker_cfg.api_secret_encrypted:
-                    from security.encryption import ApiKeyStore
-                    key_store = ApiKeyStore.from_env()
-                    api_key = key_store.decrypt(broker_cfg.api_key_encrypted)
-                    api_secret = key_store.decrypt(broker_cfg.api_secret_encrypted)
-                    broker.connect(
-                        api_key, api_secret,
-                        testnet=getattr(broker_cfg, "testnet", True),
-                        paper=getattr(broker_cfg, "paper", True),
-                    )
-                engine = LiveTradingEngine(config=config, broker=broker)
-            except Exception as exc:
-                logger = logging.getLogger("volta.api")
-                logger.warning(f"Failed to initialize live engine: {exc}. Falling back to paper.")
-                engine = PaperTradingEngine(config=config, market_data=market_data)
-        else:
-            engine = PaperTradingEngine(config=config, market_data=market_data)
+        # Always create LiveTradingEngine with mock broker as default.
+        # This allows seamless live mode toggling without engine swapping.
+        from brokers.registry import get_broker
+        broker = get_broker("mock")
+        broker.connect("mock_key", "mock_secret")
+        engine = LiveTradingEngine(config=config, broker=broker)
         
         # Set engine on routers
         portfolio.set_engine(engine)
