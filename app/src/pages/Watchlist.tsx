@@ -50,18 +50,6 @@ const defaultStocks: WatchItem[] = [
   { symbol: 'CRM', name: 'Salesforce', category: 'stock', price: 288.40, change24h: -0.9, recommendation: 'hold', reason: 'Agentforce promising but execution risk remains' },
 ];
 
-function recBadge(rec: WatchItem['recommendation']) {
-  const map: Record<string, { label: string; variant: 'success' | 'danger' | 'warning' | 'neutral' }> = {
-    strong_buy: { label: 'Strong Buy', variant: 'success' },
-    buy: { label: 'Buy', variant: 'success' },
-    hold: { label: 'Hold', variant: 'warning' },
-    sell: { label: 'Sell', variant: 'danger' },
-    strong_sell: { label: 'Strong Sell', variant: 'danger' },
-  };
-  const m = map[rec] || { label: rec, variant: 'default' };
-  return <Badge variant={m.variant}>{m.label}</Badge>;
-}
-
 function trendIcon(change: number) {
   if (change > 1) return <TrendingUp className="h-4 w-4 text-success-green" />;
   if (change < -1) return <TrendingDown className="h-4 w-4 text-danger-red" />;
@@ -217,7 +205,7 @@ export default function Watchlist() {
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-semibold text-text-primary">{item.symbol}</h3>
-                    {recBadge(item.recommendation)}
+                    <Badge variant="neutral">Watchlist</Badge>
                   </div>
                   <p className="text-xs text-text-muted">{item.name}</p>
                 </div>
@@ -237,7 +225,9 @@ export default function Watchlist() {
                 </div>
               </div>
 
-              <p className="mt-2 text-xs text-text-secondary leading-relaxed">{item.reason}</p>
+              <p className="mt-2 text-xs text-text-secondary leading-relaxed">
+                Click Analyze for a real-time AI recommendation based on 16+ technical indicators.
+              </p>
 
               <div className="mt-3 flex items-center justify-end">
                 <button
