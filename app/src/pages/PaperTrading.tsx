@@ -99,6 +99,8 @@ export default function PaperTrading() {
           ? ((p.current_price - p.entry_price) / p.entry_price) * 100 * (p.side === 'SHORT' ? -1 : 1)
           : 0,
       openedAt: '',
+      stopLoss: p.stop_loss,
+      takeProfit: p.take_profit,
     })) ?? [];
 
   const orderColumns = [
@@ -364,6 +366,8 @@ export default function PaperTrading() {
                         <th className="pb-2 font-medium">Size</th>
                         <th className="pb-2 font-medium">Entry</th>
                         <th className="pb-2 font-medium">Mark</th>
+                        <th className="pb-2 font-medium">SL</th>
+                        <th className="pb-2 font-medium">TP</th>
                         <th className="pb-2 font-medium">P&L</th>
                       </tr>
                     </thead>
@@ -382,6 +386,12 @@ export default function PaperTrading() {
                           </td>
                           <td className="py-2 font-mono text-text-secondary">
                             {formatCurrency(p.markPrice)}
+                          </td>
+                          <td className="py-2 font-mono text-danger-red">
+                            {p.stopLoss ? formatCurrency(p.stopLoss) : '—'}
+                          </td>
+                          <td className="py-2 font-mono text-success-green">
+                            {p.takeProfit ? formatCurrency(p.takeProfit) : '—'}
                           </td>
                           <td
                             className={`py-2 font-mono ${

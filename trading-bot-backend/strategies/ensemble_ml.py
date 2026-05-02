@@ -246,7 +246,9 @@ class EnsembleMLStrategy(BaseStrategy):
                     "component_scores": {k: float(v) for k, v in scores.items()},
                     "weights": {k: float(v) for k, v in weights.items()},
                 },
-                suggested_size=0.0,
+                suggested_size=1000.0 / current_price if current_price > 0 else 0.0,
+                stop_loss=current_price * 0.95,
+                take_profit=current_price * 1.1,
             )
             self._record_signal(signal)
             return signal
@@ -263,7 +265,9 @@ class EnsembleMLStrategy(BaseStrategy):
                     "component_scores": {k: float(v) for k, v in scores.items()},
                     "weights": {k: float(v) for k, v in weights.items()},
                 },
-                suggested_size=0.0,
+                suggested_size=1000.0 / current_price if current_price > 0 else 0.0,
+                stop_loss=current_price * 0.95,
+                take_profit=current_price * 1.1,
             )
             self._record_signal(signal)
             return signal

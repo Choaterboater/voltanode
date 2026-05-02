@@ -21,6 +21,8 @@ class PositionResponse(BaseModel):
     current_price: float
     unrealized_pnl: float
     market_value: float
+    stop_loss: float | None = None
+    take_profit: float | None = None
 
 
 class PortfolioResponse(BaseModel):

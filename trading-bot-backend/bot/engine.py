@@ -103,6 +103,9 @@ class PaperTradingEngine:
         if account_id not in self._strategies:
             self._strategies[account_id] = []
         self._strategies[account_id].append(strategy)
+        # Inject market data reference so strategies can fetch OHLCV in on_tick
+        if self.market_data is not None and not hasattr(strategy, "market_data"):
+            strategy.market_data = self.market_data
 
     def create_account(self, account_id: str, initial_balance: Dict[str, float]) -> Portfolio:
         """Create a new account with initial balance.
@@ -351,11 +354,12 @@ class PaperTradingEngine:
 
     # ── Events ──
 
-    def on_tick(self, tick: TickData) -> None:
+    def on_tick(self, tick: TickData, ohlcv_data: Any | None = None) -> None:
         """Process a price tick.
 
         Args:
             tick: Price tick data.
+            ohlcv_data: Optional OHLCV DataFrame to pass to bar-based strategies.
         """
         self._current_prices[tick.symbol] = tick.price
 
@@ -363,12 +367,41 @@ class PaperTradingEngine:
         for portfolio in self._portfolios.values():
             portfolio.update_position_price(tick.symbol, tick.price)
 
+        # Check fixed stop-loss / take-profit before strategies run
+        for account_id, portfolio in self._portfolios.items():
+            pos = portfolio.get_position(tick.symbol)
+            if pos and pos.status == "open":
+                close_side: OrderSide | None = None
+                if pos.side == PositionSide.LONG:
+                    if pos.stop_loss is not None and tick.price <= pos.stop_loss:
+                        close_side = OrderSide.SELL
+                    elif pos.take_profit is not None and tick.price >= pos.take_profit:
+                        close_side = OrderSide.SELL
+                elif pos.side == PositionSide.SHORT:
+                    if pos.stop_loss is not None and tick.price >= pos.stop_loss:
+                        close_side = OrderSide.BUY
+                    elif pos.take_profit is not None and tick.price <= pos.take_profit:
+                        close_side = OrderSide.BUY
+
+                if close_side is not None:
+                    close_order = Order.market(
+                        symbol=tick.symbol,
+                        side=close_side,
+                        quantity=pos.size,
+                        account_id=account_id,
+                        strategy_id="sltp_manager",
+                    )
+                    self.submit_order(close_order, account_id)
+                    self.execute_order(close_order, tick.price)
+
         # Notify registered strategies of tick
         for account_id, strategies in self._strategies.items():
             for strategy in strategies:
+                if not getattr(strategy, "is_active", True):
+                    continue
                 if hasattr(strategy, "on_tick"):
                     portfolio = self._portfolios.get(account_id)
-                    signal = strategy.on_tick(tick, portfolio)
+                    signal = strategy.on_tick(tick, portfolio, ohlcv_data=ohlcv_data)
                     if signal is not None and hasattr(signal, "to_order"):
                         order = signal.to_order(account_id)
                         if order is not None:
@@ -376,6 +409,13 @@ class PaperTradingEngine:
                             # Auto-execute market orders immediately
                             if order.order_type.value == "market" and tick.price:
                                 self.execute_order(order, tick.price)
+                                # Store stop-loss / take-profit on the open position
+                                pos = portfolio.get_position(tick.symbol)
+                                if pos and pos.status == "open":
+                                    if signal.stop_loss is not None:
+                                        pos.stop_loss = signal.stop_loss
+                                    if signal.take_profit is not None:
+                                        pos.take_profit = signal.take_profit
 
         # Check pending orders for fills
         for account_id, orders in self._orders.items():

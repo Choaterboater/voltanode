@@ -38,6 +38,8 @@ export interface ApiPosition {
   unrealized_pnl: number;
   realized_pnl: number;
   opened_at: string;
+  stop_loss?: number;
+  take_profit?: number;
 }
 
 export const getPortfolio = (accountId = 'default') =>

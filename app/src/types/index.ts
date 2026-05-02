@@ -19,6 +19,8 @@ export interface Position {
   pnlPercent: number;
   openedAt: string;
   strategy?: string;
+  stopLoss?: number;
+  takeProfit?: number;
 }
 
 export interface Order {

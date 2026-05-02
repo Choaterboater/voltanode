@@ -139,9 +139,17 @@ class NewsSentimentStrategy(BaseStrategy):
         self._record_signal(signal)
         return signal
 
-    def on_tick(self, tick: TickData, portfolio: Portfolio) -> Signal | None:
-        """Override to clear stale sentiment and avoid over-trading."""
-        # Could add cooldown logic here
+    def on_tick(self, tick: TickData, portfolio: Portfolio, **kwargs: Any) -> Signal | None:
+        """Override to clear stale sentiment and avoid over-trading.
+
+        When ``ohlcv_data`` is passed from the engine tick loop we forward it
+        to :meth:`generate_signal` so the strategy can act on cached sentiment.
+        """
+        ohlcv_data = kwargs.get("ohlcv_data")
+        if ohlcv_data is not None and len(ohlcv_data) > 0:
+            ohlcv_data = ohlcv_data.copy()
+            ohlcv_data.attrs["symbol"] = tick.symbol
+            return self.generate_signal(ohlcv_data, tick.price)
         return None
 
     @classmethod

@@ -130,12 +130,23 @@ class BaseStrategy(ABC):
 
     # ── Lifecycle ──
 
-    def on_tick(self, tick: TickData, portfolio: Portfolio) -> Signal | None:
+    def on_tick(self, tick: TickData, portfolio: Portfolio, **kwargs: Any) -> Signal | None:
         """Called on every price tick.
 
-        Default implementation fetches OHLCV and calls generate_signal.
+        Default implementation uses provided OHLCV data and calls generate_signal.
         Override for tick-level strategies.
+
+        Args:
+            tick: Price tick data.
+            portfolio: Portfolio for the account.
+            **kwargs: Extra data from the engine tick loop.  If ``ohlcv_data``
+                is supplied it is forwarded to :meth:`generate_signal`.
         """
+        ohlcv_data = kwargs.get("ohlcv_data")
+        if ohlcv_data is not None and len(ohlcv_data) > 0:
+            ohlcv_data = ohlcv_data.copy()
+            ohlcv_data.attrs["symbol"] = tick.symbol
+            return self.generate_signal(ohlcv_data, tick.price)
         return None
 
     def on_fill(self, fill: FillResult, portfolio: Portfolio) -> None:

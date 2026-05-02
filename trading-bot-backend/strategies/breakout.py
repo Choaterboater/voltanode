@@ -78,7 +78,9 @@ class BreakoutStrategy(BaseStrategy):
                     "avg_volume": float(avg_volume),
                     "breakout_pct": float(breakout_pct),
                 },
-                suggested_size=0.0,
+                suggested_size=1000.0 / current_price if current_price > 0 else 0.0,
+                stop_loss=current_price * 0.94,
+                take_profit=current_price * 1.12,
             )
             self._record_signal(signal)
             return signal
@@ -100,7 +102,9 @@ class BreakoutStrategy(BaseStrategy):
                     "avg_volume": float(avg_volume),
                     "breakdown_pct": float(breakdown_pct),
                 },
-                suggested_size=0.0,
+                suggested_size=1000.0 / current_price if current_price > 0 else 0.0,
+                stop_loss=current_price * 0.94,
+                take_profit=current_price * 1.12,
             )
             self._record_signal(signal)
             return signal

@@ -93,7 +93,9 @@ class MeanReversionStrategy(BaseStrategy):
                     "bb_sma": current_sma,
                     "price_vs_lower": current_price / current_lower if current_lower > 0 else 1.0,
                 },
-                suggested_size=0.0,
+                suggested_size=1000.0 / current_price if current_price > 0 else 0.0,
+                stop_loss=current_price * 0.97,
+                take_profit=current_price * 1.05,
             )
             self._record_signal(signal)
             return signal
@@ -114,7 +116,9 @@ class MeanReversionStrategy(BaseStrategy):
                     "bb_sma": current_sma,
                     "price_vs_upper": current_price / current_upper if current_upper > 0 else 1.0,
                 },
-                suggested_size=0.0,
+                suggested_size=1000.0 / current_price if current_price > 0 else 0.0,
+                stop_loss=current_price * 0.97,
+                take_profit=current_price * 1.05,
             )
             self._record_signal(signal)
             return signal

@@ -515,7 +515,8 @@ class MarketData:
         if asset_class == AssetClass.CRYPTO:
             return await self.get_crypto_price(symbol)
         elif asset_class == AssetClass.STOCK:
-            return self.get_stock_price(symbol)
+            import asyncio
+            return await asyncio.to_thread(self.get_stock_price, symbol)
         else:
             raise ValueError(f"Unsupported asset class: {asset_class}")
 
@@ -543,9 +544,10 @@ class MarketData:
             df = await self.get_crypto_ohlcv(symbol, days=days)
             return df.tail(limit).reset_index(drop=True)
         elif asset_class == AssetClass.STOCK:
+            import asyncio
             period_map = {"1d": "1y", "1h": "3mo", "15m": "5d", "1wk": "5y"}
             period = period_map.get(timeframe, "1y")
-            df = self.get_stock_ohlcv(symbol, period=period)
+            df = await asyncio.to_thread(self.get_stock_ohlcv, symbol, period)
             return df.tail(limit).reset_index(drop=True)
         else:
             raise ValueError(f"Unsupported asset class: {asset_class}")

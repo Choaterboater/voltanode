@@ -32,6 +32,8 @@ def _portfolio_to_response(portfolio: Portfolio) -> PortfolioResponse:
             current_price=p.current_price,
             unrealized_pnl=p.unrealized_pnl,
             market_value=p.market_value,
+            stop_loss=p.stop_loss,
+            take_profit=p.take_profit,
         )
         for p in portfolio.get_all_positions()
     ]
@@ -89,6 +91,8 @@ async def get_positions(account_id: str) -> List[PositionResponse]:
                 current_price=p.current_price,
                 unrealized_pnl=p.unrealized_pnl,
                 market_value=p.market_value,
+                stop_loss=p.stop_loss,
+                take_profit=p.take_profit,
             )
             for p in portfolio.get_all_positions()
         ]

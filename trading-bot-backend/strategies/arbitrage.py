@@ -50,7 +50,7 @@ class ArbitrageStrategy(BaseStrategy):
             timestamp=pd.Timestamp.now(),
         )
 
-    def on_tick(self, tick: TickData, portfolio: Portfolio) -> Signal | None:
+    def on_tick(self, tick: TickData, portfolio: Portfolio, **kwargs: Any) -> Signal | None:
         """Compare prices across simulated markets."""
         symbol = tick.symbol
         market_a_price = tick.price

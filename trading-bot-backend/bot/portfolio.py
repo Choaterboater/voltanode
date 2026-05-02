@@ -23,6 +23,8 @@ class Position:
     opened_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     closed_at: datetime | None = None
     status: str = "open"
+    stop_loss: float | None = None
+    take_profit: float | None = None
 
     @property
     def market_value(self) -> float:
@@ -71,6 +73,8 @@ class Position:
             "market_value": self.market_value,
             "opened_at": self.opened_at.isoformat(),
             "status": self.status,
+            "stop_loss": self.stop_loss,
+            "take_profit": self.take_profit,
         }
 
 
@@ -147,7 +151,13 @@ class Portfolio:
     # ── Positions ──
 
     def open_position(
-        self, symbol: str, side: PositionSide, size: float, price: float
+        self,
+        symbol: str,
+        side: PositionSide,
+        size: float,
+        price: float,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
     ) -> Position:
         """Open a new position.
 
@@ -156,6 +166,8 @@ class Portfolio:
             side: Long or short.
             size: Position size (absolute quantity).
             price: Entry price.
+            stop_loss: Optional stop-loss price.
+            take_profit: Optional take-profit price.
 
         Returns:
             The newly created Position.
@@ -166,6 +178,8 @@ class Portfolio:
             size=size,
             entry_price=price,
             current_price=price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
         )
         self._positions[symbol] = position
         return position

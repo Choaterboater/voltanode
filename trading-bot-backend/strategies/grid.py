@@ -60,7 +60,7 @@ class GridStrategy(BaseStrategy):
             timestamp=pd.Timestamp.now(),
         )
 
-    def on_tick(self, tick: TickData, portfolio: Portfolio) -> Signal | None:
+    def on_tick(self, tick: TickData, portfolio: Portfolio, **kwargs: Any) -> Signal | None:
         """Monitor price against grid levels.
 
         When price crosses a grid level, generate opposite-side order for next grid.
