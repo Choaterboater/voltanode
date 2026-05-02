@@ -95,6 +95,17 @@ export default function Navbar() {
               Volta<span className="text-accent-cyan">Node</span>
             </span>
           </div>
+          <span className="mt-0.5 pl-[44px] text-[10px] text-text-muted tracking-wide">
+            by{' '}
+            <a
+              href="https://choatelabs.app/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent-cyan hover:underline"
+            >
+              Choate Labs
+            </a>
+          </span>
         </div>
 
         {/* Connection badge */}
