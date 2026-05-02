@@ -12,6 +12,8 @@ from typing import Any, Dict, List
 import logging
 import requests
 
+logger = logging.getLogger("volta.brokers")
+
 from bot.config import OrderSide, OrderType
 from bot.orders import FillResult, Order
 
@@ -30,7 +32,7 @@ class AlpacaBroker(BrokerAdapter):
     PAPER_BASE = "https://paper-api.alpaca.markets"
     LIVE_BASE = "https://api.alpaca.markets"
 
-    DATA_PAPER = "https://data.sandbox.alpaca.markets"
+    DATA_PAPER = "https://data.alpaca.markets"
     DATA_LIVE = "https://data.alpaca.markets"
 
     # Common crypto assets supported by Alpaca (single-ticker form)
