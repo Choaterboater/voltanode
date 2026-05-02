@@ -304,7 +304,13 @@ export default function Advisor() {
             {timeRanges.map((r) => (
               <button
                 key={r.key}
-                onClick={() => setTimeRange(r.key)}
+                onClick={() => {
+                  const newRange = r.key;
+                  setTimeRange(newRange);
+                  if (symbol.trim() && !loading) {
+                    analyze(symbol.trim(), assetType, rangeToDays(newRange));
+                  }
+                }}
                 className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
                   timeRange === r.key
                     ? 'bg-accent-cyan/10 text-accent-cyan border border-accent-cyan/20'

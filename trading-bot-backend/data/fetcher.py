@@ -239,7 +239,7 @@ class MarketData:
         # Check cache first (1 day TTL)
         cached = self.cache.get_ohlcv(symbol, interval)
         if cached is not None and len(cached) >= days * 0.9:
-            return cached
+            return cached.tail(days).reset_index(drop=True)
 
         client = await self._get_client()
         url = f"{self._cg_base_url}/coins/{symbol}/market_chart"
@@ -279,7 +279,7 @@ class MarketData:
             df.attrs["symbol"] = symbol
 
             self.cache.store_ohlcv(df, symbol, interval)
-            return df
+            return df.tail(days).reset_index(drop=True)
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:
