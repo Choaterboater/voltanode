@@ -41,7 +41,7 @@ class AlpacaBroker(BrokerAdapter):
         "LRC", "SKL", "CELO", "KNC", "SNX", "YFI", "BAL", "SUSHI", "1INCH",
         "BAND", "APT", "SUI", "SEI", "TIA", "DYM", "STRK", "WLD", "ARB", "OP",
         "IMX", "GALA", "BLUR", "PEPE", "BONK", "FLOKI", "JUP", "PYTH", "RNDR",
-        "TAO", "ARKM", "PORTAL", "DEGEN",
+        "TAO", "ARKM", "PORTAL", "DEGEN", "POLY",
     }
 
     def __init__(self, paper: bool = True) -> None:
