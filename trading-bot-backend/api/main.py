@@ -95,6 +95,20 @@ def create_app() -> FastAPI:
     app.include_router(market.router, prefix="/market", tags=["Market Data"])
     app.include_router(advisor.router, prefix="/advisor", tags=["Advisor"])
     app.include_router(settings.router, prefix="/settings", tags=["Settings"])
+    app.include_router(news.router, prefix="/news", tags=["News"])
+
+    # Initialize news module with Alpaca keys if available
+    try:
+        from api.routes.news import init_news
+        init_news(
+            api_key=os.environ.get("ALPACA_API_KEY", ""),
+            api_secret=os.environ.get("ALPACA_SECRET_KEY", ""),
+            llm_provider=os.environ.get("LLM_PROVIDER", ""),
+            llm_api_key=os.environ.get("LLM_API_KEY", ""),
+            llm_model=os.environ.get("LLM_MODEL", ""),
+        )
+    except Exception:
+        pass  # News is optional
 
     @app.get("/health")
     async def health_check() -> dict:
