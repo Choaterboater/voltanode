@@ -224,6 +224,20 @@ export function useSettings() {
     }
   }, []);
 
+  const getBrokerConfig = useCallback(async (brokerName: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchJson<BrokerConfig>(`/settings/broker/${brokerName}`);
+      return data;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to get broker config');
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   return {
     brokers,
     liveMode,
@@ -240,5 +254,6 @@ export function useSettings() {
     killSwitchAction,
     disconnectBroker,
     registerBroker,
+    getBrokerConfig,
   };
 }

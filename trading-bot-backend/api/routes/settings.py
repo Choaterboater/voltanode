@@ -290,6 +290,23 @@ async def configure_broker(request: Request, body: BrokerConfigRequest) -> dict:
     }
 
 
+@router.get("/broker/{broker_name}", response_model=BrokerConfigResponse)
+async def get_broker_config(request: Request, broker_name: str) -> dict:
+    """Get current configuration for a broker (without exposing keys)."""
+    config = _get_config(request)
+    broker_cfg = config.brokers.get(broker_name)
+    if broker_cfg is None:
+        raise HTTPException(status_code=404, detail=f"Unknown broker: {broker_name}")
+
+    return {
+        "broker_name": broker_name,
+        "testnet": broker_cfg.testnet,
+        "paper": broker_cfg.paper,
+        "api_key_configured": bool(broker_cfg.api_key_encrypted),
+        "api_secret_configured": bool(broker_cfg.api_secret_encrypted),
+    }
+
+
 @router.post("/api-keys", response_model=ApiKeysResponse)
 async def store_api_keys(request: Request, body: ApiKeysRequest) -> dict:
     """Encrypt and store API keys for a broker.

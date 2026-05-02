@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import Layout from '@/components/Layout';
 import Badge from '@/components/Badge';
-import { useSettings } from '@/hooks/useSettings';
+import { useSettings, type BrokerConfig } from '@/hooks/useSettings';
 import { toast } from 'sonner';
 
 type TabKey = 'brokers' | 'safety' | 'live';
@@ -30,6 +30,7 @@ const tabs: { key: TabKey; label: string; icon: React.ElementType }[] = [
 function BrokerCard({
   name,
   description,
+  brokerConfig,
   onTest,
   onSaveKeys,
   onConfigure,
@@ -39,6 +40,7 @@ function BrokerCard({
 }: {
   name: string;
   description: string;
+  brokerConfig: BrokerConfig | null;
   onTest: (name: string, testnet: boolean, paper: boolean) => Promise<void>;
   onSaveKeys: (name: string, key: string, secret: string) => Promise<void>;
   onConfigure: (name: string, testnet: boolean, paper: boolean) => Promise<void>;
@@ -126,6 +128,17 @@ function BrokerCard({
         <div>
           <h3 className="text-sm font-semibold text-text-primary capitalize">{name}</h3>
           <p className="mt-0.5 text-xs text-text-muted">{description}</p>
+          {brokerConfig && (
+            <p className="mt-1 text-[10px] text-text-muted">
+              {brokerConfig.api_key_configured && brokerConfig.api_secret_configured ? (
+                <span className="text-success-green">● Keys saved</span>
+              ) : brokerConfig.api_key_configured || brokerConfig.api_secret_configured ? (
+                <span className="text-warning-amber">● Partial keys</span>
+              ) : (
+                <span>● No keys saved</span>
+              )}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {isConnected && (
@@ -520,6 +533,7 @@ export default function SettingsPage() {
   const [showAddBroker, setShowAddBroker] = useState(false);
   const [newBrokerName, setNewBrokerName] = useState('');
   const [registering, setRegistering] = useState(false);
+  const [brokerConfigs, setBrokerConfigs] = useState<Record<string, BrokerConfig>>({});
   const {
     brokers,
     liveMode,
@@ -535,11 +549,30 @@ export default function SettingsPage() {
     killSwitchAction,
     disconnectBroker,
     registerBroker,
+    getBrokerConfig,
   } = useSettings();
 
   useEffect(() => {
     listBrokers();
   }, [listBrokers]);
+
+  useEffect(() => {
+    const fetchConfigs = async () => {
+      const configs: Record<string, BrokerConfig> = {};
+      for (const name of Object.keys(brokers)) {
+        try {
+          const cfg = await getBrokerConfig(name);
+          configs[name] = cfg;
+        } catch {
+          // ignore
+        }
+      }
+      setBrokerConfigs(configs);
+    };
+    if (Object.keys(brokers).length > 0) {
+      fetchConfigs();
+    }
+  }, [brokers, getBrokerConfig]);
 
   const handleTest = useCallback(
     async (name: string, testnet: boolean, paper: boolean) => {
@@ -551,8 +584,15 @@ export default function SettingsPage() {
   const handleSaveKeys = useCallback(
     async (name: string, key: string, secret: string) => {
       await storeApiKeys(name, key, secret);
+      // Refresh config so UI shows key status
+      try {
+        const cfg = await getBrokerConfig(name);
+        setBrokerConfigs((prev) => ({ ...prev, [name]: cfg }));
+      } catch {
+        // ignore
+      }
     },
-    [storeApiKeys]
+    [storeApiKeys, getBrokerConfig]
   );
 
   const handleConfigure = useCallback(
@@ -667,6 +707,7 @@ export default function SettingsPage() {
                   key={name}
                   name={name}
                   description={description}
+                  brokerConfig={brokerConfigs[name] || null}
                   onTest={handleTest}
                   onSaveKeys={handleSaveKeys}
                   onConfigure={handleConfigure}
