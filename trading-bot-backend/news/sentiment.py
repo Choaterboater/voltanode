@@ -24,17 +24,23 @@ class SentimentEngine:
         llm_provider: Optional[str] = None,
         llm_api_key: Optional[str] = None,
         llm_model: Optional[str] = None,
+        hybrid_mode: bool = True,
+        hybrid_threshold: float = 0.6,
     ) -> None:
         """Initialize sentiment engine.
 
         Args:
-            llm_provider: "kimi", "claude", "openai", or None for VADER-only.
+            llm_provider: "kimi", "claude", "openai", "ollama", or None for VADER-only.
             llm_api_key: API key for the chosen provider.
             llm_model: Model name (e.g., "claude-3-haiku", "gpt-3.5-turbo").
+            hybrid_mode: If True, only calls LLM when VADER confidence is low.
+            hybrid_threshold: VADER confidence below this triggers LLM fallback.
         """
         self.llm_provider = llm_provider or os.environ.get("LLM_PROVIDER", "")
         self.llm_api_key = llm_api_key or os.environ.get("LLM_API_KEY", "")
         self.llm_model = llm_model or os.environ.get("LLM_MODEL", "")
+        self.hybrid_mode = hybrid_mode
+        self.hybrid_threshold = hybrid_threshold
         self._vader = None
 
     # ------------------------------------------------------------------
