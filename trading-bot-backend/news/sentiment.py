@@ -16,7 +16,7 @@ class SentimentEngine:
     """Dual-tier sentiment analysis.
 
     - **Fast tier**: VADER (free, local, no API key needed)
-    - **Smart tier**: LLM (Kimi, Claude, OpenAI) for deeper analysis
+    - **Smart tier**: LLM (Kimi, Claude, OpenAI, Ollama) for deeper analysis
     """
 
     def __init__(
@@ -104,10 +104,12 @@ class SentimentEngine:
                 result = self._call_claude(prompt)
             elif self.llm_provider.lower() == "openai":
                 result = self._call_openai(prompt)
+            elif self.llm_provider.lower() == "ollama":
+                result = self._call_ollama(prompt)
             else:
                 logger.warning(f"Unknown LLM provider: {self.llm_provider}")
                 return None
-            return self._parse_llm_result(result, article.id, symbol)
+            return self._parse_llm_result(result, article.id, symbol, self.llm_provider or "llm")
         except Exception as exc:
             logger.error(f"LLM sentiment analysis failed: {exc}")
             return None
@@ -194,8 +196,28 @@ class SentimentEngine:
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
 
+    def _call_ollama(self, prompt: str) -> str:
+        """Call local Ollama instance.
+
+        Requires Ollama running locally (http://localhost:11434).
+        """
+        import requests
+        model = self.llm_model or "llama3.2:3b"
+        resp = requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"temperature": 0.1},
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json()["response"]
+
     @staticmethod
-    def _parse_llm_result(text: str, article_id: str, symbol: str) -> SentimentResult:
+    def _parse_llm_result(text: str, article_id: str, symbol: str, model_name: str = "llm") -> SentimentResult:
         """Extract JSON from LLM response."""
         # Try to find JSON block
         text = text.strip()
@@ -213,7 +235,7 @@ class SentimentEngine:
             negative_score=float(data.get("negative_score", 0)),
             neutral_score=float(data.get("neutral_score", 0)),
             confidence=float(data.get("confidence", 0)),
-            model="llm",
+            model=model_name,
             impact_assessment=data.get("impact_assessment", ""),
             key_themes=data.get("key_themes", []),
         )

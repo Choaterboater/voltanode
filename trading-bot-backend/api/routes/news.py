@@ -150,11 +150,24 @@ async def news_status() -> Dict[str, Any]:
     fetcher = _get_fetcher()
     engine = _get_engine()
 
+    # Check Ollama availability
+    ollama_available = False
+    try:
+        import requests
+        resp = requests.get("http://localhost:11434/api/tags", timeout=2)
+        ollama_available = resp.status_code == 200
+    except Exception:
+        pass
+
     return {
         "alpaca_configured": bool(fetcher and fetcher.api_key and fetcher.api_secret),
         "llm_provider": engine.llm_provider or None,
-        "llm_configured": bool(engine.llm_provider and engine.llm_api_key),
+        "llm_configured": bool(
+            engine.llm_provider
+            and (engine.llm_api_key or engine.llm_provider.lower() == "ollama")
+        ),
         "vader_available": engine._get_vader() is not None,
+        "ollama_available": ollama_available,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
