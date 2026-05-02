@@ -1,0 +1,125 @@
+"""MACD strategy using signal line crossovers."""
+
+from __future__ import annotations
+
+import pandas as pd
+import numpy as np
+
+from bot.config import SignalType
+from strategies.base import BaseStrategy, Signal
+
+
+class MACDStrategy(BaseStrategy):
+    """MACD signal line crossover strategy."""
+
+    name = "macd"
+    DEFAULT_CONFIG = {
+        "fast": 12,
+        "slow": 26,
+        "signal": 9,
+    }
+
+    def generate_signal(self, data: pd.DataFrame, current_price: float) -> Signal:
+        """Generate signal based on MACD crossover.
+
+        Buy when MACD line crosses above signal line.
+        Sell when MACD crosses below.
+
+        Args:
+            data: OHLCV DataFrame.
+            current_price: Current market price.
+
+        Returns:
+            Trading signal.
+        """
+        data = self._ensure_columns(data)
+        cfg = self.config
+        fast = cfg["fast"]
+        slow = cfg["slow"]
+        signal_period = cfg["signal"]
+
+        if len(data) < slow + signal_period + 5:
+            return Signal(
+                strategy_id=self.strategy_id,
+                symbol=data.attrs.get("symbol", "unknown"),
+                signal_type=SignalType.HOLD,
+                confidence=0.0,
+                timestamp=pd.Timestamp.now(),
+            )
+
+        close = data["close"]
+        ema_fast = close.ewm(span=fast, adjust=False).mean()
+        ema_slow = close.ewm(span=slow, adjust=False).mean()
+        macd_line = ema_fast - ema_slow
+        signal_line = macd_line.ewm(span=signal_period, adjust=False).mean()
+        histogram = macd_line - signal_line
+
+        prev_macd = float(macd_line.iloc[-2])
+        prev_signal = float(signal_line.iloc[-2])
+        curr_macd = float(macd_line.iloc[-1])
+        curr_signal = float(signal_line.iloc[-1])
+        curr_histogram = float(histogram.iloc[-1])
+
+        symbol = data.attrs.get("symbol", "unknown")
+
+        # Crossover detection
+        cross_up = prev_macd <= prev_signal and curr_macd > curr_signal
+        cross_down = prev_macd >= prev_signal and curr_macd < curr_signal
+
+        # Histogram momentum confirmation
+        hist_positive = curr_histogram > 0
+        hist_negative = curr_histogram < 0
+
+        if cross_up and hist_positive:
+            # Normalize confidence by MACD distance from zero relative to price
+            distance = abs(curr_macd - curr_signal)
+            confidence = min(1.0, 0.5 + distance / (current_price * 0.01))
+            signal = Signal(
+                strategy_id=self.strategy_id,
+                symbol=symbol,
+                signal_type=SignalType.BUY,
+                confidence=confidence,
+                timestamp=pd.Timestamp.now(),
+                metadata={
+                    "macd": curr_macd,
+                    "signal": curr_signal,
+                    "histogram": curr_histogram,
+                    "crossover": "up",
+                },
+                suggested_size=0.0,
+            )
+            self._record_signal(signal)
+            return signal
+
+        if cross_down and hist_negative:
+            distance = abs(curr_macd - curr_signal)
+            confidence = min(1.0, 0.5 + distance / (current_price * 0.01))
+            signal = Signal(
+                strategy_id=self.strategy_id,
+                symbol=symbol,
+                signal_type=SignalType.SELL,
+                confidence=confidence,
+                timestamp=pd.Timestamp.now(),
+                metadata={
+                    "macd": curr_macd,
+                    "signal": curr_signal,
+                    "histogram": curr_histogram,
+                    "crossover": "down",
+                },
+                suggested_size=0.0,
+            )
+            self._record_signal(signal)
+            return signal
+
+        return Signal(
+            strategy_id=self.strategy_id,
+            symbol=symbol,
+            signal_type=SignalType.HOLD,
+            confidence=0.0,
+            timestamp=pd.Timestamp.now(),
+            metadata={
+                "macd": curr_macd,
+                "signal": curr_signal,
+                "histogram": curr_histogram,
+            },
+        )

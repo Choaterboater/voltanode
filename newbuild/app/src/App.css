@@ -1,0 +1,11 @@
+/* VoltaNode global overrides */
+#root {
+  width: 100%;
+  min-height: 100dvh;
+}
+
+/* Prevent horizontal overflow globally */
+html,
+body {
+  overflow-x: hidden;
+}
