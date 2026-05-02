@@ -80,8 +80,31 @@ class BrokerAdapter(ABC):
         ...
 
     @abstractmethod
+    def get_orders(self, status: str | None = None, limit: int = 50, **kwargs: Any) -> List[dict]:
+        """List orders from the broker.
+
+        Args:
+            status: Filter by status ("open", "closed", "all").
+            limit: Max number of orders to return.
+            **kwargs: Broker-specific filters.
+
+        Returns:
+            List of normalized order dicts.
+        """
+        ...
+
+    @abstractmethod
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an open order by broker order ID."""
+        ...
+
+    @abstractmethod
+    def close_position(self, symbol: str) -> dict:
+        """Liquidate an open position for a symbol.
+
+        Returns:
+            Broker response dict.
+        """
         ...
 
     @abstractmethod

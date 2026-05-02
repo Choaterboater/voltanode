@@ -233,12 +233,47 @@ class MockBroker(BrokerAdapter):
             "side": order.side.value,
         }
 
+    def get_orders(self, status: str | None = None, limit: int = 50, **kwargs: Any) -> List[dict]:
+        """List mock orders."""
+        orders = []
+        for broker_id, info in list(self._orders.items())[:limit]:
+            order = info["order"]
+            entry = {
+                "broker_order_id": broker_id,
+                "client_order_id": order.id,
+                "status": "filled",
+                "filled_qty": info.get("filled_qty", 0.0),
+                "filled_price": info.get("filled_price", 0.0),
+                "symbol": order.symbol,
+                "side": order.side.value,
+                "order_type": order.order_type.value,
+                "qty": str(order.quantity),
+                "created_at": order.created_at.isoformat(),
+            }
+            orders.append(entry)
+        return orders
+
     def cancel_order(self, order_id: str) -> bool:
         self._latency()
         if order_id in self._orders:
             del self._orders[order_id]
             return True
         return False
+
+    def close_position(self, symbol: str) -> dict:
+        """Close a mock position by placing an opposite market order."""
+        self._latency()
+        sym = self._symbol_to_mock(symbol)
+        pos = self._positions.get(sym)
+        if not pos:
+            return {"error": f"No open position for {symbol}"}
+        # Place opposite market order
+        from bot.config import OrderSide
+        from bot.orders import Order
+        close_side = OrderSide.SELL if pos.side == "long" else OrderSide.BUY
+        order = Order.market(symbol, close_side, pos.size)
+        self.place_order(order)
+        return {"symbol": symbol, "closed_qty": pos.size, "side": pos.side}
 
     def get_account_info(self) -> dict:
         self._latency()

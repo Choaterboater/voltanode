@@ -83,10 +83,10 @@ class AlpacaBroker(BrokerAdapter):
         except Exception:
             return False
 
-    def _request(self, method: str, path: str, json: Any = None) -> Any:
+    def _request(self, method: str, path: str, json: Any = None, params: Any = None) -> Any:
         url = f"{self._base_url}{path}"
         try:
-            response = self._session.request(method, url, json=json, timeout=10)
+            response = self._session.request(method, url, json=json, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
 
@@ -217,6 +217,7 @@ class AlpacaBroker(BrokerAdapter):
             "side": side_map[order.side],
             "type": type_map.get(order.order_type, "market"),
             "time_in_force": order.time_in_force.lower() if order.time_in_force else "day",
+            "client_order_id": order.id,
         }
 
         if order.order_type in (OrderType.LIMIT, OrderType.STOP_LIMIT) and order.price is not None:
@@ -304,12 +305,63 @@ class AlpacaBroker(BrokerAdapter):
             "side": data.get("side", ""),
         }
 
+    def get_orders(self, status: str | None = None, limit: int = 50, **kwargs: Any) -> List[dict]:
+        """List orders from Alpaca.
+
+        Args:
+            status: "open", "closed", or "all". Default "open".
+            limit: Max results (1-500).
+            **kwargs: Additional filters (after, until, symbols, etc.).
+
+        Returns:
+            List of normalized order dicts.
+        """
+        params: Dict[str, Any] = {"limit": min(limit, 500)}
+        if status:
+            params["status"] = status
+        for key in ("after", "until", "direction", "symbols", "nested"):
+            if key in kwargs:
+                params[key] = kwargs[key]
+        data = self._request("GET", "/v2/orders", params=params)
+        status_map = {
+            "new": "pending",
+            "accepted": "pending",
+            "pending_new": "pending",
+            "submitted": "pending",
+            "partially_filled": "partial",
+            "filled": "filled",
+            "canceled": "canceled",
+            "rejected": "rejected",
+        }
+        return [
+            {
+                "broker_order_id": o.get("id", ""),
+                "client_order_id": o.get("client_order_id", ""),
+                "status": status_map.get(o.get("status", "").lower(), "pending"),
+                "filled_qty": float(o.get("filled_qty", 0)),
+                "filled_price": float(o.get("filled_avg_price", 0) or o.get("price", 0) or 0),
+                "symbol": o.get("symbol", ""),
+                "side": o.get("side", ""),
+                "order_type": o.get("type", ""),
+                "qty": o.get("qty", o.get("notional", "0")),
+                "created_at": o.get("submitted_at", ""),
+            }
+            for o in (data if isinstance(data, list) else [])
+        ]
+
     def cancel_order(self, order_id: str) -> bool:
         try:
             self._request("DELETE", f"/v2/orders/{order_id}")
             return True
         except BrokerConnectionError:
             return False
+
+    def close_position(self, symbol: str) -> dict:
+        """Liquidate an open position for a symbol."""
+        try:
+            return self._request("DELETE", f"/v2/positions/{symbol}")
+        except BrokerConnectionError as exc:
+            return {"error": str(exc)}
 
     def get_account_info(self) -> dict:
         return self._request("GET", "/v2/account")

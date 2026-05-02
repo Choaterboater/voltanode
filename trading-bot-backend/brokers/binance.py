@@ -237,6 +237,44 @@ class BinanceBroker(BrokerAdapter):
             "side": data.get("side", "").lower(),
         }
 
+    def get_orders(self, status: str | None = None, limit: int = 50, **kwargs: Any) -> List[dict]:
+        """List orders from Binance.
+
+        Note: Binance requires a symbol for listing orders.
+        """
+        symbol = kwargs.get("symbol", "BTCUSDT")
+        binance_symbol = self._to_binance_symbol(symbol)
+        params: Dict[str, Any] = {"symbol": binance_symbol, "limit": min(limit, 1000)}
+        data = self._request("GET", "/api/v3/allOrders", params=params, signed=True)
+        status_map = {
+            "NEW": "pending",
+            "PENDING_NEW": "pending",
+            "PARTIALLY_FILLED": "partial",
+            "FILLED": "filled",
+            "CANCELED": "canceled",
+            "REJECTED": "rejected",
+        }
+        orders = data if isinstance(data, list) else []
+        if status == "open":
+            orders = [o for o in orders if o.get("status") in ("NEW", "PENDING_NEW", "PARTIALLY_FILLED")]
+        elif status == "closed":
+            orders = [o for o in orders if o.get("status") in ("FILLED", "CANCELED", "REJECTED")]
+        return [
+            {
+                "broker_order_id": str(o.get("orderId", "")),
+                "client_order_id": o.get("clientOrderId", ""),
+                "status": status_map.get(o.get("status", ""), "pending"),
+                "filled_qty": float(o.get("executedQty", 0)),
+                "filled_price": float(o.get("price", 0) or 0),
+                "symbol": symbol,
+                "side": o.get("side", "").lower(),
+                "order_type": o.get("type", "").lower(),
+                "qty": o.get("origQty", "0"),
+                "created_at": str(o.get("time", "")),
+            }
+            for o in orders
+        ]
+
     def cancel_order(self, order_id: str, symbol: str | None = None) -> bool:
         # order_id here is the Binance orderId, not our internal uuid
         try:
@@ -250,6 +288,12 @@ class BinanceBroker(BrokerAdapter):
             return True
         except BrokerConnectionError:
             return False
+
+    def close_position(self, symbol: str) -> dict:
+        """Binance Spot doesn't have a dedicated close position endpoint.
+        We simulate it by placing a market order in the opposite direction.
+        """
+        return {"error": "Not implemented for Binance Spot. Use place_order with opposite side."}
 
     def get_account_info(self) -> dict:
         return self._request("GET", "/api/v3/account", signed=True)
