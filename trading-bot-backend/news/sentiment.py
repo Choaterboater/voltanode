@@ -177,11 +177,12 @@ class SentimentEngine:
         return resp.json()["content"][0]["text"]
 
     def _call_openai(self, prompt: str) -> str:
-        """Call OpenAI API."""
+        """Call OpenAI-compatible API (OpenAI, Groq, OpenRouter, etc.)."""
         import requests
         model = self.llm_model or "gpt-3.5-turbo"
+        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
         resp = requests.post(
-            "https://api.openai.com/v1/chat/completions",
+            f"{base_url}/chat/completions",
             headers={
                 "Authorization": f"Bearer {self.llm_api_key}",
                 "Content-Type": "application/json",
