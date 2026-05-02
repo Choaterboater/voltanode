@@ -226,4 +226,4 @@ class BotConfig(BaseSettings):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            yaml.dump(self.model_dump(), f, default_flow_style=False, sort_keys=False)
+            yaml.dump(self.model_dump(mode="json"), f, default_flow_style=False, sort_keys=False)
