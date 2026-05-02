@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from fastapi import APIRouter, HTTPException
 from typing import Any, Dict, List
 
@@ -53,7 +54,8 @@ async def list_all_strategies() -> StrategyListResponse:
 async def register_strategy(request: StrategyRegisterRequest) -> Dict[str, Any]:
     """Register a new strategy."""
     try:
-        strategy = StrategyFactory(request.strategy_type, config=request.config or {})
+        sid = f"{request.strategy_type}_{int(time.time() * 1000)}"
+        strategy = StrategyFactory(request.strategy_type, strategy_id=sid, config=request.config or {})
         _registered_strategies[strategy.strategy_id] = strategy
         if engine is not None:
             engine.register_strategy(strategy)
