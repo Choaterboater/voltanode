@@ -41,7 +41,7 @@ function BrokerCard({
   name: string;
   description: string;
   brokerConfig: BrokerConfig | null;
-  onTest: (name: string, testnet: boolean, paper: boolean) => Promise<void>;
+  onTest: (name: string, testnet: boolean, paper: boolean) => Promise<TestConnectionResult>;
   onSaveKeys: (name: string, key: string, secret: string) => Promise<void>;
   onConfigure: (name: string, testnet: boolean, paper: boolean) => Promise<void>;
   onDisconnect: () => Promise<unknown>;
@@ -73,16 +73,21 @@ function BrokerCard({
     }
   };
 
+  const keysConfigured = brokerConfig?.api_key_configured && brokerConfig?.api_secret_configured;
+
   const handleTest = async () => {
     setTesting(true);
     setTestResult(null);
     try {
-      await onTest(name, testnet, paper);
-      setTestResult({ connected: true, message: 'Connection successful' });
-      toast.success(`${name}: Connection successful`);
+      const result = await onTest(name, testnet, paper);
+      if (!result.connected) {
+        throw new Error(result.message || 'Connection failed');
+      }
+      setTestResult({ connected: true, message: result.message || 'Connection successful' });
+      toast.success(`${name}: ${result.message || 'Connection successful'}`);
     } catch (err) {
       setTestResult({ connected: false, message: err instanceof Error ? err.message : 'Connection failed' });
-      toast.error(`${name}: Connection failed`);
+      toast.error(`${name}: ${err instanceof Error ? err.message : 'Connection failed'}`);
     } finally {
       setTesting(false);
     }
@@ -215,7 +220,8 @@ function BrokerCard({
             </button>
             <button
               onClick={handleTest}
-              disabled={testing || loading}
+              disabled={testing || loading || (!isMock && !keysConfigured)}
+              title={!isMock && !keysConfigured ? 'Save API keys first' : ''}
               className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg-input px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition-colors disabled:opacity-50"
             >
               {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <TestTube className="h-3.5 w-3.5" />}
@@ -576,7 +582,7 @@ export default function SettingsPage() {
 
   const handleTest = useCallback(
     async (name: string, testnet: boolean, paper: boolean) => {
-      await testConnection(name, testnet, paper);
+      return await testConnection(name, testnet, paper);
     },
     [testConnection]
   );
