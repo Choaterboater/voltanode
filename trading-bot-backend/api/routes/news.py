@@ -51,11 +51,19 @@ def init_news(
     llm_api_key: Optional[str] = None,
     llm_model: Optional[str] = None,
     db_path: Optional[str] = None,
+    hybrid_mode: bool = True,
+    hybrid_threshold: float = 0.6,
 ) -> None:
     """Initialize news module with explicit config."""
     global _fetcher, _engine, _storage
     _fetcher = NewsFetcher(api_key=api_key, api_secret=api_secret)
-    _engine = SentimentEngine(llm_provider=llm_provider, llm_api_key=llm_api_key, llm_model=llm_model)
+    _engine = SentimentEngine(
+        llm_provider=llm_provider,
+        llm_api_key=llm_api_key,
+        llm_model=llm_model,
+        hybrid_mode=hybrid_mode,
+        hybrid_threshold=hybrid_threshold,
+    )
     if db_path:
         _storage = NewsStorage(db_path=db_path)
     else:
@@ -166,6 +174,8 @@ async def news_status() -> Dict[str, Any]:
             engine.llm_provider
             and (engine.llm_api_key or engine.llm_provider.lower() == "ollama")
         ),
+        "hybrid_mode": engine.hybrid_mode,
+        "hybrid_threshold": engine.hybrid_threshold,
         "vader_available": engine._get_vader() is not None,
         "ollama_available": ollama_available,
         "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -251,20 +251,40 @@ class SentimentEngine:
         """Analyze sentiment for an article.
 
         If no symbol is provided, analyzes for each symbol mentioned.
-        Returns VADER result always, plus LLM result if configured.
+
+        Hybrid mode (default):
+            - VADER always runs (fast, free)
+            - LLM only runs when VADER confidence is below threshold
+              or the sentiment is near-neutral (uncertain)
+
+        Non-hybrid mode:
+            - Both VADER and LLM run on every article.
         """
         targets = [symbol] if symbol else article.symbols
         results: List[SentimentResult] = []
 
         for sym in targets:
-            # Fast tier: VADER
+            # Fast tier: VADER always runs
             vader_result = self.analyze_vader(article, sym)
             if vader_result:
                 results.append(vader_result)
 
-            # Smart tier: LLM
-            llm_result = self.analyze_llm(article, sym)
-            if llm_result:
-                results.append(llm_result)
+            # Decide whether to run LLM
+            run_llm = False
+            if self.llm_provider:
+                if self.hybrid_mode and vader_result:
+                    # Run LLM if VADER is uncertain
+                    if vader_result.confidence < self.hybrid_threshold:
+                        run_llm = True
+                    # Run LLM if sentiment is near-neutral (borderline)
+                    if abs(vader_result.compound_score) < 0.15:
+                        run_llm = True
+                elif not self.hybrid_mode:
+                    run_llm = True
+
+            if run_llm:
+                llm_result = self.analyze_llm(article, sym)
+                if llm_result:
+                    results.append(llm_result)
 
         return results
