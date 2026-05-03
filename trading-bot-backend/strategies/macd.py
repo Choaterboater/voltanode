@@ -13,6 +13,7 @@ class MACDStrategy(BaseStrategy):
     """MACD signal line crossover strategy."""
 
     name = "macd"
+    SUPPORTS_MULTI_SYMBOL = True
     DEFAULT_CONFIG = {
         "fast": 12,
         "slow": 26,

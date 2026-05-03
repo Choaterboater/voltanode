@@ -86,6 +86,9 @@ class BacktestMetrics:
                 current_start = i
             elif not is_dd and current_start is not None:
                 duration = self._equity_curve.index[i] - self._equity_curve.index[current_start]
+                # Index may be RangeIndex (int) or DatetimeIndex (timedelta).
+                if not isinstance(duration, timedelta):
+                    duration = timedelta(days=int(duration))
                 if duration > max_duration:
                     max_duration = duration
                 current_start = None

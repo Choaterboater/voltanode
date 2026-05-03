@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { motion } from 'framer-motion';
 import { useDashboardData } from '@/hooks/useDashboard';
+import { toggleStrategy, type ApiStrategy } from '@/lib/api';
 import {
   AreaChart,
   Area,
@@ -40,7 +41,6 @@ import type { Trade } from '@/types';
 import {
   performanceMetrics,
   assetAllocation,
-  bots,
   equityCurveData,
   alerts,
   balanceSparkline,
@@ -106,9 +106,22 @@ export default function Home() {
     portfolio,
     tickers,
     trades,
+    strategies,
     loading,
     error,
+    refetch,
   } = useDashboardData();
+
+  async function handleToggleBot(id: string, current: boolean) {
+    try {
+      await toggleStrategy(id, !current);
+      await refetch?.();
+    } catch {
+      // Silently ignore — error surfaces via dashboard error state on next poll.
+    }
+  }
+
+  const runningCount = strategies.filter((s: ApiStrategy) => s.is_active).length;
 
   const formatCurrency = (v: number) =>
     `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -454,7 +467,9 @@ export default function Home() {
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <h2 className="text-lg font-semibold text-text-primary">Active Bots</h2>
-              <Badge variant="success">3 running</Badge>
+              <Badge variant={runningCount > 0 ? 'success' : 'neutral'}>
+                {runningCount} running
+              </Badge>
             </div>
             <div className="flex items-center gap-3">
               <button
@@ -463,101 +478,102 @@ export default function Home() {
               >
                 View All
               </button>
-              <button className="flex items-center gap-1.5 rounded-md bg-accent-cyan px-3 py-1.5 text-xs font-semibold text-text-inverse hover:brightness-110 transition-all">
+              <button
+                onClick={() => navigate('/bots')}
+                className="flex items-center gap-1.5 rounded-md bg-accent-cyan px-3 py-1.5 text-xs font-semibold text-text-inverse hover:brightness-110 transition-all"
+              >
                 <Plus className="h-3.5 w-3.5" />
                 New Bot
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {bots.slice(0, 3).map((bot, index) => (
-              <motion.div
-                key={bot.id}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{
-                  duration: 0.3,
-                  delay: 0.6 + index * 0.1,
-                  ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
-                }}
-                className="rounded-[10px] border border-border-subtle bg-bg-surface p-5 transition-all hover:-translate-y-0.5 hover:border-accent-cyan/20"
+          {strategies.length === 0 ? (
+            <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-8 text-center text-sm text-text-muted">
+              No bots yet.{' '}
+              <button
+                onClick={() => navigate('/bots')}
+                className="text-accent-cyan hover:underline"
               >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <Badge
-                      variant={
-                        bot.strategy === 'Momentum'
-                          ? 'cyan'
-                          : bot.strategy === 'Grid'
-                          ? 'info'
-                          : 'warning'
-                      }
-                    >
-                      {bot.strategy}
-                    </Badge>
-                    <p className="mt-2 font-mono text-sm text-text-primary">{bot.pair}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <StatusDot status={bot.status} />
-                    <span
-                      className={`text-xs ${
-                        bot.status === 'running'
-                          ? 'text-success-green'
-                          : bot.status === 'paused'
-                          ? 'text-warning-amber'
-                          : 'text-text-muted'
-                      }`}
-                    >
-                      {bot.status === 'running' ? 'Running' : bot.status === 'paused' ? 'Paused' : 'Stopped'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <p
-                    className={`font-mono text-base font-medium tabular-nums ${
-                      bot.pnl >= 0 ? 'text-success-green' : 'text-danger-red'
-                    }`}
+                Create one in Bot Lab
+              </button>
+              .
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {strategies.slice(0, 4).map((bot, index) => {
+                const metrics = bot.metrics as Record<string, number> | null;
+                const pnl = Number(metrics?.total_pnl ?? 0);
+                const pair = String((bot.config as Record<string, unknown>)?.symbol ?? '—');
+                const status: 'running' | 'paused' = bot.is_active ? 'running' : 'paused';
+                return (
+                  <motion.div
+                    key={bot.strategy_id}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{
+                      duration: 0.3,
+                      delay: 0.6 + index * 0.1,
+                      ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
+                    }}
+                    className="rounded-[10px] border border-border-subtle bg-bg-surface p-5 transition-all hover:-translate-y-0.5 hover:border-accent-cyan/20"
                   >
-                    {bot.pnl >= 0 ? '+' : ''}
-                    {formatCurrency(bot.pnl)}
-                  </p>
-                  <p className="text-xs text-text-muted">{bot.uptime}</p>
-                </div>
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <Badge variant="cyan">{bot.strategy_type}</Badge>
+                        <p className="mt-2 font-mono text-sm text-text-primary">{pair}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <StatusDot status={status} />
+                        <span
+                          className={`text-xs ${
+                            status === 'running' ? 'text-success-green' : 'text-warning-amber'
+                          }`}
+                        >
+                          {status === 'running' ? 'Running' : 'Paused'}
+                        </span>
+                      </div>
+                    </div>
 
-                <div className="mt-3 h-10">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={bot.sparkline.map((v, i) => ({ v, i }))}>
-                      <Line
-                        type="monotone"
-                        dataKey="v"
-                        stroke={bot.pnl >= 0 ? '#10B981' : '#EF4444'}
-                        strokeWidth={1.5}
-                        dot={false}
-                        isAnimationActive={false}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
+                    <div className="mt-3">
+                      <p
+                        className={`font-mono text-base font-medium tabular-nums ${
+                          pnl >= 0 ? 'text-success-green' : 'text-danger-red'
+                        }`}
+                      >
+                        {pnl >= 0 ? '+' : ''}
+                        {formatCurrency(pnl)}
+                      </p>
+                      <p className="text-xs text-text-muted">
+                        {metrics?.total_trades ? `${metrics.total_trades} trades` : 'No trades yet'}
+                      </p>
+                    </div>
 
-                <div className="mt-3 flex items-center gap-2">
-                  {bot.status === 'running' ? (
-                    <button className="rounded-md p-1.5 text-text-secondary hover:bg-bg-input hover:text-text-primary transition-colors">
-                      <Pause className="h-4 w-4" />
-                    </button>
-                  ) : (
-                    <button className="rounded-md p-1.5 text-success-green hover:bg-success-green-glow transition-colors">
-                      <Play className="h-4 w-4" />
-                    </button>
-                  )}
-                  <button className="rounded-md p-1.5 text-text-secondary hover:bg-bg-input hover:text-text-primary transition-colors">
-                    <Settings className="h-4 w-4" />
-                  </button>
-                </div>
-              </motion.div>
-            ))}
-          </div>
+                    <div className="mt-3 flex items-center gap-2">
+                      <button
+                        onClick={() => handleToggleBot(bot.strategy_id, bot.is_active)}
+                        aria-label={bot.is_active ? 'Pause bot' : 'Resume bot'}
+                        className={`rounded-md p-1.5 transition-colors ${
+                          bot.is_active
+                            ? 'text-warning-amber hover:bg-warning-amber/10'
+                            : 'text-success-green hover:bg-success-green/10'
+                        }`}
+                      >
+                        {bot.is_active ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                      </button>
+                      <button
+                        onClick={() => navigate('/bots')}
+                        aria-label="Bot settings"
+                        className="rounded-md p-1.5 text-text-secondary hover:bg-bg-input hover:text-text-primary transition-colors"
+                      >
+                        <Settings className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
         </motion.div>
 
         {/* Section 4: Market Ticker Tape */}

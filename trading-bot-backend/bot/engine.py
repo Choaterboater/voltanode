@@ -570,6 +570,66 @@ class LiveTradingEngine(PaperTradingEngine):
         # 3. Get portfolio for safety checks
         portfolio = self.get_portfolio(order.account_id)
 
+        # 3a. Reject SELLs when there's no broker position to sell. Crypto on
+        # Alpaca paper does not allow shorting, so unmatched sells just queue
+        # forever in 'pending'. Cheaper to drop them locally than to spam the
+        # broker each tick.
+        if order.side == OrderSide.SELL:
+            try:
+                broker_positions = self.broker.get_positions() if hasattr(self.broker, "get_positions") else []
+            except Exception:
+                broker_positions = []
+            held = 0.0
+            target = order.symbol.upper().replace("/", "").replace("-", "")
+            for p in broker_positions:
+                psym = str(p.get("symbol", "")).upper().replace("/", "").replace("-", "")
+                if psym == target or psym.startswith(target):
+                    try:
+                        held = float(p.get("qty", p.get("size", 0)) or 0)
+                    except (TypeError, ValueError):
+                        held = 0.0
+                    break
+            if held < order.quantity:
+                order.status = OrderStatus.REJECTED
+                self.submit_order(order, order.account_id)
+                return FillResult(
+                    order_id=order.id,
+                    symbol=order.symbol,
+                    filled_qty=0.0,
+                    filled_price=0.0,
+                    fee=0.0,
+                    slippage=0.0,
+                    timestamp=datetime.now(timezone.utc),
+                    side=order.side,
+                    realized_pnl=None,
+                    broker_order_id="",
+                )
+
+        # 3b. Per-strategy/symbol debounce: if there's already a pending order
+        # for the same (strategy, symbol, side) within the last few ticks, skip.
+        if order.strategy_id:
+            recent = [
+                o for o in self._orders.get(order.account_id, {}).values()
+                if (o.strategy_id == order.strategy_id
+                    and o.symbol == order.symbol
+                    and o.side == order.side
+                    and o.status in (OrderStatus.PENDING, OrderStatus.PARTIAL))
+            ]
+            if recent:
+                order.status = OrderStatus.REJECTED
+                return FillResult(
+                    order_id=order.id,
+                    symbol=order.symbol,
+                    filled_qty=0.0,
+                    filled_price=0.0,
+                    fee=0.0,
+                    slippage=0.0,
+                    timestamp=datetime.now(timezone.utc),
+                    side=order.side,
+                    realized_pnl=None,
+                    broker_order_id="",
+                )
+
         # 4. Safety validation
         self.safety_validator.validate_order(
             order,

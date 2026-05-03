@@ -13,6 +13,7 @@ class MeanReversionStrategy(BaseStrategy):
     """RSI + Bollinger Bands mean reversion strategy."""
 
     name = "mean_reversion"
+    SUPPORTS_MULTI_SYMBOL = True
     DEFAULT_CONFIG = {
         "rsi_period": 14,
         "rsi_overbought": 70,

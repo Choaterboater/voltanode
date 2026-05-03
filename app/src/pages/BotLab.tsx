@@ -24,21 +24,39 @@ import {
 } from '@/lib/api';
 
 const strategyIcons: Record<string, React.ReactNode> = {
-  Momentum: <TrendingUp className="h-4 w-4" />,
-  MeanReversion: <Activity className="h-4 w-4" />,
-  Grid: <Grid3X3 className="h-4 w-4" />,
-  Breakout: <Zap className="h-4 w-4" />,
-  MACD: <BarChart3 className="h-4 w-4" />,
-  Arbitrage: <Cpu className="h-4 w-4" />,
-  EnsembleML: <BrainCircuit className="h-4 w-4" />,
+  MomentumStrategy: <TrendingUp className="h-4 w-4" />,
+  MeanReversionStrategy: <Activity className="h-4 w-4" />,
+  GridStrategy: <Grid3X3 className="h-4 w-4" />,
+  BreakoutStrategy: <Zap className="h-4 w-4" />,
+  MACDStrategy: <BarChart3 className="h-4 w-4" />,
+  ArbitrageStrategy: <Cpu className="h-4 w-4" />,
+  EnsembleMLStrategy: <BrainCircuit className="h-4 w-4" />,
+  NewsSentimentStrategy: <Activity className="h-4 w-4" />,
 };
+
+const MULTI_SYMBOL_STRATEGIES = new Set(['momentum', 'macd', 'mean_reversion']);
+const POPULAR_CRYPTO = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'DOT', 'LINK', 'MATIC', 'LTC'];
+const POPULAR_STOCKS = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'TSLA', 'META', 'AMD', 'SPY', 'QQQ', 'NFLX', 'JPM'];
+
+type AssetClass = 'crypto' | 'stock';
 
 export default function BotLab() {
   const [strategies, setStrategies] = useState<ApiStrategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedStrategy, setSelectedStrategy] = useState<string>('Momentum');
+  const [selectedStrategy, setSelectedStrategy] = useState<string>('momentum');
+  const [assetClass, setAssetClass] = useState<AssetClass>('crypto');
+  const [symbolInput, setSymbolInput] = useState<string>('BTC');
   const [registering, setRegistering] = useState(false);
+
+  const isMultiCapable = MULTI_SYMBOL_STRATEGIES.has(selectedStrategy);
+  const POPULAR_SYMBOLS = assetClass === 'stock' ? POPULAR_STOCKS : POPULAR_CRYPTO;
+
+  const handleAssetClassChange = (next: AssetClass) => {
+    setAssetClass(next);
+    // Reset to a sensible default for the new asset class
+    setSymbolInput(next === 'stock' ? 'AAPL' : 'BTC');
+  };
 
   useEffect(() => {
     loadBots();
@@ -48,7 +66,7 @@ export default function BotLab() {
     try {
       setLoading(true);
       const res = await getStrategies();
-      setStrategies(res.strategies.filter((s) => s.is_active || s.metrics));
+      setStrategies(res.strategies);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load bots');
     } finally {
@@ -68,7 +86,18 @@ export default function BotLab() {
   async function handleCreateBot() {
     try {
       setRegistering(true);
-      await registerStrategy(selectedStrategy);
+      const tickers = symbolInput
+        .split(',')
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean);
+      if (tickers.length === 0) {
+        throw new Error('Enter at least one symbol (e.g. BTC or BTC,ETH,SOL)');
+      }
+      const config: Record<string, unknown> = {
+        asset_class: assetClass,
+        ...(tickers.length === 1 ? { symbol: tickers[0] } : { symbols: tickers }),
+      };
+      await registerStrategy(selectedStrategy, config);
       await loadBots();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create bot');
@@ -108,20 +137,99 @@ export default function BotLab() {
           <h2 className="mb-3 text-base font-semibold text-text-primary">Create New Bot</h2>
           <div className="flex flex-wrap items-end gap-3 xl:gap-4">
             <div>
+              <label className="mb-1 block text-xs text-text-muted">Asset class</label>
+              <div className="inline-flex rounded-md border border-border-subtle bg-bg-input p-0.5">
+                <button
+                  type="button"
+                  onClick={() => handleAssetClassChange('crypto')}
+                  className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                    assetClass === 'crypto'
+                      ? 'bg-accent-cyan text-text-inverse'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  Crypto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAssetClassChange('stock')}
+                  className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                    assetClass === 'stock'
+                      ? 'bg-accent-cyan text-text-inverse'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  Stocks
+                </button>
+              </div>
+            </div>
+            <div>
               <label className="mb-1 block text-xs text-text-muted">Strategy</label>
               <select
                 value={selectedStrategy}
                 onChange={(e) => setSelectedStrategy(e.target.value)}
                 className="rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan"
               >
-                <option value="Momentum">Momentum</option>
-                <option value="MeanReversion">Mean Reversion</option>
-                <option value="Grid">Grid</option>
-                <option value="Breakout">Breakout</option>
-                <option value="MACD">MACD</option>
-                <option value="Arbitrage">Arbitrage</option>
-                <option value="EnsembleML">ML Ensemble</option>
+                <option value="momentum">Momentum</option>
+                <option value="mean_reversion">Mean Reversion</option>
+                <option value="grid">Grid</option>
+                <option value="breakout">Breakout</option>
+                <option value="macd">MACD</option>
+                <option value="arbitrage">Arbitrage</option>
+                <option value="ensemble_ml">ML Ensemble</option>
+                <option value="news_sentiment">News Sentiment</option>
               </select>
+            </div>
+            <div className="flex flex-col">
+              <label className="mb-1 block text-xs text-text-muted">
+                {isMultiCapable ? 'Symbol(s) — comma-separated' : 'Symbol'}
+              </label>
+              <input
+                type="text"
+                value={symbolInput}
+                onChange={(e) => setSymbolInput(e.target.value)}
+                placeholder={isMultiCapable ? 'BTC, ETH, SOL' : 'BTC'}
+                className="rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan min-w-[14rem]"
+              />
+              <div className="mt-1 flex flex-wrap gap-1">
+                {POPULAR_SYMBOLS.slice(0, isMultiCapable ? 8 : 6).map((s) => {
+                  const currentTickers = symbolInput
+                    .split(',')
+                    .map((t) => t.trim().toUpperCase())
+                    .filter(Boolean);
+                  const isSelected = isMultiCapable
+                    ? currentTickers.includes(s)
+                    : currentTickers.length === 1 && currentTickers[0] === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => {
+                        setSymbolInput((prev) => {
+                          if (!isMultiCapable) return s;
+                          const tickers = prev
+                            .split(',')
+                            .map((t) => t.trim().toUpperCase())
+                            .filter(Boolean);
+                          // Use a Set so we never produce duplicates regardless
+                          // of how fast clicks land.
+                          const set = new Set(tickers);
+                          if (set.has(s)) set.delete(s);
+                          else set.add(s);
+                          return Array.from(set).join(', ');
+                        });
+                      }}
+                      className={`rounded border px-1.5 py-0.5 text-[10px] font-mono transition-colors ${
+                        isSelected
+                          ? 'border-accent-cyan bg-accent-cyan/10 text-accent-cyan'
+                          : 'border-border-subtle bg-bg-input/50 text-text-secondary hover:border-accent-cyan/50 hover:text-text-primary'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <button
               onClick={handleCreateBot}
@@ -136,6 +244,11 @@ export default function BotLab() {
               Create Bot
             </button>
           </div>
+          {isMultiCapable && (
+            <p className="mt-2 text-xs text-text-muted">
+              {selectedStrategy} supports multiple symbols in one bot — it scans each ticker independently and trades whichever signals first.
+            </p>
+          )}
         </motion.div>
 
         {/* Active Bots */}
@@ -149,6 +262,12 @@ export default function BotLab() {
             <div className="space-y-3">
               {strategies.map((bot, i) => {
                 const metrics = bot.metrics as Record<string, number> | null;
+                const cfg = bot.config as Record<string, unknown>;
+                const symbolsList = Array.isArray(cfg?.symbols) ? (cfg.symbols as string[]) : null;
+                const symbolLabel = symbolsList && symbolsList.length > 0
+                  ? symbolsList.join(', ')
+                  : String(cfg?.symbol ?? '—');
+                const assetClassLabel = String(cfg?.asset_class ?? 'crypto').toLowerCase();
                 return (
                   <motion.div
                     key={bot.strategy_id}
@@ -167,6 +286,10 @@ export default function BotLab() {
                           <Badge variant={bot.is_active ? 'success' : 'neutral'}>
                             {bot.is_active ? 'Running' : 'Paused'}
                           </Badge>
+                          <Badge variant={assetClassLabel === 'stock' ? 'info' : 'cyan'}>
+                            {assetClassLabel === 'stock' ? 'Stock' : 'Crypto'}
+                          </Badge>
+                          <span className="font-mono text-xs text-accent-cyan">{symbolLabel}</span>
                         </div>
                         <p className="text-xs text-text-muted">{bot.strategy_id}</p>
                       </div>

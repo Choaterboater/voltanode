@@ -315,13 +315,13 @@ brokers:
   alpaca:
     testnet: false
     paper: true
-    api_key_encrypted: gAAAAABp9ndtnGe6GFRN9RH8Gbdkl4TPu918altSwITn72g9XxvB4xzLNzH5e2BiKdtIoB7pxMjkS4AepYhZ4RoGF0Cs5NF8IrQenvuQ0_y_aQwo0qAP6CI=
-    api_secret_encrypted: gAAAAABp9ndtJ8bnvGdahoVH7VSOcEiKmy4zygywyxX_YOAwbdxaHmmGkPlfe4T7dUjRB6ksFVFfdPfRmfogoKnjCEodttcQhLKhER9_f7gMnSg4EpX_94zsvaazxZCgTNtAzCo577lk
+    api_key_encrypted: gAAAAABp96t8G49bTBIsu61mtg7TdlWu2SSKcJfUo1mONaXY_TgBadE54uj9XycDwV6zK1EmfZqBhX0G02w8YH_NZFK1sSxWhUEmoYSfP9K8CdI4sxcxax4=
+    api_secret_encrypted: gAAAAABp96t8rEkRfKKeY2qGP5Q5naJT61CMOeTvrebKvz-drRuUunNusPcxkAyTcVeAh9qbx0wzfbWWg9-hHE-VhuffYDxKw8y1H0mi2q0o00YPovRI_9puhxccZ_YXu7ZzbjZ_YpX8
   mock:
     testnet: false
     paper: false
-    api_key_encrypted: gAAAAABp9XdrDpTUrsTXd-i1hHUCXQyf2f42qu4fx9_X9U7sO7KOZM7uFSgSGM5vLBVJgMFGQbMxYc9ZUwgsgPY0C2sPwKP7sg==
-    api_secret_encrypted: gAAAAABp9XdrxiQMpFOjlLV1wYDX7fHbj_aiApDNZkMxct2aOp216tp1O2prIizqEwqVgVwnqb6lT0aonLQeDwW70xoC8ZzQDQ==
+    api_key_encrypted: ''
+    api_secret_encrypted: ''
 safety:
   max_daily_loss_pct: 5.0
   max_position_size_pct: 20.0

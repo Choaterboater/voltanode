@@ -9,6 +9,13 @@ from typing import AsyncGenerator
 import logging
 from pathlib import Path
 
+# Load .env (e.g. VOLTANODE_SECRET_KEY) before anything else reads os.environ.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from fastapi import FastAPI
 
 from utils.logging_config import setup_logging
@@ -24,6 +31,64 @@ from strategies.base import BaseStrategy
 from api.routes import portfolio, strategies, trades, backtest, market, advisor, settings, orders, news
 
 logger = logging.getLogger("volta.api")
+
+
+async def _run_news_loop(app: FastAPI) -> None:
+    """Background task: periodically fetch Alpaca news + score sentiment.
+
+    Runs every 5 min. Skips silently if news module isn't initialized
+    (e.g. no Alpaca keys). Scoring uses VADER if no LLM is configured.
+    """
+    # Wait for lifespan to finish wiring app.state.engine
+    for _ in range(30):
+        if hasattr(app.state, "engine"):
+            break
+        await asyncio.sleep(1)
+
+    while True:
+        try:
+            try:
+                from api.routes import news as news_routes
+                fetcher = news_routes._get_fetcher()
+                storage = news_routes._get_storage()
+                engine_n = news_routes._get_engine()
+                if fetcher is None or not (fetcher.api_key and fetcher.api_secret):
+                    pass
+                else:
+                    articles = await asyncio.to_thread(
+                        fetcher.fetch, None, 50, 24
+                    )
+                    new_count = 0
+                    analyzed_count = 0
+                    for article in articles:
+                        # Only score newly-saved articles. Articles already in
+                        # storage have already been scored — re-running burns
+                        # GPU cycles and creates duplicate sentiment rows.
+                        is_new = storage.save_article(article)
+                        if not is_new:
+                            continue
+                        new_count += 1
+                        try:
+                            results = engine_n.analyze(article)
+                            for r in results:
+                                storage.save_sentiment(r)
+                                analyzed_count += 1
+                        except Exception as exc:
+                            logger.warning(f"Sentiment analysis failed for article {article.id}: {exc}")
+                    if articles:
+                        logger.info(
+                            f"News loop: fetched={len(articles)} new={new_count} "
+                            f"analyzed={analyzed_count}"
+                        )
+            except Exception as exc:
+                logger.warning(f"News loop iteration failed: {exc}")
+
+            await asyncio.sleep(300)  # 5 min
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.exception(f"Unexpected error in news loop: {exc}")
+            await asyncio.sleep(300)
 
 
 async def _run_tick_loop(app: FastAPI) -> None:
@@ -53,27 +118,37 @@ async def _run_tick_loop(app: FastAPI) -> None:
                 await asyncio.sleep(interval)
                 continue
 
-            # Gather unique symbols and whether any strategy needs OHLCV
+            # Gather unique (symbol, asset_class) pairs across all active
+            # strategies. Each strategy may declare multiple symbols via
+            # config.symbols (list) or a single config.symbol.
             symbol_specs: dict[str, tuple[str, AssetClass, bool]] = {}
             for account_id, strat_list in engine._strategies.items():
                 for strategy in strat_list:
                     if not getattr(strategy, "is_active", True):
                         continue
 
-                    symbol = strategy.config.get("symbol", "BTC")
                     asset_class_str = strategy.config.get("asset_class", "crypto").upper()
                     try:
                         asset_class = AssetClass[asset_class_str]
                     except KeyError:
                         asset_class = AssetClass.CRYPTO
 
-                    cache_key = f"{symbol}_{asset_class.value}"
-                    needs_ohlcv = strategy.on_tick.__func__ is BaseStrategy.on_tick
-                    if cache_key in symbol_specs:
-                        _, _, existing_needs = symbol_specs[cache_key]
-                        symbol_specs[cache_key] = (symbol, asset_class, existing_needs or needs_ohlcv)
+                    # Resolve the strategy's configured symbol list.
+                    if hasattr(strategy, "configured_symbols"):
+                        scoped = strategy.configured_symbols()
                     else:
-                        symbol_specs[cache_key] = (symbol, asset_class, needs_ohlcv)
+                        scoped = []
+                    if not scoped:
+                        scoped = [strategy.config.get("symbol", "BTC")]
+
+                    needs_ohlcv = strategy.on_tick.__func__ is BaseStrategy.on_tick
+                    for symbol in scoped:
+                        cache_key = f"{symbol}_{asset_class.value}"
+                        if cache_key in symbol_specs:
+                            _, _, existing_needs = symbol_specs[cache_key]
+                            symbol_specs[cache_key] = (symbol, asset_class, existing_needs or needs_ohlcv)
+                        else:
+                            symbol_specs[cache_key] = (symbol, asset_class, needs_ohlcv)
 
             for cache_key, (symbol, asset_class, needs_ohlcv) in symbol_specs.items():
                 try:
@@ -127,11 +202,44 @@ def create_app() -> FastAPI:
         cache = DataCache(cache_dir=str(Path(config.app.data_dir) / "cache"))
         market_data = MarketData(cache=cache, config=config)
 
-        # Always create LiveTradingEngine with mock broker as default.
-        # This allows seamless live mode toggling without engine swapping.
+        # Restore the broker the user last had configured. If live_mode is
+        # enabled in config and a real broker has stored encrypted keys, connect
+        # to it on startup. Otherwise fall back to the mock broker (which
+        # supports seamless live-mode toggling without engine swapping).
         from brokers.registry import get_broker
-        broker = get_broker("mock")
-        broker.connect("mock_key", "mock_secret")
+
+        broker = None
+        if (
+            config.live_mode.enabled
+            and config.live_mode.default_broker
+            and config.live_mode.default_broker != "mock"
+        ):
+            broker_name = config.live_mode.default_broker
+            broker_cfg = config.brokers.get(broker_name)
+            if broker_cfg and broker_cfg.api_key_encrypted and broker_cfg.api_secret_encrypted:
+                try:
+                    from security.encryption import ApiKeyStore
+                    key_store = ApiKeyStore.from_env()
+                    real_broker = get_broker(broker_name)
+                    api_key = key_store.decrypt(broker_cfg.api_key_encrypted)
+                    api_secret = key_store.decrypt(broker_cfg.api_secret_encrypted)
+                    real_broker.connect(
+                        api_key, api_secret,
+                        testnet=getattr(broker_cfg, "testnet", True),
+                        paper=getattr(broker_cfg, "paper", True),
+                    )
+                    broker = real_broker
+                    logger.info(f"Restored live broker on startup: {broker_name}")
+                except Exception as exc:
+                    logger.warning(
+                        f"Could not restore live broker '{broker_name}' on startup: {exc}. "
+                        "Falling back to mock."
+                    )
+
+        if broker is None:
+            broker = get_broker("mock")
+            broker.connect("mock_key", "mock_secret")
+
         engine = LiveTradingEngine(config=config, broker=broker)
         engine.market_data = market_data
 
@@ -144,17 +252,33 @@ def create_app() -> FastAPI:
         app.state.engine = engine
         app.state.config = config
 
+        # Start engine so the tick loop actually drives strategies.
+        # Without this, _running stays False and on_tick is never called.
+        engine.start()
+
+        # Restore persisted bots so they survive restarts.
+        try:
+            restored = strategies.restore_strategies(engine)
+            if restored:
+                logger.info(f"Restored {restored} bot(s) from disk")
+        except Exception as exc:
+            logger.warning(f"Could not restore bots from disk: {exc}")
+
         # Start background tick loop
         tick_task = asyncio.create_task(_run_tick_loop(app))
+        # Start background news fetcher (Alpaca + sentiment)
+        news_task = asyncio.create_task(_run_news_loop(app))
 
         yield
 
         # Shutdown
         tick_task.cancel()
-        try:
-            await tick_task
-        except asyncio.CancelledError:
-            pass
+        news_task.cancel()
+        for task in (tick_task, news_task):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         engine.stop()
 
     app = FastAPI(
@@ -189,19 +313,35 @@ def create_app() -> FastAPI:
     app.include_router(settings.router, prefix="/settings", tags=["Settings"])
     app.include_router(news.router, prefix="/news", tags=["News"])
 
-    # Initialize news module with config from environment
+    # Initialize news module — prefer encrypted Alpaca keys from config.yaml
+    # (the same set the user entered in Settings); fall back to env vars.
     try:
         from api.routes.news import init_news
         provider = os.environ.get("LLM_PROVIDER", "")
+
+        alpaca_key = os.environ.get("ALPACA_API_KEY", "")
+        alpaca_sec = os.environ.get("ALPACA_SECRET_KEY", "")
+        if not (alpaca_key and alpaca_sec):
+            try:
+                from security.encryption import ApiKeyStore
+                broker_cfg = config.brokers.get("alpaca")
+                if broker_cfg and broker_cfg.api_key_encrypted and broker_cfg.api_secret_encrypted:
+                    key_store = ApiKeyStore.from_env()
+                    alpaca_key = key_store.decrypt(broker_cfg.api_key_encrypted)
+                    alpaca_sec = key_store.decrypt(broker_cfg.api_secret_encrypted)
+                    logger.info("News: using Alpaca keys decrypted from config")
+            except Exception as exc:
+                logger.warning(f"News: could not decrypt Alpaca keys from config: {exc}")
+
         init_news(
-            api_key=os.environ.get("ALPACA_API_KEY", ""),
-            api_secret=os.environ.get("ALPACA_SECRET_KEY", ""),
+            api_key=alpaca_key,
+            api_secret=alpaca_sec,
             llm_provider=provider,
             llm_api_key=os.environ.get("LLM_API_KEY", "") if provider.lower() != "ollama" else "",
             llm_model=os.environ.get("LLM_MODEL", ""),
         )
-    except Exception:
-        pass  # News is optional
+    except Exception as exc:
+        logger.warning(f"News init failed: {exc}")
 
     @app.get("/health")
     async def health_check() -> dict:

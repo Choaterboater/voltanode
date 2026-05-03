@@ -35,3 +35,9 @@ data/cache/
 *.patch
 .env
 .env.local
+
+# Runtime state — created at startup, regenerated as needed
+trading-bot-backend/data/registered_strategies.json
+trading-bot-backend/data/cache/
+trading-bot-backend/data/news.db
+trading-bot-backend/.env

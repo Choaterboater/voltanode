@@ -130,18 +130,41 @@ class BaseStrategy(ABC):
 
     # ── Lifecycle ──
 
+    #: Strategies that should fire on multiple symbols within a single bot
+    #: instance set this to True. Single-symbol strategies (Grid, Breakout,
+    #: Arbitrage) leave it False.
+    SUPPORTS_MULTI_SYMBOL: bool = False
+
+    def configured_symbols(self) -> List[str]:
+        """Return the list of symbols this strategy instance is scoped to.
+
+        Reads ``config.symbols`` (list) or ``config.symbol`` (single). Empty
+        list means 'no symbol filter' (legacy behaviour).
+        """
+        symbols = self.config.get("symbols")
+        if symbols and isinstance(symbols, (list, tuple)):
+            return [str(s).strip().upper() for s in symbols if str(s).strip()]
+        sym = self.config.get("symbol")
+        if sym:
+            return [str(sym).strip().upper()]
+        return []
+
+    def _matches_symbol(self, tick_symbol: str) -> bool:
+        """True when the tick's symbol is in this strategy's scope."""
+        configured = self.configured_symbols()
+        if not configured:
+            return True  # no filter configured → legacy: accept all
+        target = str(tick_symbol).strip().upper()
+        return target in configured
+
     def on_tick(self, tick: TickData, portfolio: Portfolio, **kwargs: Any) -> Signal | None:
         """Called on every price tick.
 
-        Default implementation uses provided OHLCV data and calls generate_signal.
-        Override for tick-level strategies.
-
-        Args:
-            tick: Price tick data.
-            portfolio: Portfolio for the account.
-            **kwargs: Extra data from the engine tick loop.  If ``ohlcv_data``
-                is supplied it is forwarded to :meth:`generate_signal`.
+        Default implementation filters by configured symbol(s) and calls
+        ``generate_signal`` with the OHLCV data when present.
         """
+        if not self._matches_symbol(tick.symbol):
+            return None
         ohlcv_data = kwargs.get("ohlcv_data")
         if ohlcv_data is not None and len(ohlcv_data) > 0:
             ohlcv_data = ohlcv_data.copy()

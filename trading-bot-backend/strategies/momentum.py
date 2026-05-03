@@ -15,6 +15,7 @@ class MomentumStrategy(BaseStrategy):
     """EMA crossover trend following strategy."""
 
     name = "momentum"
+    SUPPORTS_MULTI_SYMBOL = True
     DEFAULT_CONFIG = {
         "fast_ema": 12,
         "slow_ema": 26,

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   getPortfolio,
   getPrices,
@@ -98,40 +98,46 @@ export function useDashboardData() {
   const [strategies, setStrategies] = useState<ApiStrategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const cancelledRef = useRef(false);
+  const hasLoadedRef = useRef(false);
+
+  const load = useCallback(async () => {
+    try {
+      // Only show the full-page spinner on the very first load. Background
+      // polls keep stale data on screen so the dashboard doesn't flash.
+      if (!hasLoadedRef.current) setLoading(true);
+      const [portRes, priceRes, stratRes, tradeRes] = await Promise.all([
+        getPortfolio(),
+        getPrices(CRYPTO_SYMBOLS),
+        getStrategies(),
+        getTrades(),
+      ]);
+      if (cancelledRef.current) return;
+      setPortfolio(mapPortfolio(portRes));
+      setPositions(mapPositions(portRes));
+      setTickers(mapTickers(priceRes));
+      setStrategies(stratRes.strategies);
+      setTrades(mapTrades(tradeRes));
+      setError(null);
+      hasLoadedRef.current = true;
+    } catch (e) {
+      if (cancelledRef.current) return;
+      setError(e instanceof Error ? e.message : 'Failed to load dashboard data');
+    } finally {
+      if (!cancelledRef.current) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        setLoading(true);
-        const [portRes, priceRes, stratRes, tradeRes] = await Promise.all([
-          getPortfolio(),
-          getPrices(CRYPTO_SYMBOLS),
-          getStrategies(),
-          getTrades(),
-        ]);
-        if (cancelled) return;
-        setPortfolio(mapPortfolio(portRes));
-        setPositions(mapPositions(portRes));
-        setTickers(mapTickers(priceRes));
-        setStrategies(stratRes.strategies);
-        setTrades(mapTrades(tradeRes));
-      } catch (e) {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : 'Failed to load dashboard data');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
+    cancelledRef.current = false;
+    hasLoadedRef.current = false;
     load();
-    const interval = setInterval(load, 10000);
+    const interval = setInterval(load, 15000);
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [load]);
 
   return {
     portfolio,
@@ -141,6 +147,7 @@ export function useDashboardData() {
     strategies,
     loading,
     error,
+    refetch: load,
     // Keep mock fallbacks for rich UI sections backend doesn't serve yet
     bots,
     equityCurveData,

@@ -28,6 +28,26 @@ STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
 }
 
 
+def _normalize_strategy_type(name: str) -> str:
+    """Map UI-style names ('Momentum', 'MeanReversion', 'EnsembleML', 'MACD')
+    to the snake_case registry keys used internally."""
+    import re
+    raw = (name or "").strip()
+    if raw in STRATEGY_REGISTRY:
+        return raw
+    lowered = raw.lower()
+    if lowered in STRATEGY_REGISTRY:
+        return lowered
+    # CamelCase/PascalCase → snake_case, handling acronym runs.
+    # "MyName" -> "my_name", "EnsembleML" -> "ensemble_ml", "MACDX" -> "macdx"
+    s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", raw)
+    s2 = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1)
+    snake = s2.lower()
+    if snake in STRATEGY_REGISTRY:
+        return snake
+    return raw
+
+
 def StrategyFactory(
     strategy_type: str,
     strategy_id: str | None = None,
@@ -35,8 +55,11 @@ def StrategyFactory(
 ) -> BaseStrategy:
     """Factory function to create a strategy instance by type name.
 
+    Accepts either snake_case registry keys ("momentum", "mean_reversion") or
+    PascalCase UI labels ("Momentum", "MeanReversion", "EnsembleML").
+
     Args:
-        strategy_type: Strategy type name (e.g., "momentum", "macd").
+        strategy_type: Strategy type name.
         strategy_id: Unique strategy identifier. Defaults to a generated ID.
         config: Strategy-specific configuration.
 
@@ -44,15 +67,16 @@ def StrategyFactory(
         Strategy instance.
 
     Raises:
-        ValueError: If strategy type is not found in registry.
+        ValueError: If strategy type cannot be resolved against the registry.
     """
-    if strategy_type not in STRATEGY_REGISTRY:
+    resolved = _normalize_strategy_type(strategy_type)
+    if resolved not in STRATEGY_REGISTRY:
         raise ValueError(
             f"Unknown strategy type: {strategy_type}. "
             f"Available: {list(STRATEGY_REGISTRY.keys())}"
         )
-    strategy_class = STRATEGY_REGISTRY[strategy_type]
-    sid = strategy_id or f"{strategy_type}_{id(strategy_class)}"
+    strategy_class = STRATEGY_REGISTRY[resolved]
+    sid = strategy_id or f"{resolved}_{id(strategy_class)}"
     return strategy_class(sid, config or {})
 
 

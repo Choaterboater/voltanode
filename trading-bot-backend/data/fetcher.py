@@ -539,8 +539,10 @@ class MarketData:
             OHLCV DataFrame.
         """
         if asset_class == AssetClass.CRYPTO:
-            days_map = {"1d": 30, "1h": 30, "15m": 7, "1w": 180}
-            days = days_map.get(timeframe, 30)
+            # 365d gives enough history for EMA(200) trend filters that the
+            # strategies need. CoinGecko's free /market_chart accepts up to 365.
+            days_map = {"1d": 365, "1h": 90, "15m": 14, "1w": 365}
+            days = days_map.get(timeframe, 365)
             df = await self.get_crypto_ohlcv(symbol, days=days)
             return df.tail(limit).reset_index(drop=True)
         elif asset_class == AssetClass.STOCK:
