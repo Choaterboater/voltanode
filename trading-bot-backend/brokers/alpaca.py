@@ -234,15 +234,24 @@ class AlpacaBroker(BrokerAdapter):
         }
 
         sym = order.symbol.upper()
-        if self._is_crypto_symbol(sym):
+        is_crypto = self._is_crypto_symbol(sym)
+        if is_crypto:
             sym = self._normalize_crypto_symbol(sym)
+
+        # Alpaca requires fractional equity orders to be DAY tif; GTC fails with
+        # 422 "fractional orders must be DAY orders". Detect fractional and
+        # downgrade. Crypto is fine with whatever was set.
+        is_fractional_equity = (not is_crypto) and (float(order.quantity) % 1 != 0)
+        tif = (order.time_in_force.lower() if order.time_in_force else "day")
+        if is_fractional_equity:
+            tif = "day"
 
         body = {
             "symbol": sym,
             "qty": str(order.quantity),
             "side": side_map[order.side],
             "type": type_map.get(order.order_type, "market"),
-            "time_in_force": order.time_in_force.lower() if order.time_in_force else "day",
+            "time_in_force": tif,
             "client_order_id": order.id,
         }
 
