@@ -228,11 +228,15 @@ def _openrouter_model_chain() -> List[str]:
     if fb_env:
         fallbacks = [m.strip() for m in fb_env.split(",") if m.strip()]
     else:
+        # Curated free-tier chain — verified live on OpenRouter (snapshot
+        # taken in this build; query /api/v1/models to refresh). Diversified
+        # across vendors so one provider's 429 doesn't kill the whole chain.
         fallbacks = [
-            "qwen/qwen-2.5-72b-instruct:free",
-            "google/gemma-2-27b-it:free",
+            "qwen/qwen3-next-80b-a3b-instruct:free",
+            "google/gemma-4-31b-it:free",
             "meta-llama/llama-3.3-70b-instruct:free",
-            "deepseek/deepseek-chat:free",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "tencent/hy3-preview:free",
         ]
     chain: List[str] = []
     for m in [primary, *fallbacks]:
