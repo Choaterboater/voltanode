@@ -78,8 +78,47 @@ export interface AnalysisResult {
   llm_commentary: LLMCommentary | null;
 }
 
+export interface DimensionScore {
+  name: string;
+  score: number;
+  weight: number;
+  label: string;
+  rationale: string;
+  details?: Record<string, unknown>;
+}
+
+export interface ResearchReport {
+  symbol: string;
+  display_name: string;
+  asset_type: string;
+  current_price: number;
+  overall_score: number;
+  overall_label: string;
+  confidence: number;
+  optimal_timeframe: string;
+  fundamental: DimensionScore;
+  technical: DimensionScore;
+  sentiment: DimensionScore;
+  next_earnings_date: string | null;
+  analyst_target_median: number | null;
+  analyst_count: number | null;
+  sector: string;
+  industry: string;
+  investment_thesis: string;
+  key_drivers: string[];
+  bull_case: string;
+  bear_case: string;
+  action_plan: Record<string, string>;
+  bottom_line: string;
+  llm_model: string;
+  fundamentals_raw: Record<string, unknown>;
+  generated_at: string;
+}
+
 export function useAdvisor() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [research, setResearch] = useState<ResearchReport | null>(null);
+  const [researchLoading, setResearchLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,6 +131,7 @@ export function useAdvisor() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setResearch(null);
     try {
       const url = `${API_BASE}/advisor/analyze?symbol=${encodeURIComponent(symbol)}&asset_type=${assetType}&lookback_days=${lookbackDays}&advanced=${advanced ? 'true' : 'false'}`;
       const res = await fetch(url, {
@@ -113,5 +153,31 @@ export function useAdvisor() {
     }
   }, []);
 
-  return { result, loading, error, analyze };
+  const fetchResearch = useCallback(async (
+    symbol: string,
+    assetType: 'crypto' | 'stock' = 'stock',
+    lookbackDays = 365,
+    advanced = false,
+  ) => {
+    setResearchLoading(true);
+    try {
+      const url = `${API_BASE}/advisor/research?symbol=${encodeURIComponent(symbol)}&asset_type=${assetType}&lookback_days=${lookbackDays}&advanced=${advanced ? 'true' : 'false'}`;
+      const res = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const data: ResearchReport = await res.json();
+      setResearch(data);
+      return data;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Research failed';
+      setError(msg);
+      throw e;
+    } finally {
+      setResearchLoading(false);
+    }
+  }, []);
+
+  return { result, research, loading, researchLoading, error, analyze, fetchResearch };
 }

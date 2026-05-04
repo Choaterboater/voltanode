@@ -228,6 +228,157 @@ function PriceChart({ chartData }: { chartData: { timestamps: string[]; close: n
   );
 }
 
+// ── Research Report (Multi-Dimensional) Card ──
+function ResearchReportCard({ report }: { report: import('@/hooks/useAdvisor').ResearchReport }) {
+  const dimColor = (label: string) =>
+    label.includes('NEGATIVE') ? 'text-danger-red'
+    : label.includes('POSITIVE') ? 'text-success-green'
+    : 'text-warning-amber';
+  const verdictColor = (label: string) =>
+    label.includes('STRONG_BUY') || label === 'BUY' ? 'text-success-green'
+    : label.includes('SELL') ? 'text-danger-red'
+    : 'text-warning-amber';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.05 }}
+      className="rounded-[10px] border border-accent-cyan/30 bg-bg-surface p-5"
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between border-b border-border-subtle pb-3">
+        <div>
+          <p className="text-xs uppercase tracking-wider text-accent-cyan">
+            Research Report{report.llm_model && ` · ${report.llm_model}`}
+          </p>
+          <h3 className="mt-1 text-2xl font-bold text-text-primary">
+            Should I Buy or Sell {report.symbol}?
+          </h3>
+        </div>
+        <div className="text-right">
+          <p className={`text-2xl font-bold ${verdictColor(report.overall_label)}`}>
+            {report.overall_label.replace('_', ' ')}
+          </p>
+          <p className="text-xs text-text-muted">
+            {report.confidence}% confidence · {report.optimal_timeframe}
+          </p>
+        </div>
+      </div>
+
+      {/* Three dimensions */}
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {[report.fundamental, report.technical, report.sentiment].map((dim) => (
+          <div key={dim.name} className="rounded-md border border-border-subtle bg-bg-input/40 p-3">
+            <div className="flex items-baseline justify-between">
+              <span className="text-xs uppercase text-text-muted">{dim.name}</span>
+              <span className="text-[10px] text-text-muted">{Math.round(dim.weight * 100)}% weight</span>
+            </div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className={`font-mono text-2xl font-bold ${dimColor(dim.label)}`}>
+                {dim.score}
+              </span>
+              <span className="text-xs text-text-muted">/100</span>
+              <span className={`ml-auto text-[10px] font-medium ${dimColor(dim.label)}`}>
+                {dim.label}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-text-secondary leading-snug">{dim.rationale}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Investment Thesis */}
+      {report.investment_thesis && (
+        <div className="mt-4">
+          <h4 className="mb-1 text-xs uppercase tracking-wider text-text-muted">Investment Thesis</h4>
+          <p className="text-sm text-text-primary leading-relaxed">{report.investment_thesis}</p>
+        </div>
+      )}
+
+      {/* Key drivers */}
+      {report.key_drivers && report.key_drivers.length > 0 && (
+        <div className="mt-3">
+          <h4 className="mb-1 text-xs uppercase tracking-wider text-text-muted">Key Drivers</h4>
+          <ol className="ml-4 list-decimal space-y-1 text-sm text-text-secondary">
+            {report.key_drivers.map((d, i) => <li key={i}>{d}</li>)}
+          </ol>
+        </div>
+      )}
+
+      {/* Bull / Bear */}
+      {(report.bull_case || report.bear_case) && (
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {report.bull_case && (
+            <div className="rounded-md border border-success-green/30 bg-success-green/5 p-3">
+              <p className="text-xs font-semibold text-success-green">BULL CASE</p>
+              <p className="mt-1 text-sm text-text-secondary leading-relaxed">{report.bull_case}</p>
+            </div>
+          )}
+          {report.bear_case && (
+            <div className="rounded-md border border-danger-red/30 bg-danger-red/5 p-3">
+              <p className="text-xs font-semibold text-danger-red">BEAR CASE</p>
+              <p className="mt-1 text-sm text-text-secondary leading-relaxed">{report.bear_case}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Action plan per investor type */}
+      {report.action_plan && Object.keys(report.action_plan).length > 0 && (
+        <div className="mt-3">
+          <h4 className="mb-1 text-xs uppercase tracking-wider text-text-muted">Action Plan</h4>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {Object.entries(report.action_plan).map(([who, action]) => (
+              <div key={who} className="rounded-md border border-border-subtle bg-bg-input/40 p-2 text-xs">
+                <span className="font-semibold text-text-primary capitalize">
+                  {who.replace(/_/g, ' ')}:
+                </span>{' '}
+                <span className="text-text-secondary">{action}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Catalysts strip */}
+      {(report.next_earnings_date || report.analyst_target_median) && (
+        <div className="mt-3 flex flex-wrap gap-3 rounded-md border border-border-subtle bg-bg-input/40 p-3 text-xs">
+          {report.next_earnings_date && (
+            <div>
+              <span className="text-text-muted">Next earnings:</span>{' '}
+              <span className="font-mono text-text-primary">{report.next_earnings_date}</span>
+            </div>
+          )}
+          {report.analyst_target_median && (
+            <div>
+              <span className="text-text-muted">Analyst median target:</span>{' '}
+              <span className="font-mono text-text-primary">${report.analyst_target_median.toFixed(2)}</span>
+              {report.analyst_count && (
+                <span className="ml-1 text-text-muted">({report.analyst_count} analysts)</span>
+              )}
+            </div>
+          )}
+          {report.sector && (
+            <div>
+              <span className="text-text-muted">Sector:</span>{' '}
+              <span className="text-text-primary">{report.sector}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Bottom line */}
+      {report.bottom_line && (
+        <div className="mt-3 rounded-md border-l-2 border-accent-cyan bg-accent-cyan/5 p-3">
+          <p className="text-xs uppercase tracking-wider text-accent-cyan">Bottom Line</p>
+          <p className="mt-1 text-sm font-medium text-text-primary leading-relaxed">{report.bottom_line}</p>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 // ── LLM Commentary Card ──
 function LLMCommentaryCard({ commentary, taConfidence }: { commentary: LLMCommentary; taConfidence: number }) {
   const agreementColor =
@@ -326,7 +477,8 @@ export default function Advisor() {
   const [assetType, setAssetType] = useState<'crypto' | 'stock'>(navState?.assetType || 'crypto');
   const [timeRange, setTimeRange] = useState<TimeRange>('90d');
   const [advanced, setAdvanced] = useState<boolean>(false);
-  const { result, loading, error, analyze } = useAdvisor();
+  const [researchMode, setResearchMode] = useState<boolean>(false);
+  const { result, research, loading, researchLoading, error, analyze, fetchResearch } = useAdvisor();
 
   useEffect(() => {
     if (navState?.symbol) {
@@ -343,6 +495,10 @@ export default function Advisor() {
     }
     try {
       await analyze(symbol.trim(), assetType, rangeToDays(timeRange), advanced);
+      // If Research mode is on, kick off the deeper report in parallel.
+      if (researchMode) {
+        fetchResearch(symbol.trim(), assetType, rangeToDays(timeRange), advanced).catch(() => {});
+      }
     } catch {
       toast.error('Analysis failed. Check the symbol and try again.');
     }
@@ -450,8 +606,20 @@ export default function Advisor() {
             </button>
           </div>
 
-          {/* Advanced toggle — routes the LLM call to OpenRouter (cloud) */}
-          <div className="mt-3 flex items-center justify-end gap-2">
+          {/* Advanced + Research toggles */}
+          <div className="mt-3 flex items-center justify-end gap-4">
+            <label className="inline-flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={researchMode}
+                onChange={(e) => setResearchMode(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-border-subtle bg-bg-input accent-accent-cyan"
+              />
+              <span className="text-xs text-text-muted">
+                Research mode
+                {researchMode && <span className="ml-1 text-accent-cyan">— multi-dimensional</span>}
+              </span>
+            </label>
             <label className="inline-flex items-center gap-1.5 cursor-pointer">
               <input
                 type="checkbox"
@@ -563,6 +731,17 @@ export default function Advisor() {
                 {/* LLM Commentary */}
                 {result.llm_commentary && <LLMCommentaryCard commentary={result.llm_commentary} taConfidence={result.confidence} />}
               </div>
+
+              {/* Multi-Dimensional Research Report */}
+              {researchLoading && !research && (
+                <div className="rounded-[10px] border border-accent-cyan/30 bg-bg-surface p-5">
+                  <div className="flex items-center gap-3 text-sm text-text-muted">
+                    <Loader2 className="h-4 w-4 animate-spin text-accent-cyan" />
+                    Generating multi-dimensional research report…
+                  </div>
+                </div>
+              )}
+              {research && <ResearchReportCard report={research} />}
 
               {/* Chart */}
               {result.chart_data && result.chart_data.ohlcv && result.chart_data.ohlcv.close && result.chart_data.ohlcv.close.length > 0 && (
