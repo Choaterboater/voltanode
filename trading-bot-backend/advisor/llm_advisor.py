@@ -212,6 +212,35 @@ def _call_ollama(prompt: str, model: str, timeout: float = 60.0) -> Optional[str
         return None
 
 
+def _openrouter_model_chain() -> List[str]:
+    """Build the ordered list of OpenRouter model ids to try.
+
+    The configured ``OPENROUTER_MODEL`` (or ``LLM_MODEL`` if not set) goes
+    first; then a small free-tier fallback chain so a single 429 / outage
+    doesn't kill the Advanced path. ``OPENROUTER_FALLBACK_MODELS`` (comma-
+    separated) overrides the default fallback list.
+    """
+    primary = (
+        os.environ.get("OPENROUTER_MODEL")
+        or os.environ.get("LLM_MODEL", "qwen/qwen-2.5-72b-instruct:free")
+    ).strip()
+    fb_env = os.environ.get("OPENROUTER_FALLBACK_MODELS", "").strip()
+    if fb_env:
+        fallbacks = [m.strip() for m in fb_env.split(",") if m.strip()]
+    else:
+        fallbacks = [
+            "qwen/qwen-2.5-72b-instruct:free",
+            "google/gemma-2-27b-it:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "deepseek/deepseek-chat:free",
+        ]
+    chain: List[str] = []
+    for m in [primary, *fallbacks]:
+        if m and m not in chain:
+            chain.append(m)
+    return chain
+
+
 def _call_openai_compat(prompt: str, model: str, base_url: str, api_key: str, timeout: float = 60.0) -> Optional[str]:
     """OpenAI-compatible Chat Completions endpoint (also works for OpenRouter)."""
     try:
@@ -354,11 +383,17 @@ def generate_commentary(
         if not api_key:
             logger.warning("Advanced LLM requested but OPENROUTER_API_KEY not set")
             return None
-        model_name = (
-            os.environ.get("OPENROUTER_MODEL")
-            or os.environ.get("LLM_MODEL", "anthropic/claude-3.5-sonnet")
-        )
-        raw = _call_openai_compat(prompt, model_name, "https://openrouter.ai/api/v1", api_key)
+        # Fallback chain — try the configured model first, then drop down
+        # through a list of free OpenRouter models so a single 429 doesn't
+        # collapse the Advanced path.
+        models = _openrouter_model_chain()
+        for candidate in models:
+            raw = _call_openai_compat(prompt, candidate, "https://openrouter.ai/api/v1", api_key)
+            if raw:
+                model_name = candidate
+                break
+        if not raw:
+            logger.warning(f"All OpenRouter models in chain failed: {models}")
     elif provider == "anthropic":
         api_key = os.environ.get("LLM_API_KEY", "")
         if not api_key:

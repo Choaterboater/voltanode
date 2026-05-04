@@ -38,7 +38,14 @@ class SentimentEngine:
         """
         self.llm_provider = llm_provider or os.environ.get("LLM_PROVIDER", "")
         self.llm_api_key = llm_api_key or os.environ.get("LLM_API_KEY", "")
-        self.llm_model = llm_model or os.environ.get("LLM_MODEL", "")
+        # News sentiment is high-volume — fires once per article during the
+        # 5-min news loop. Prefer LLM_FAST_MODEL when set so the heavy
+        # research/advisor model doesn't bog down 50+ scoring calls per cycle.
+        self.llm_model = (
+            llm_model
+            or os.environ.get("LLM_FAST_MODEL")
+            or os.environ.get("LLM_MODEL", "")
+        )
         self.hybrid_mode = hybrid_mode
         self.hybrid_threshold = hybrid_threshold
         self._vader = None

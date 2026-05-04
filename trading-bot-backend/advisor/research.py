@@ -513,20 +513,37 @@ def _generate_narrative(
 
 
 def _call_research_llm(prompt: str, advanced: bool) -> Tuple[Optional[str], str]:
-    """Dispatch to OpenRouter when advanced, else local Ollama."""
-    if advanced:
-        api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY", "")
-        if not api_key:
-            logger.warning("Advanced research requested but OPENROUTER_API_KEY not set")
-            return None, ""
-        model = (
-            os.environ.get("OPENROUTER_MODEL")
-            or os.environ.get("LLM_MODEL", "anthropic/claude-3.5-sonnet")
-        )
-        return _call_openai_compat(prompt, model, "https://openrouter.ai/api/v1", api_key), model
+    """Dispatch to OpenRouter primarily; fall back to local Ollama on failure.
 
-    # Default: local Ollama
-    model = os.environ.get("LLM_MODEL", "llama3.1:8b")
+    The provider preference is:
+      1. OpenRouter (cloud Qwen 72B free by default — fast, smart)
+      2. Local Ollama (offline fallback when OpenRouter unconfigured / down)
+
+    ``advanced=True`` forces OpenRouter and refuses the Ollama fallback —
+    used when the user explicitly wants cloud-only quality.
+    """
+    api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY", "")
+
+    # Try OpenRouter first when key is set
+    if api_key:
+        from advisor.llm_advisor import _openrouter_model_chain
+        chain = _openrouter_model_chain()
+        for candidate in chain:
+            raw = _call_openai_compat(prompt, candidate, "https://openrouter.ai/api/v1", api_key)
+            if raw:
+                return raw, candidate
+        if advanced:
+            logger.warning(f"All OpenRouter models failed and advanced=True (no Ollama fallback)")
+            return None, ""
+
+    if advanced:
+        # Advanced explicitly requested but no key → fail closed instead of
+        # silently degrading to local
+        logger.warning("Advanced research requested but OPENROUTER_API_KEY not set")
+        return None, ""
+
+    # Offline fallback — local Ollama
+    model = os.environ.get("LOCAL_LLM_MODEL") or "qwen2.5:14b-instruct-q4_K_M"
     return _call_ollama(prompt, model), model
 
 
