@@ -228,15 +228,22 @@ def _openrouter_model_chain() -> List[str]:
     if fb_env:
         fallbacks = [m.strip() for m in fb_env.split(",") if m.strip()]
     else:
-        # Curated free-tier chain — verified live on OpenRouter (snapshot
-        # taken in this build; query /api/v1/models to refresh). Diversified
-        # across vendors so one provider's 429 doesn't kill the whole chain.
+        # Curated free-tier chain — verified live on OpenRouter and ordered
+        # by observed latency × reliability. Snapshot from this build's
+        # smoke tests (re-probe via the /api/v1/models endpoint to refresh).
+        # Diversified across 7 vendors so one provider's 429 doesn't kill
+        # the whole chain. Fast small responders go first; large fallbacks
+        # last so we don't pay big-model latency unnecessarily.
         fallbacks = [
-            "qwen/qwen3-next-80b-a3b-instruct:free",
-            "google/gemma-4-31b-it:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "nvidia/nemotron-3-super-120b-a12b:free",
-            "tencent/hy3-preview:free",
+            "openai/gpt-oss-120b:free",                # ~1.6s, 120B, very reliable
+            "inclusionai/ling-2.6-1t:free",            # ~1.7s, 1T MoE, fast
+            "nvidia/nemotron-3-super-120b-a12b:free",  # known stable 120B
+            "minimax/minimax-m2.5:free",               # ~10s, 196K ctx, decent
+            "z-ai/glm-4.5-air:free",                   # solid, sometimes wraps JSON in fences
+            "qwen/qwen3-next-80b-a3b-instruct:free",   # 80B Qwen3, frequently 429s
+            "google/gemma-4-31b-it:free",              # Gemma 4
+            "meta-llama/llama-3.3-70b-instruct:free",  # Llama 3.3 70B
+            "tencent/hy3-preview:free",                # Hunyuan 3 preview
         ]
     chain: List[str] = []
     for m in [primary, *fallbacks]:

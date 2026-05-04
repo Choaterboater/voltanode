@@ -373,12 +373,19 @@ def create_app() -> FastAPI:
             except Exception as exc:
                 logger.warning(f"News: could not decrypt Alpaca keys from config: {exc}")
 
+        # Resolve LLM key: provider-specific env first, then generic LLM_API_KEY,
+        # so news sentiment also gets cloud LLM when OPENROUTER_API_KEY is set.
+        llm_key = ""
+        if provider.lower() == "openrouter":
+            llm_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY", "")
+        elif provider.lower() != "ollama":
+            llm_key = os.environ.get("LLM_API_KEY", "")
         init_news(
             api_key=alpaca_key,
             api_secret=alpaca_sec,
             llm_provider=provider,
-            llm_api_key=os.environ.get("LLM_API_KEY", "") if provider.lower() != "ollama" else "",
-            llm_model=os.environ.get("LLM_MODEL", ""),
+            llm_api_key=llm_key,
+            llm_model=os.environ.get("LLM_FAST_MODEL") or os.environ.get("LLM_MODEL", ""),
         )
     except Exception as exc:
         logger.warning(f"News init failed: {exc}")

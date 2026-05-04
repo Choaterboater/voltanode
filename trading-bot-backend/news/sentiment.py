@@ -107,8 +107,10 @@ class SentimentEngine:
         """
         if not self.llm_provider:
             return None
-        # Ollama runs locally and does not need an API key
-        if not self.llm_api_key and self.llm_provider.lower() != "ollama":
+        # Ollama runs locally and does not need an API key.
+        # OpenRouter reads OPENROUTER_API_KEY internally — let it through.
+        provider = self.llm_provider.lower()
+        if not self.llm_api_key and provider not in ("ollama", "openrouter"):
             return None
 
         prompt = self._build_prompt(article, symbol)
@@ -122,6 +124,8 @@ class SentimentEngine:
                 result = self._call_openai(prompt)
             elif self.llm_provider.lower() == "ollama":
                 result = self._call_ollama(prompt)
+            elif self.llm_provider.lower() == "openrouter":
+                result = self._call_openrouter(prompt)
             else:
                 logger.warning(f"Unknown LLM provider: {self.llm_provider}")
                 return None
@@ -212,6 +216,49 @@ class SentimentEngine:
         )
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
+
+    def _call_openrouter(self, prompt: str) -> str:
+        """Call OpenRouter through the shared advisor model chain.
+
+        Walks the same diversified free-tier fallback list used by the
+        advisor / research paths, so a single 429 doesn't kill the whole
+        sentiment pipeline. Returns the first non-empty response.
+        """
+        import os, requests
+        from advisor.llm_advisor import _openrouter_model_chain
+
+        api_key = (
+            self.llm_api_key
+            or os.environ.get("OPENROUTER_API_KEY")
+            or os.environ.get("LLM_API_KEY", "")
+        )
+        if not api_key:
+            raise RuntimeError("OPENROUTER_API_KEY not set for news sentiment LLM path")
+
+        last_err: Optional[Exception] = None
+        for model in _openrouter_model_chain():
+            try:
+                resp = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.1,
+                        "max_tokens": 300,
+                    },
+                    timeout=20,
+                )
+                if resp.status_code >= 400:
+                    last_err = RuntimeError(f"{model}: HTTP {resp.status_code}")
+                    continue
+                content = resp.json()["choices"][0]["message"]["content"]
+                if content:
+                    return content
+            except Exception as exc:
+                last_err = exc
+                continue
+        raise RuntimeError(f"All OpenRouter models in chain failed: {last_err}")
 
     def _call_ollama(self, prompt: str) -> str:
         """Call local Ollama instance.
