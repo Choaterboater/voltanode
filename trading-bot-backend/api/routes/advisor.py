@@ -222,3 +222,106 @@ async def research_symbol(
     import asyncio as _asyncio
     report = await _asyncio.to_thread(build_research_report, ta, advanced)
     return report.to_dict()
+
+
+# ── Symbol lookup (search by name OR ticker) ──
+
+# Hardcoded crypto map (CoinGecko IDs are not searchable via yfinance) — covers
+# the common ones; everything else still works as a direct ticker.
+_CRYPTO_LOOKUP = {
+    "bitcoin": ("bitcoin", "Bitcoin"),
+    "btc": ("bitcoin", "Bitcoin"),
+    "ethereum": ("ethereum", "Ethereum"),
+    "eth": ("ethereum", "Ethereum"),
+    "solana": ("solana", "Solana"),
+    "sol": ("solana", "Solana"),
+    "avalanche": ("avalanche-2", "Avalanche"),
+    "avax": ("avalanche-2", "Avalanche"),
+    "chainlink": ("chainlink", "Chainlink"),
+    "link": ("chainlink", "Chainlink"),
+    "polkadot": ("polkadot", "Polkadot"),
+    "dot": ("polkadot", "Polkadot"),
+    "cardano": ("cardano", "Cardano"),
+    "ada": ("cardano", "Cardano"),
+    "ripple": ("ripple", "XRP"),
+    "xrp": ("ripple", "XRP"),
+    "dogecoin": ("dogecoin", "Dogecoin"),
+    "doge": ("dogecoin", "Dogecoin"),
+    "shiba": ("shiba-inu", "Shiba Inu"),
+    "shib": ("shiba-inu", "Shiba Inu"),
+    "matic": ("matic-network", "Polygon"),
+    "polygon": ("matic-network", "Polygon"),
+}
+
+
+@router.get("/lookup")
+async def symbol_lookup(
+    q: str = Query(..., min_length=1, description="Free-text query: ticker or company name"),
+    limit: int = Query(default=8, ge=1, le=20),
+) -> Dict[str, Any]:
+    """Resolve a free-text query to a list of (symbol, name, asset_type) hits.
+
+    Searches yfinance for stock matches and a curated crypto list. Returned
+    list is ordered by best match first.
+    """
+    q_lower = q.strip().lower()
+    if not q_lower:
+        return {"query": q, "hits": []}
+
+    hits: List[Dict[str, Any]] = []
+
+    # Crypto direct match first (cheap, no network)
+    for key, (cg_id, name) in _CRYPTO_LOOKUP.items():
+        if key.startswith(q_lower) or q_lower in key:
+            hits.append({
+                "symbol": cg_id,
+                "name": name,
+                "asset_type": "crypto",
+                "exchange": "CoinGecko",
+            })
+        if len(hits) >= limit:
+            break
+
+    # yfinance search for stocks — tolerant of partial names ("apple", "amazon")
+    try:
+        import yfinance as yf
+        import asyncio as _asyncio
+        def _search():
+            try:
+                s = yf.Search(q, max_results=limit)
+                return list(s.quotes or [])
+            except Exception:
+                return []
+        quotes = await _asyncio.to_thread(_search)
+        for quo in quotes:
+            sym = (quo.get("symbol") or "").strip().upper()
+            if not sym:
+                continue
+            name = quo.get("longname") or quo.get("shortname") or sym
+            qtype = (quo.get("quoteType") or "").upper()
+            # Skip funds / options / futures — keep equity + ETFs only for cleanliness.
+            if qtype not in ("EQUITY", "ETF", ""):
+                continue
+            hits.append({
+                "symbol": sym,
+                "name": name,
+                "asset_type": "stock",
+                "exchange": quo.get("exchange") or "",
+            })
+            if len(hits) >= limit:
+                break
+    except Exception as exc:
+        # yfinance not available or rate-limited — return whatever we have
+        pass
+
+    # Dedup while preserving order
+    seen = set()
+    unique: List[Dict[str, Any]] = []
+    for h in hits:
+        key = (h["asset_type"], h["symbol"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(h)
+
+    return {"query": q, "hits": unique[:limit]}
