@@ -151,6 +151,16 @@ async def _run_tick_loop(app: FastAPI) -> None:
                         else:
                             symbol_specs[cache_key] = (symbol, asset_class, needs_ohlcv)
 
+            # Build SignalContext once per tick cycle so per-strategy gates
+            # (VIX panic, earnings imminent, insider tone) share the same data
+            # rather than each strategy hitting external APIs independently.
+            try:
+                from signals import build_signal_context
+                signal_context = build_signal_context()
+            except Exception as exc:
+                logger.debug(f"signal context build failed: {exc}")
+                signal_context = None
+
             for cache_key, (symbol, asset_class, needs_ohlcv) in symbol_specs.items():
                 try:
                     price = await asyncio.wait_for(
@@ -167,7 +177,7 @@ async def _run_tick_loop(app: FastAPI) -> None:
                             timeout=15.0,
                         )
 
-                    engine.on_tick(tick, ohlcv_data=ohlcv_data)
+                    engine.on_tick(tick, ohlcv_data=ohlcv_data, signal_context=signal_context)
                 except asyncio.TimeoutError:
                     logger.warning(f"Tick timeout for {cache_key}")
                 except Exception as exc:

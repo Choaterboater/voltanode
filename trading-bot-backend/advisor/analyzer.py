@@ -87,6 +87,18 @@ class SymbolAnalyzer:
         verdict, confidence, summary = self.recommender.recommend(reading_dicts, data, current_price)
 
         # ── 5. Price targets ──
+        # If we have an analyst median target (yfinance), pass it on the frame
+        # so the predictor can anchor 1Y projection to consensus instead of
+        # naively extrapolating recent CAGR.
+        if asset_type == "stock":
+            try:
+                import yfinance as yf
+                info = yf.Ticker(symbol).info or {}
+                atm = info.get("targetMedianPrice") or info.get("targetMeanPrice")
+                if atm:
+                    data.attrs["analyst_target_median"] = float(atm)
+            except Exception:
+                pass
         targets = self.predictor.predict_targets(data, current_price)
 
         # ── 6. Risk & sizing ──

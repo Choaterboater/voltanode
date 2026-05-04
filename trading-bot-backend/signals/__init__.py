@@ -11,5 +11,13 @@ These are read-only signals. Strategies can pull them via the engine's
 
 from signals.fear_greed import FearGreedSignal, fetch_fear_greed
 from signals import fred, finnhub
+from signals.context import SignalContext, build_signal_context
 
-__all__ = ["FearGreedSignal", "fetch_fear_greed", "fred", "finnhub"]
+__all__ = [
+    "FearGreedSignal",
+    "fetch_fear_greed",
+    "fred",
+    "finnhub",
+    "SignalContext",
+    "build_signal_context",
+]

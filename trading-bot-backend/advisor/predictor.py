@@ -281,7 +281,14 @@ class PricePredictor:
         return targets
 
     def _forward_projections(self, data: pd.DataFrame, current_price: float, lookback_days: int) -> List[_RawTarget]:
-        """1Y and 3Y forward price projections using log-linear regression + CAGR blend."""
+        """1Y and 3Y forward price projections.
+
+        Anchors the 1Y centerpoint to the analyst-consensus target when one is
+        available on the dataframe (set via ``df.attrs['analyst_target_median']``);
+        otherwise blends log-linear regression with realised CAGR and mean-reverts
+        toward a long-run baseline. Also forces bull > current and bear < current
+        so a "bear case" is never higher than today's price (the previous bug).
+        """
         if len(data) < 30 or current_price <= 0:
             return []
 
@@ -302,51 +309,79 @@ class PricePredictor:
         # Blend regression and CAGR, then mean-revert toward a long-run baseline.
         # Pure extrapolation of a hot recent year produces absurd 3Y numbers.
         RAW_BLEND = (regression_annual + cagr) / 2.0
-        LONG_RUN_BASELINE = 0.12        # ~12%/yr historical equity market average
-        MEAN_REVERT_WEIGHT = 0.35       # 35% weight toward baseline, 65% toward data
+        LONG_RUN_BASELINE = 0.10        # ~10%/yr long-run equity expectation
+        MEAN_REVERT_WEIGHT = 0.55       # tilt 55% toward baseline so a hot 1y rally
+                                        # doesn't drag the projection to the moon
         blended_rate = RAW_BLEND * (1 - MEAN_REVERT_WEIGHT) + LONG_RUN_BASELINE * MEAN_REVERT_WEIGHT
-        # Hard cap: reasonable growth bounds; prevents moonshot/crash compounding
-        blended_rate = float(np.clip(blended_rate, -0.50, 0.80))
+        # Tighter hard cap: keeps projections in plausible single-stock annual ranges.
+        # Even the best companies rarely sustain >25%/yr; even disasters rarely
+        # below -30%/yr without going to zero (which we model separately).
+        blended_rate = float(np.clip(blended_rate, -0.30, 0.25))
 
         # Annualised historical volatility
         log_returns = np.diff(log_prices)
         annual_vol = float(np.std(log_returns) * np.sqrt(252)) if len(log_returns) > 1 else 0.30
-        annual_vol = min(annual_vol, 1.50)  # cap vol used in projections at 150%
+        annual_vol = min(annual_vol, 0.80)  # cap projection vol at 80%
+
+        # If an analyst median target is on the frame, use it as the 1Y centerpoint.
+        attrs = getattr(data, "attrs", {}) or {}
+        analyst_target_1y: float = 0.0
+        try:
+            atm = attrs.get("analyst_target_median")
+            if atm is not None and atm > 0:
+                analyst_target_1y = float(atm)
+        except (TypeError, ValueError):
+            analyst_target_1y = 0.0
 
         targets: List[_RawTarget] = []
 
-        # Use actual data length, not lookback_days, for threshold checks.
-        # The analyzer always provides >= 252 bars when available (fed from 1Y fetch).
         horizons = []
         if n >= 90:
-            horizons.append((1, 0.55))   # 55% = direction confidence for 1-year trend
+            horizons.append((1, 0.55))
         if n >= 252:
-            horizons.append((3, 0.45))   # 45% = direction confidence for 3-year trend
+            horizons.append((3, 0.45))
 
         data_years = round(n / 252, 1)
+        cagr_pct = blended_rate * 100
+        vol_pct = annual_vol * 100
 
         for years, base_prob in horizons:
-            base = current_price * ((1 + blended_rate) ** years)
-            bull = current_price * ((1 + blended_rate + annual_vol * 0.75) ** years)
-            bear = current_price * ((1 + blended_rate - annual_vol * 0.75) ** years)
+            # Centerpoint: analyst consensus for 1Y when available, otherwise model.
+            if years == 1 and analyst_target_1y > 0:
+                base = analyst_target_1y
+                base_source = "analyst median target"
+            else:
+                base = current_price * ((1 + blended_rate) ** years)
+                base_source = f"blended CAGR {cagr_pct:+.1f}%/yr"
 
-            # Clamp negatives
-            base = max(base, current_price * 0.01)
-            bull = max(bull, current_price * 0.01)
-            bear = max(bear, current_price * 0.01)
+            # Bands are sigma-spreads relative to the centerpoint, not compounded
+            # off the rate. Square-root-of-time scaling keeps multi-year bands sane.
+            band_sigma = annual_vol * 0.75 * np.sqrt(years)
+            bull = base * (1 + band_sigma)
+            bear = base * (1 - band_sigma)
+
+            # Sanity rails: a "bull case" should be > current price, a "bear case" < current.
+            # When the centerpoint sits near current price and σ is small, the bands
+            # can violate this — clamp them so the labels stay meaningful.
+            if bull < current_price * 1.05:
+                bull = current_price * 1.05
+            if bear > current_price * 0.95:
+                bear = current_price * 0.95
+
+            base = max(base, current_price * 0.05)
+            bull = max(bull, current_price * 0.05)
+            bear = max(bear, current_price * 0.05)
 
             pct = (base / current_price - 1) * 100
-            cagr_pct = blended_rate * 100
-            vol_pct = annual_vol * 100
 
             targets.append(_RawTarget(
                 label=f"{years}Y Projection",
                 price=base,
                 probability=base_prob,
                 rationale=(
-                    f"{years}-year trend projection: {'+' if pct >= 0 else ''}{pct:.1f}% "
-                    f"(blended CAGR {cagr_pct:+.1f}%/yr, vol {vol_pct:.1f}%/yr). "
-                    f"Based on {data_years}Y of history. Confidence bar = trend direction strength, not exact-price certainty."
+                    f"{years}-year projection: {'+' if pct >= 0 else ''}{pct:.1f}% "
+                    f"({base_source}, vol {vol_pct:.1f}%/yr). "
+                    f"Based on {data_years}Y of history. Confidence bar = direction strength, not price certainty."
                 ),
             ))
             targets.append(_RawTarget(
@@ -354,7 +389,7 @@ class PricePredictor:
                 price=bull,
                 probability=round(base_prob * 0.70, 2),
                 rationale=(
-                    f"{years}-year bull scenario (+0.75σ): "
+                    f"{years}-year bull scenario (+0.75σ over {years}y): "
                     f"{(bull / current_price - 1) * 100:+.1f}% from current price."
                 ),
             ))
@@ -363,7 +398,7 @@ class PricePredictor:
                 price=bear,
                 probability=round(base_prob * 0.70, 2),
                 rationale=(
-                    f"{years}-year bear scenario (−0.75σ): "
+                    f"{years}-year bear scenario (−0.75σ over {years}y): "
                     f"{(bear / current_price - 1) * 100:+.1f}% from current price."
                 ),
             ))

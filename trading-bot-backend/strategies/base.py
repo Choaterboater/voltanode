@@ -160,17 +160,55 @@ class BaseStrategy(ABC):
     def on_tick(self, tick: TickData, portfolio: Portfolio, **kwargs: Any) -> Signal | None:
         """Called on every price tick.
 
-        Default implementation filters by configured symbol(s) and calls
-        ``generate_signal`` with the OHLCV data when present.
+        Default implementation filters by configured symbol(s), checks
+        global signal-context guards (high VIX, imminent earnings), then
+        calls ``generate_signal`` with the OHLCV data when present.
+
+        kwargs may contain:
+          ohlcv_data       — OHLCV DataFrame for indicator computation
+          signal_context   — SignalContext (macro / sentiment / catalysts)
         """
         if not self._matches_symbol(tick.symbol):
             return None
+
+        # Global signal gates — applied to every strategy by default. Strategies
+        # can opt out by setting ``RESPECTS_SIGNAL_CONTEXT = False`` on the class.
+        sig_ctx = kwargs.get("signal_context")
+        if sig_ctx is not None and getattr(self, "RESPECTS_SIGNAL_CONTEXT", True):
+            blocked = self._signal_gate_check(sig_ctx, tick.symbol)
+            if blocked:
+                return None
+
         ohlcv_data = kwargs.get("ohlcv_data")
         if ohlcv_data is not None and len(ohlcv_data) > 0:
             ohlcv_data = ohlcv_data.copy()
             ohlcv_data.attrs["symbol"] = tick.symbol
+            self._signal_context = sig_ctx  # available to generate_signal subclasses
             return self.generate_signal(ohlcv_data, tick.price)
         return None
+
+    #: Strategies that want to bypass the macro/earnings gates can set this False.
+    RESPECTS_SIGNAL_CONTEXT: bool = True
+
+    #: Per-strategy thresholds — override in subclasses to tune.
+    VIX_PANIC_THRESHOLD: float = 30.0
+    EARNINGS_BLOCK_DAYS: int = 2
+
+    def _signal_gate_check(self, sig_ctx: Any, symbol: str) -> bool:
+        """Return True when strategy should skip this tick due to global signals.
+
+        Default rules (conservative):
+          - VIX > VIX_PANIC_THRESHOLD → skip new entries
+          - Earnings within EARNINGS_BLOCK_DAYS → skip
+        """
+        try:
+            if sig_ctx.vix is not None and sig_ctx.vix > self.VIX_PANIC_THRESHOLD:
+                return True
+            if sig_ctx.is_blocking_earnings(symbol, days=self.EARNINGS_BLOCK_DAYS):
+                return True
+        except Exception:
+            pass
+        return False
 
     def on_fill(self, fill: FillResult, portfolio: Portfolio) -> None:
         """Callback when an order from this strategy is filled."""

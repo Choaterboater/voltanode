@@ -354,7 +354,7 @@ class PaperTradingEngine:
 
     # ── Events ──
 
-    def on_tick(self, tick: TickData, ohlcv_data: Any | None = None) -> None:
+    def on_tick(self, tick: TickData, ohlcv_data: Any | None = None, signal_context: Any | None = None) -> None:
         """Process a price tick.
 
         Args:
@@ -401,7 +401,12 @@ class PaperTradingEngine:
                     continue
                 if hasattr(strategy, "on_tick"):
                     portfolio = self._portfolios.get(account_id)
-                    signal = strategy.on_tick(tick, portfolio, ohlcv_data=ohlcv_data)
+                    signal = strategy.on_tick(
+                        tick,
+                        portfolio,
+                        ohlcv_data=ohlcv_data,
+                        signal_context=signal_context,
+                    )
                     if signal is not None and hasattr(signal, "to_order"):
                         order = signal.to_order(account_id)
                         if order is not None:
