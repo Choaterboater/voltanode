@@ -106,6 +106,7 @@ export interface ResearchReport {
   analyst_count: number | null;
   sector: string;
   industry: string;
+  company_overview?: string;
   investment_thesis: string;
   key_drivers: string[];
   bull_case: string;

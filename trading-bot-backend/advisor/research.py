@@ -69,6 +69,7 @@ class ResearchReport:
     industry: str = ""
 
     # LLM-produced narrative sections (filled when generate_narrative succeeds)
+    company_overview: str = ""
     investment_thesis: str = ""
     key_drivers: List[str] = field(default_factory=list)
     bull_case: str = ""
@@ -279,6 +280,7 @@ def build_research_report(
     try:
         narrative = _generate_narrative(report, ta_result, advanced=advanced)
         if narrative:
+            report.company_overview = narrative.get("company_overview", "")
             report.investment_thesis = narrative.get("investment_thesis", "")
             report.key_drivers = narrative.get("key_drivers", []) or []
             report.bull_case = narrative.get("bull_case", "")
@@ -392,6 +394,12 @@ _RESEARCH_PROMPT = """You are an equity research analyst writing a multi-dimensi
 on {symbol} ({display_name}). The deterministic scoring layer has already
 computed three dimensions:
 
+COMPANY (what they do):
+{business_summary}
+
+RECENT HEADLINES (last 7 days, most relevant first):
+{news_block}
+
 FUNDAMENTAL ({f_weight:.0%} weight) — score {f_score}/100, label {f_label}
   rationale: {f_rationale}
   key metrics: P/E {pe}, forward P/E {fpe}, PEG {peg}, P/S {ps}, ROE {roe},
@@ -422,14 +430,19 @@ MARKET SENTIMENT (crypto Fear & Greed proxy for risk-on/off):
 OVERALL composite score: {overall}/100 → {verdict}
 
 When forming your thesis, EXPLICITLY weave macro / earnings proximity /
-insider tone into the narrative. For example:
+insider tone / RECENT HEADLINES into the narrative. Quote specific headlines
+as catalysts when relevant — e.g. product launches, regulatory rulings,
+earnings beats/misses, acquisitions, lawsuits, partnerships. Examples:
   - If earnings are within 7 days → caution against new entries.
   - If insiders are net selling significantly → flag as red flag.
   - If VIX > 25 or yield curve inverted → adjust risk framing.
   - If 10y-2y has just un-inverted → mention reflation tone.
+  - If headlines mention a near-term catalyst (FDA decision, product launch,
+    legal ruling) → name it explicitly in the thesis or bull/bear case.
 
 Produce a JSON object with exactly these keys (no markdown, no extra text):
 {{
+  "company_overview": "2-3 sentence plain-English description of what the company does + 1-2 sentences on the BIGGEST current project / catalyst / story driving the stock right now (use the recent headlines)",
   "investment_thesis": "2-4 sentence thesis on whether to buy/hold/sell now",
   "key_drivers": ["driver 1", "driver 2", "driver 3", "driver 4"],
   "bull_case": "1-2 sentences of the strongest bull argument",
@@ -464,9 +477,14 @@ def _generate_narrative(
         except (TypeError, ValueError):
             return str(v)
 
+    business_summary = (snap_data.get("business_summary") or "").strip() or "n/a"
+    news_block = _format_news_block(report.symbol)
+
     prompt = _RESEARCH_PROMPT.format(
         symbol=report.symbol,
         display_name=report.display_name,
+        business_summary=business_summary,
+        news_block=news_block,
         f_weight=report.fundamental.weight,
         f_score=report.fundamental.score,
         f_label=report.fundamental.label,
@@ -501,13 +519,23 @@ def _generate_narrative(
         fg_block=_format_fg_block(report.fear_greed_context),
     )
 
+    # First attempt — if JSON parse fails, retry once with a stricter
+    # reminder. LLMs occasionally emit malformed JSON (trailing commas,
+    # markdown fences, prose). Without retry the user has to click
+    # "Run research" again to get a result.
     raw, model_name = _call_research_llm(prompt, advanced=advanced)
-    if not raw:
-        return None
-
-    parsed = _parse_research_json(raw)
+    parsed = _parse_research_json(raw) if raw else None
     if parsed is None:
-        return None
+        retry_prompt = prompt + (
+            "\n\nIMPORTANT: Your previous response could not be parsed as JSON. "
+            "Reply with ONLY the JSON object, nothing else. No markdown fences, "
+            "no preamble, no trailing commentary. Start with { and end with }."
+        )
+        raw2, model_name = _call_research_llm(retry_prompt, advanced=advanced)
+        parsed = _parse_research_json(raw2) if raw2 else None
+        if parsed is None:
+            logger.warning(f"Research narrative failed to parse after 2 attempts ({report.symbol})")
+            return None
     parsed["model"] = model_name
     return parsed
 
@@ -610,6 +638,36 @@ def _parse_research_json(text: str) -> Optional[Dict[str, Any]]:
 
 
 # ── Prompt block formatters ─────────────────────────────────────────
+
+
+def _format_news_block(symbol: str, hours: int = 168, limit: int = 8) -> str:
+    """Pull recent news headlines for the symbol so the LLM can name real
+    catalysts. 7-day window by default — long enough to capture last week's
+    moves but recent enough to be relevant.
+    """
+    try:
+        from news.storage import NewsStorage
+        storage = NewsStorage()
+        articles = storage.get_articles(symbols=[symbol.upper()], hours=hours, limit=limit)
+        if not articles:
+            return "  (no news in last 7 days)"
+        lines: List[str] = []
+        for a in articles[:limit]:
+            ts = getattr(a, "published_at", None) or getattr(a, "fetched_at", None)
+            ts_str = ""
+            if ts:
+                try:
+                    ts_str = (str(ts)[:10])
+                except Exception:
+                    pass
+            head = f"  - [{ts_str}] {a.headline}"
+            if getattr(a, "summary", None):
+                head += f" — {a.summary[:140]}"
+            lines.append(head)
+        return "\n".join(lines)
+    except Exception as exc:
+        logger.debug(f"news block fetch failed for {symbol}: {exc}")
+        return "  (news lookup failed)"
 
 
 def _format_macro_block(macro: Dict[str, Any]) -> str:

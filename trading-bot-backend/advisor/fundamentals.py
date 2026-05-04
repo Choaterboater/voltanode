@@ -25,6 +25,7 @@ class FundamentalSnapshot:
     sector: str = ""
     industry: str = ""
     currency: str = "USD"
+    business_summary: str = ""  # one-paragraph "what they do" from yfinance
 
     # Valuation
     trailing_pe: Optional[float] = None
@@ -85,6 +86,10 @@ def fetch_stock_fundamentals(symbol: str) -> FundamentalSnapshot:
     snap.sector = info.get("sector") or ""
     snap.industry = info.get("industry") or ""
     snap.currency = info.get("currency") or "USD"
+    summary = info.get("longBusinessSummary") or info.get("description") or ""
+    # Cap at 800 chars so the LLM prompt doesn't balloon — yfinance summaries
+    # are sometimes 2-3KB which crowds the rest of the prompt.
+    snap.business_summary = summary[:800].strip() if summary else ""
 
     snap.trailing_pe = _safe_float(info.get("trailingPE"))
     snap.forward_pe = _safe_float(info.get("forwardPE"))

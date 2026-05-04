@@ -288,6 +288,14 @@ function ResearchReportCard({ report }: { report: import('@/hooks/useAdvisor').R
         ))}
       </div>
 
+      {/* Company Overview — what they do + current catalysts */}
+      {report.company_overview && (
+        <div className="mt-4 rounded-md border border-accent-cyan/20 bg-accent-cyan/5 p-3">
+          <h4 className="mb-1 text-xs uppercase tracking-wider text-accent-cyan">Company &amp; Current Catalysts</h4>
+          <p className="text-sm text-text-primary leading-relaxed">{report.company_overview}</p>
+        </div>
+      )}
+
       {/* Investment Thesis */}
       {report.investment_thesis && (
         <div className="mt-4">
