@@ -625,10 +625,13 @@ class LiveTradingEngine(PaperTradingEngine):
         # 3. Get portfolio for safety checks
         portfolio = self.get_portfolio(order.account_id)
 
-        # 3b. Reject SELLs when there's no broker position to sell. Crypto on
-        # Alpaca paper does not allow shorting, so unmatched sells just queue
-        # forever in 'pending'. Cheaper to drop them locally than to spam the
-        # broker each tick.
+        # 3b. Crypto on Alpaca paper doesn't support shorting, so a SELL that
+        # exceeds held quantity will queue forever as 'pending'. Two cases:
+        #   - held == 0  → reject locally (nothing to close)
+        #   - 0 < held < quantity  → CLAMP the order to held quantity and
+        #                            proceed (close out what we actually own)
+        # The clamp lets a bot saying "sell 0.59 SOL" still close a 0.30 SOL
+        # position cleanly instead of getting stuck in a reject loop.
         if order.side == OrderSide.SELL:
             try:
                 broker_positions = self.broker.get_positions() if hasattr(self.broker, "get_positions") else []
@@ -644,9 +647,44 @@ class LiveTradingEngine(PaperTradingEngine):
                     except (TypeError, ValueError):
                         held = 0.0
                     break
-            if held < order.quantity:
+            if held <= 0:
                 order.status = OrderStatus.REJECTED
                 self.submit_order(order, order.account_id)
+                return FillResult(
+                    order_id=order.id,
+                    symbol=order.symbol,
+                    filled_qty=0.0,
+                    filled_price=0.0,
+                    fee=0.0,
+                    slippage=0.0,
+                    timestamp=datetime.now(timezone.utc),
+                    side=order.side,
+                    realized_pnl=None,
+                    broker_order_id="",
+                )
+            if held < order.quantity:
+                # Clamp down — close exactly what we hold. Round to 8 decimals
+                # to avoid float precision rejecting at the broker.
+                clamped = round(held, 8)
+                logging.getLogger("volta.engine").info(
+                    f"Clamping SELL {order.symbol}: requested {order.quantity} → held {clamped}"
+                )
+                order.quantity = clamped
+
+            # Dust skip: Alpaca paper crypto rejects orders below ~$10. If
+            # what we hold is below that floor, treat it as already closed
+            # and skip the broker call to avoid endless reject loops.
+            try:
+                last_price = self._current_prices.get(order.symbol) or 0.0
+            except Exception:
+                last_price = 0.0
+            if last_price > 0 and order.quantity * last_price < 10.0:
+                order.status = OrderStatus.REJECTED
+                self.submit_order(order, order.account_id)
+                logging.getLogger("volta.engine").info(
+                    f"Skipping dust SELL {order.symbol}: "
+                    f"{order.quantity} × ${last_price:.4f} ≈ ${order.quantity * last_price:.2f} < $10 min"
+                )
                 return FillResult(
                     order_id=order.id,
                     symbol=order.symbol,
