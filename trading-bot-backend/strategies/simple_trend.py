@@ -12,7 +12,7 @@ happen on a sideways or slowly-trending market.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import pandas as pd
 
@@ -21,7 +21,12 @@ from strategies.base import BaseStrategy, Signal
 
 
 class SimpleTrendStrategy(BaseStrategy):
-    """Permissive EMA trend-follower."""
+    """Permissive EMA trend-follower with signal-flip debounce.
+
+    One trade per signal flip — once it BUYs, it won't BUY again until the
+    signal goes through SELL or HOLD; once it SELLs, won't SELL again until
+    BUY or HOLD. Prevents tick-spam on a sustained trend.
+    """
 
     name = "simple_trend"
     SUPPORTS_MULTI_SYMBOL = True
@@ -32,6 +37,12 @@ class SimpleTrendStrategy(BaseStrategy):
         "stop_loss_pct": 0.04,
         "take_profit_pct": 0.08,
     }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Per-symbol last emitted side ("buy" / "sell" / None) so we only
+        # fire a fresh order when the side flips.
+        self._last_side: Dict[str, str] = {}
 
     def generate_signal(self, data: pd.DataFrame, current_price: float) -> Signal:
         data = self._ensure_columns(data)
@@ -58,6 +69,17 @@ class SimpleTrendStrategy(BaseStrategy):
 
         # Price vs trend: above fast EMA → trending up; below slow EMA → trending down.
         if current_price > ema_fast and current_price > ema_slow:
+            if self._last_side.get(symbol) == "buy":
+                # Already long on this leg — wait for trend flip before re-entering.
+                return Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=symbol,
+                    signal_type=SignalType.HOLD,
+                    confidence=0.0,
+                    timestamp=pd.Timestamp.now(),
+                    metadata={"trigger": "already_long"},
+                )
+            self._last_side[symbol] = "buy"
             confidence = min(1.0, (current_price - ema_slow) / max(ema_slow, 1e-9) * 5 + 0.5)
             sig = Signal(
                 strategy_id=self.strategy_id,
@@ -78,6 +100,16 @@ class SimpleTrendStrategy(BaseStrategy):
             return sig
 
         if current_price < ema_fast and current_price < ema_slow:
+            if self._last_side.get(symbol) == "sell":
+                return Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=symbol,
+                    signal_type=SignalType.HOLD,
+                    confidence=0.0,
+                    timestamp=pd.Timestamp.now(),
+                    metadata={"trigger": "already_short"},
+                )
+            self._last_side[symbol] = "sell"
             confidence = min(1.0, (ema_slow - current_price) / max(ema_slow, 1e-9) * 5 + 0.5)
             sig = Signal(
                 strategy_id=self.strategy_id,
@@ -97,6 +129,9 @@ class SimpleTrendStrategy(BaseStrategy):
             self._record_signal(sig)
             return sig
 
+        # Price between the EMAs — neutral. Reset latch so next clear breakout
+        # in either direction fires a fresh trade.
+        self._last_side[symbol] = "neutral"
         return Signal(
             strategy_id=self.strategy_id,
             symbol=symbol,
