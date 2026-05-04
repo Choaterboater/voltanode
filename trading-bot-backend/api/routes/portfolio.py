@@ -14,14 +14,21 @@ logger = logging.getLogger("volta.api.portfolio")
 
 router = APIRouter()
 
-# Global engine reference (set in main.py)
+# Global engine + equity-history references (set in main.py).
 engine: PaperTradingEngine | None = None
+_equity_history: Any | None = None
 
 
 def set_engine(e: PaperTradingEngine) -> None:
     """Set the global engine reference."""
     global engine
     engine = e
+
+
+def set_equity_history(store: Any) -> None:
+    """Inject the EquityHistoryStore so /equity-history can serve points."""
+    global _equity_history
+    _equity_history = store
 
 
 def _portfolio_to_response(portfolio: Portfolio) -> PortfolioResponse:
@@ -187,3 +194,36 @@ async def get_snapshots(account_id: str) -> Dict[str, Any]:
     if engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
     return {"account_id": account_id, "snapshots": []}
+
+
+@router.get("/{account_id}/equity-history")
+async def get_equity_history(account_id: str, range: str = "30D") -> Dict[str, Any]:
+    """Return the persisted equity curve for an account.
+
+    Range: '1H', '24H', '7D', '30D', or 'ALL'.
+    """
+    from datetime import datetime, timedelta, timezone
+    from fastapi import Request
+    import inspect
+    # pull the EquityHistoryStore off app.state — engine is set per-request only;
+    # we stash a module-level pointer when set_engine fires too.
+    history = _equity_history
+    if history is None:
+        return {"account_id": account_id, "range": range, "points": []}
+
+    delta_map = {
+        "1H": timedelta(hours=1),
+        "24H": timedelta(hours=24),
+        "7D": timedelta(days=7),
+        "30D": timedelta(days=30),
+        "ALL": None,
+    }
+    delta = delta_map.get(range.upper(), timedelta(days=30))
+    since = (datetime.now(timezone.utc) - delta) if delta is not None else None
+
+    points = history.query(account_id, since=since)
+    return {
+        "account_id": account_id,
+        "range": range,
+        "points": [{"ts": ts.isoformat(), "equity": eq} for ts, eq in points],
+    }

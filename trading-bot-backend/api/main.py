@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from bot.config import BotConfig, AssetClass
 from bot.engine import PaperTradingEngine, LiveTradingEngine, TickData
 from data.cache import DataCache
+from data.equity_history import EquityHistoryStore
 from data.fetcher import MarketData
 from strategies.base import BaseStrategy
 
@@ -172,6 +173,27 @@ async def _run_tick_loop(app: FastAPI) -> None:
                 except Exception as exc:
                     logger.warning(f"Tick error for {cache_key}: {exc}")
 
+            # Record an equity snapshot for each account (throttled to once
+            # per minute per account regardless of tick frequency).
+            history = getattr(app.state, "equity_history", None)
+            if history is not None:
+                for account_id, portfolio in engine.get_all_portfolios().items():
+                    try:
+                        balances = portfolio.get_all_balances()
+                        positions = portfolio.get_all_positions()
+                        equity = sum(balances.values()) + sum(p.market_value for p in positions)
+                        # If broker is live, prefer broker-reported equity
+                        if getattr(engine, "live_mode", False) and getattr(engine, "broker", None) and engine.broker.is_connected() and engine.broker.name != "mock":
+                            try:
+                                broker_bal = engine.get_broker_balance()
+                                if broker_bal and "EQUITY" in broker_bal:
+                                    equity = float(broker_bal["EQUITY"])
+                            except Exception:
+                                pass
+                        history.append_throttled(account_id, equity)
+                    except Exception as exc:
+                        logger.warning(f"Equity snapshot failed for {account_id}: {exc}")
+
             await asyncio.sleep(interval)
         except asyncio.CancelledError:
             break
@@ -248,6 +270,12 @@ def create_app() -> FastAPI:
         strategies.set_engine(engine)
         trades.set_engine(engine)
         orders.set_engine(engine)
+
+        # Persistent equity-curve store, one append-only file per account.
+        history_dir = Path(config.app.data_dir) / "equity_history"
+        equity_history = EquityHistoryStore(history_dir)
+        app.state.equity_history = equity_history
+        portfolio.set_equity_history(equity_history)
 
         app.state.engine = engine
         app.state.config = config

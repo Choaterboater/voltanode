@@ -45,6 +45,19 @@ export interface ApiPosition {
 export const getPortfolio = (accountId = 'default') =>
   fetchJson<ApiPortfolio>(`/portfolio/${accountId}`);
 
+export interface EquityPoint {
+  ts: string;
+  equity: number;
+}
+
+export const getEquityHistory = (
+  accountId = 'default',
+  range: '1H' | '24H' | '7D' | '30D' | 'ALL' = '30D',
+) =>
+  fetchJson<{ account_id: string; range: string; points: EquityPoint[] }>(
+    `/portfolio/${accountId}/equity-history?range=${range}`,
+  );
+
 // ── Market Data ──
 export interface ApiPrice {
   symbol: string;
