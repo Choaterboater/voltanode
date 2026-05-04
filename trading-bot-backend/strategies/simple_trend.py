@@ -43,6 +43,10 @@ class SimpleTrendStrategy(BaseStrategy):
         # Per-symbol last emitted side ("buy" / "sell" / None) so we only
         # fire a fresh order when the side flips.
         self._last_side: Dict[str, str] = {}
+        # Per-symbol last bar timestamp we emitted ANY non-HOLD signal for.
+        # Without this, a price oscillating around the EMA band within a
+        # single bar can fire BUY -> reset to neutral -> BUY again etc.
+        self._last_signal_bar: Dict[str, Any] = {}
 
     def generate_signal(self, data: pd.DataFrame, current_price: float) -> Signal:
         data = self._ensure_columns(data)
@@ -58,6 +62,20 @@ class SimpleTrendStrategy(BaseStrategy):
                 signal_type=SignalType.HOLD,
                 confidence=0.0,
                 timestamp=pd.Timestamp.now(),
+            )
+
+        # Per-bar latch — strategy is called every ~5s tick but bars roll
+        # over only daily/hourly. Once we've fired on this bar, hold until
+        # the bar advances regardless of intra-bar EMA oscillation.
+        latest_bar = data.index[-1] if len(data.index) else None
+        if latest_bar is not None and self._last_signal_bar.get(symbol) == latest_bar:
+            return Signal(
+                strategy_id=self.strategy_id,
+                symbol=symbol,
+                signal_type=SignalType.HOLD,
+                confidence=0.0,
+                timestamp=pd.Timestamp.now(),
+                metadata={"trigger": "already_fired_this_bar"},
             )
 
         ema_fast = data["close"].ewm(span=fast, adjust=False).mean().iloc[-1]
@@ -80,6 +98,7 @@ class SimpleTrendStrategy(BaseStrategy):
                     metadata={"trigger": "already_long"},
                 )
             self._last_side[symbol] = "buy"
+            self._last_signal_bar[symbol] = latest_bar
             confidence = min(1.0, (current_price - ema_slow) / max(ema_slow, 1e-9) * 5 + 0.5)
             sig = Signal(
                 strategy_id=self.strategy_id,
@@ -110,6 +129,7 @@ class SimpleTrendStrategy(BaseStrategy):
                     metadata={"trigger": "already_short"},
                 )
             self._last_side[symbol] = "sell"
+            self._last_signal_bar[symbol] = latest_bar
             confidence = min(1.0, (ema_slow - current_price) / max(ema_slow, 1e-9) * 5 + 0.5)
             sig = Signal(
                 strategy_id=self.strategy_id,
