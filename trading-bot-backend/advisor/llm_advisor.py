@@ -179,7 +179,14 @@ TASK: Reply with ONLY a JSON object — no prose before or after — with this e
 Rules:
 - "agreement" = whether the news/context supports the TA verdict
 - "alternative_verdict" = REQUIRED when "agreement" is "disagrees": the action you would take instead (BUY/SELL/HOLD/STRONG_BUY/STRONG_SELL). Empty string ONLY when you agree or are mixed.
-- "adjusted_confidence" = your blended confidence after considering news; if no news, return the TA confidence rounded
+- ANTI-OVERREACTION: you are reading TA indicators only — you do NOT have access to fundamentals, valuation, or earnings data. Therefore you MUST NOT swing more than ONE verdict step from the TA verdict. Allowed alternatives:
+    TA HOLD       → BUY or SELL only (NEVER STRONG_BUY/STRONG_SELL)
+    TA BUY        → STRONG_BUY or HOLD only
+    TA SELL       → STRONG_SELL or HOLD only
+    TA STRONG_BUY → BUY only (down-shift only, never further up)
+    TA STRONG_SELL→ SELL only
+  Reserve STRONG_BUY / STRONG_SELL ONLY when the TA verdict is already in that direction.
+- "adjusted_confidence" = your blended confidence after considering news; if no news, return the TA confidence rounded. Do NOT swing the confidence by more than 25 points from the TA confidence.
 - "news_impact" = how materially the news could move price ("none" if there's no news)
 - "key_factors" = 3-5 concrete drivers, e.g. "RSI 72 overbought", "META beat earnings", "no fresh catalysts"
 - "rationale" = plain English, max 3 sentences. If you disagree, briefly justify your alternative_verdict.
@@ -374,13 +381,43 @@ def generate_commentary(
     # Don't surface an alternative_verdict that's the same as the TA verdict
     if alt and alt == result.verdict.upper():
         alt = ""
+    # Anti-overreaction: TA-only signal shouldn't swing more than one verdict
+    # step. Without fundamentals, the LLM has no business going from HOLD →
+    # STRONG_SELL or BUY → STRONG_SELL. Clamp server-side as a safety net.
+    alt = _clamp_verdict_swing(result.verdict.upper(), alt)
+    # Cap confidence swing to ±25 points so a TA-only LLM can't crater
+    # confidence based purely on indicator tone.
+    raw_conf = float(parsed.get("adjusted_confidence", result.confidence) or result.confidence)
+    base_conf = float(result.confidence)
+    clamped_conf = max(base_conf - 25, min(base_conf + 25, raw_conf))
     return LLMCommentary(
         rationale=parsed.get("rationale", ""),
         agreement=parsed.get("agreement", "mixed"),
-        adjusted_confidence=parsed.get("adjusted_confidence", result.confidence),
+        adjusted_confidence=round(clamped_conf, 1),
         key_factors=parsed.get("key_factors", []),
         news_impact=parsed.get("news_impact", "none"),
         article_count=article_count,
         model=model_name,
         alternative_verdict=alt,
     )
+
+
+_VERDICT_LADDER = ["STRONG_SELL", "SELL", "HOLD", "BUY", "STRONG_BUY"]
+
+
+def _clamp_verdict_swing(ta_verdict: str, llm_verdict: str) -> str:
+    """Cap the LLM's alternative_verdict to one step away from TA on the
+    BUY/HOLD/SELL ladder. TA-only LLM has no business jumping further."""
+    if not llm_verdict:
+        return ""
+    try:
+        ta_idx = _VERDICT_LADDER.index(ta_verdict)
+        llm_idx = _VERDICT_LADDER.index(llm_verdict)
+    except ValueError:
+        return llm_verdict  # unrecognized — let it through, route validates
+    if abs(llm_idx - ta_idx) <= 1:
+        return llm_verdict
+    # Clamp toward TA: shift to the closer of (ta-1, ta+1)
+    direction = 1 if llm_idx > ta_idx else -1
+    clamped_idx = max(0, min(len(_VERDICT_LADDER) - 1, ta_idx + direction))
+    return _VERDICT_LADDER[clamped_idx]

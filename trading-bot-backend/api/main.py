@@ -29,7 +29,7 @@ from data.fetcher import MarketData
 from strategies.base import BaseStrategy
 
 # Import routers
-from api.routes import portfolio, strategies, trades, backtest, market, advisor, settings, orders, news
+from api.routes import portfolio, strategies, trades, backtest, market, advisor, settings, orders, news, signals
 
 logger = logging.getLogger("volta.api")
 
@@ -340,6 +340,7 @@ def create_app() -> FastAPI:
     app.include_router(advisor.router, prefix="/advisor", tags=["Advisor"])
     app.include_router(settings.router, prefix="/settings", tags=["Settings"])
     app.include_router(news.router, prefix="/news", tags=["News"])
+    app.include_router(signals.router, prefix="/signals", tags=["Signals"])
 
     # Initialize news module — prefer encrypted Alpaca keys from config.yaml
     # (the same set the user entered in Settings); fall back to env vars.

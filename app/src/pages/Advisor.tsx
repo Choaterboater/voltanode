@@ -728,8 +728,10 @@ export default function Advisor() {
                   <p className="text-sm leading-relaxed text-text-secondary">{result.summary}</p>
                 </div>
 
-                {/* LLM Commentary */}
-                {result.llm_commentary && <LLMCommentaryCard commentary={result.llm_commentary} taConfidence={result.confidence} />}
+                {/* LLM Commentary — hidden when Research Mode supersedes it */}
+                {result.llm_commentary && !research && !researchLoading && (
+                  <LLMCommentaryCard commentary={result.llm_commentary} taConfidence={result.confidence} />
+                )}
               </div>
 
               {/* Multi-Dimensional Research Report */}
