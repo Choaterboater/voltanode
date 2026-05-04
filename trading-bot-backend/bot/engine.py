@@ -322,6 +322,7 @@ class PaperTradingEngine:
                     _, realized_pnl = portfolio.close_position(symbol, fill.filled_price)
                     fill.realized_pnl = realized_pnl
                 else:
+                    fill.realized_pnl = (pos.entry_price - fill.filled_price) * fill.filled_qty - fill.fee
                     pos.size -= fill.filled_qty
                     pos.update_price(fill.filled_price)
             else:
@@ -334,6 +335,7 @@ class PaperTradingEngine:
                     _, realized_pnl = portfolio.close_position(symbol, fill.filled_price)
                     fill.realized_pnl = realized_pnl
                 else:
+                    fill.realized_pnl = (fill.filled_price - pos.entry_price) * fill.filled_qty - fill.fee
                     pos.size -= fill.filled_qty
                     pos.entry_price = (pos.cost_basis - fill.filled_qty * fill.filled_price) / pos.size
                     pos.update_price(fill.filled_price)
