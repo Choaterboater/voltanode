@@ -32,6 +32,7 @@ async def run_backtest(request: BacktestRequest) -> Dict[str, Any]:
         market_data = MarketData(cache=cache, config=bot_config)
         
         import asyncio
+        import pandas as pd
         try:
             df = await market_data.get_ohlcv(
                 request.symbol,
@@ -40,7 +41,7 @@ async def run_backtest(request: BacktestRequest) -> Dict[str, Any]:
             )
         except Exception:
             # Fallback: create synthetic data for demo
-            import pandas as pd, numpy as np
+            import numpy as np
             dates = pd.date_range(request.start_date.isoformat(), periods=90, freq="D")
             np.random.seed(42)
             prices = 100 + np.cumsum(np.random.randn(90) * 2)
@@ -53,6 +54,19 @@ async def run_backtest(request: BacktestRequest) -> Dict[str, Any]:
                 "volume": np.random.randint(1000, 10000, 90),
             })
             df.attrs["symbol"] = request.symbol
+
+        # Filter the OHLCV bars to the user's requested date range so 90d and
+        # 365d backtests don't return identical curves. Always keep some warmup
+        # context (~50 bars) ahead of start_date so indicators like EMA(200)
+        # have data to compute on, but treat the strategy as inactive there.
+        if "timestamp" in df.columns and request.start_date and request.end_date:
+            ts = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+            start_ts = pd.Timestamp(request.start_date).tz_localize("UTC")
+            end_ts = pd.Timestamp(request.end_date).tz_localize("UTC") + pd.Timedelta(days=1)
+            mask = (ts >= start_ts) & (ts < end_ts)
+            if mask.any():
+                df = df.loc[mask].reset_index(drop=True)
+                df.attrs["symbol"] = request.symbol
 
         config = BacktestConfig(
             initial_balance=request.initial_balance,

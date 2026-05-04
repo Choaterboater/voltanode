@@ -323,6 +323,8 @@ export default function BotLab() {
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleToggle(bot.strategy_id, bot.is_active)}
+                        aria-label={bot.is_active ? `Pause ${bot.strategy_type} bot` : `Resume ${bot.strategy_type} bot`}
+                        title={bot.is_active ? 'Pause bot' : 'Resume bot'}
                         className={`rounded-md p-2 transition-colors ${
                           bot.is_active
                             ? 'text-warning-amber hover:bg-warning-amber/10'
@@ -331,10 +333,18 @@ export default function BotLab() {
                       >
                         {bot.is_active ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                       </button>
-                      <button className="rounded-md p-2 text-text-secondary hover:bg-bg-input hover:text-text-primary transition-colors">
+                      <button
+                        aria-label={`${bot.strategy_type} bot settings`}
+                        title="Bot settings"
+                        className="rounded-md p-2 text-text-secondary hover:bg-bg-input hover:text-text-primary transition-colors"
+                      >
                         <Settings className="h-4 w-4" />
                       </button>
-                      <button className="rounded-md p-2 text-danger-red hover:bg-danger-red/10 transition-colors">
+                      <button
+                        aria-label={`Delete ${bot.strategy_type} bot`}
+                        title="Delete bot"
+                        className="rounded-md p-2 text-danger-red hover:bg-danger-red/10 transition-colors"
+                      >
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>

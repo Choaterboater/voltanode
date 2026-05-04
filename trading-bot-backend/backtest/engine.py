@@ -258,6 +258,17 @@ class BacktestRunner:
                             "current_price": fill.filled_price,
                             "unrealized_pnl": 0.0,
                         }
+                    # Log the entry as a trade so total_trades reflects activity.
+                    # Realized P&L is 0 for entries; closes will record their own.
+                    self._trades.append(
+                        TradeRecord(
+                            timestamp=fill.timestamp,
+                            realized_pnl=0.0,
+                            side="buy",
+                            quantity=fill.filled_qty,
+                            price=fill.filled_price,
+                        )
+                    )
             else:
                 # Sell
                 portfolio.deposit(quote_asset, fill.filled_qty * fill.filled_price - fill.fee)
@@ -295,6 +306,16 @@ class BacktestRunner:
                             "current_price": fill.filled_price,
                             "unrealized_pnl": 0.0,
                         }
+                    # Log short entry as a trade for accurate total_trades count.
+                    self._trades.append(
+                        TradeRecord(
+                            timestamp=fill.timestamp,
+                            realized_pnl=0.0,
+                            side="sell",
+                            quantity=fill.filled_qty,
+                            price=fill.filled_price,
+                        )
+                    )
 
     def walk_forward(
         self,
