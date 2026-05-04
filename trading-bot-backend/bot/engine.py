@@ -471,13 +471,21 @@ class PaperTradingEngine:
                 else:
                     self.execute_order(order, tick.price)
 
-        # Check trailing stops
+        # Check trailing stops. Run through the same debounce path as
+        # strategy orders so a held-too-long-below-stop position doesn't
+        # generate a fresh queued order every tick. Also execute_order so
+        # the stop actually closes the position instead of sitting PENDING
+        # forever.
         for portfolio in self._portfolios.values():
             stops = self.risk_manager.update_trailing_stops(
                 portfolio, self._current_prices
             )
             for stop_order in stops:
+                if self._is_debounced(stop_order):
+                    continue
                 self.submit_order(stop_order, stop_order.account_id)
+                if tick.price and stop_order.symbol == tick.symbol:
+                    self.execute_order(stop_order, tick.price)
 
         # Risk alerts
         for portfolio in self._portfolios.values():

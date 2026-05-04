@@ -352,7 +352,11 @@ class RiskManager:
             price = current_prices.get(pos.symbol)
             if price is None:
                 continue
-            # Simple trailing stop: fixed percentage below/above entry
+            # Simple trailing stop: fixed percentage below/above entry.
+            # Tag with strategy_id="trailing_stop" so the engine debounce
+            # collapses repeats — without this, every tick where price is
+            # past the stop generates a new manual-tagged duplicate that
+            # bypasses dedup.
             if pos.side.value == "long":
                 stop_price = pos.entry_price * (1.0 - self.config.default_stop_loss_pct)
                 if price <= stop_price:
@@ -362,6 +366,7 @@ class RiskManager:
                             side=OrderSide.SELL,
                             quantity=pos.size,
                             account_id=portfolio.account_id,
+                            strategy_id="trailing_stop",
                         )
                     )
             else:
@@ -373,6 +378,7 @@ class RiskManager:
                             side=OrderSide.BUY,
                             quantity=pos.size,
                             account_id=portfolio.account_id,
+                            strategy_id="trailing_stop",
                         )
                     )
         return stops
