@@ -136,7 +136,14 @@ class SymbolAnalyzer:
     async def _fetch_data(
         self, symbol: str, asset_type: str, lookback_days: int
     ) -> pd.DataFrame | None:
-        """Fetch OHLCV with synthetic fallback."""
+        """Fetch OHLCV. Raises ValueError when the symbol can't be resolved.
+
+        Previously fell back to deterministic synthetic data on miss, which
+        silently served random prices for unknown tickers. That misleads
+        users into thinking they're seeing real analysis, so we now surface
+        the failure instead.
+        """
+        last_error: Exception | None = None
         try:
             if asset_type == "crypto":
                 df = await self.market_data.get_crypto_ohlcv(symbol, days=lookback_days)
@@ -155,11 +162,15 @@ class SymbolAnalyzer:
                 df = self._normalise_df(df)
                 df.attrs["lookback_days"] = lookback_days
                 return df
-        except Exception:
-            pass
+        except Exception as exc:
+            last_error = exc
 
-        # ── Synthetic fallback ──
-        return self._synthetic_data(symbol, lookback_days)
+        suffix = f": {last_error}" if last_error else ""
+        raise ValueError(
+            f"Symbol '{symbol}' not found on the {asset_type} feed. "
+            f"For crypto use a CoinGecko id (e.g. 'bitcoin') or a known ticker "
+            f"(e.g. 'BTC'); for stocks use a Yahoo ticker (e.g. 'AAPL', 'CAT'){suffix}"
+        )
 
     def _normalise_df(self, df: pd.DataFrame) -> pd.DataFrame:
         """Ensure lower-case columns and numeric types."""

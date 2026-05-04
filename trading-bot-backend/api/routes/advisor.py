@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from advisor.analyzer import SymbolAnalyzer
@@ -137,17 +137,20 @@ def _analysis_to_response(result: AnalysisResult) -> AnalysisResponse:
 async def analyze_symbol(request: AnalyzeRequest) -> AnalysisResponse:
     """Analyse a symbol and return a professional trading recommendation.
 
-    **Crypto**: use CoinGecko ID, e.g. ``bitcoin``, ``ethereum``.  
+    **Crypto**: use CoinGecko ID, e.g. ``bitcoin``, ``ethereum``.
     **Stocks**: use Yahoo ticker, e.g. ``AAPL``, ``TSLA``.
     """
     cache = DataCache(cache_dir="./data/cache")
     market_data = MarketData(cache=cache, config=BotConfig())
     analyzer = SymbolAnalyzer(market_data=market_data)
-    result = await analyzer.analyze(
-        symbol=request.symbol,
-        asset_type=request.asset_type,
-        lookback_days=request.lookback_days,
-    )
+    try:
+        result = await analyzer.analyze(
+            symbol=request.symbol,
+            asset_type=request.asset_type,
+            lookback_days=request.lookback_days,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     return _analysis_to_response(result)
 
 
@@ -161,9 +164,12 @@ async def analyze_symbol_get(
     cache = DataCache(cache_dir="./data/cache")
     market_data = MarketData(cache=cache, config=BotConfig())
     analyzer = SymbolAnalyzer(market_data=market_data)
-    result = await analyzer.analyze(
-        symbol=symbol,
-        asset_type=asset_type,
-        lookback_days=lookback_days,
-    )
+    try:
+        result = await analyzer.analyze(
+            symbol=symbol,
+            asset_type=asset_type,
+            lookback_days=lookback_days,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     return _analysis_to_response(result)
