@@ -58,6 +58,56 @@ export const getEquityHistory = (
     `/portfolio/${accountId}/equity-history?range=${range}`,
   );
 
+// ── Signals (macro / sentiment / catalysts) ──
+
+export interface FearGreedSignal {
+  value: number;
+  label: string;
+  is_extreme_fear: boolean;
+  is_extreme_greed: boolean;
+  timestamp: string;
+}
+
+export interface MacroSeries {
+  value: number | null;
+  date: string;
+  change: number | null;
+  name: string;
+}
+
+export interface SignalsSnapshot {
+  fear_greed?: FearGreedSignal;
+  macro?: { fetched_at: string; series: Record<string, MacroSeries> };
+  providers: { fear_greed: boolean; fred: boolean; finnhub: boolean };
+}
+
+export const getSignals = () => fetchJson<SignalsSnapshot>('/signals/');
+
+export interface EarningsEntry {
+  symbol: string;
+  date: string;
+  days_until?: number | null;
+  eps_estimate: number | null;
+  revenue_estimate: number | null;
+  hour: string;
+}
+
+export const getEarningsCalendar = (daysAhead = 7) =>
+  fetchJson<{ days_ahead: number; count: number; entries: EarningsEntry[] }>(
+    `/signals/earnings?days_ahead=${daysAhead}`,
+  );
+
+export const getInsiderSummary = (symbol: string) =>
+  fetchJson<{
+    symbol: string;
+    buys: number;
+    sells: number;
+    buy_value_usd: number;
+    sell_value_usd: number;
+    net_value_usd: number;
+    tone: 'bullish' | 'bearish' | 'neutral';
+  }>(`/signals/insider/${symbol}`);
+
 // ── Market Data ──
 export interface ApiPrice {
   symbol: string;

@@ -1,8 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { motion } from 'framer-motion';
 import { useDashboardData } from '@/hooks/useDashboard';
-import { toggleStrategy, type ApiStrategy } from '@/lib/api';
+import {
+  toggleStrategy,
+  getSignals,
+  type ApiStrategy,
+  type SignalsSnapshot,
+} from '@/lib/api';
 import {
   AreaChart,
   Area,
@@ -98,9 +103,120 @@ function DonutChart({ percentage }: { percentage: number }) {
   );
 }
 
+// ── Signals Strip — macro / sentiment / catalysts at a glance ──
+function SignalTile({
+  label, value, sub, tone, onClick,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: 'positive' | 'negative' | 'neutral' | 'warning';
+  onClick?: () => void;
+}) {
+  const toneClass =
+    tone === 'positive' ? 'text-success-green'
+    : tone === 'negative' ? 'text-danger-red'
+    : tone === 'warning' ? 'text-warning-amber'
+    : 'text-text-primary';
+  return (
+    <button
+      onClick={onClick}
+      type="button"
+      className="flex flex-col rounded-lg border border-border-subtle bg-bg-surface px-3 py-2 text-left transition-colors hover:border-accent-cyan/40"
+    >
+      <span className="text-[10px] uppercase tracking-wider text-text-muted">{label}</span>
+      <span className={`mt-0.5 font-mono text-base font-semibold tabular-nums ${toneClass}`}>{value}</span>
+      {sub && <span className="text-[10px] text-text-muted">{sub}</span>}
+    </button>
+  );
+}
+
+function SignalsStrip({ signals }: { signals: SignalsSnapshot | null }) {
+  if (!signals) {
+    return (
+      <div className="rounded-[10px] border border-border-subtle bg-bg-surface px-4 py-2 text-xs text-text-muted">
+        Loading market signals…
+      </div>
+    );
+  }
+
+  const fg = signals.fear_greed;
+  const macro = signals.macro?.series ?? {};
+  const vix = macro['VIXCLS'];
+  const fed = macro['DFF'];
+  const ten = macro['DGS10'];
+  const spread = macro['T10Y2Y'];
+
+  const fgTone =
+    !fg ? 'neutral'
+    : fg.is_extreme_fear ? 'positive'  // contrarian buy zone
+    : fg.is_extreme_greed ? 'warning'  // caution
+    : fg.value < 45 ? 'negative'
+    : fg.value > 55 ? 'positive'
+    : 'neutral';
+
+  const vixTone =
+    !vix?.value ? 'neutral'
+    : vix.value > 30 ? 'negative'
+    : vix.value > 20 ? 'warning'
+    : 'positive';
+
+  return (
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-6">
+      {fg && (
+        <SignalTile
+          label="Fear & Greed"
+          value={`${fg.value}`}
+          sub={fg.label}
+          tone={fgTone}
+        />
+      )}
+      {vix && (
+        <SignalTile
+          label="VIX"
+          value={vix.value !== null ? vix.value.toFixed(2) : '—'}
+          sub={vix.value && vix.value > 30 ? 'panic zone' : vix.value && vix.value > 20 ? 'elevated' : 'calm'}
+          tone={vixTone}
+        />
+      )}
+      {fed && (
+        <SignalTile
+          label="Fed Funds"
+          value={fed.value !== null ? `${fed.value.toFixed(2)}%` : '—'}
+          sub={fed.change != null ? `Δ ${fed.change >= 0 ? '+' : ''}${fed.change.toFixed(2)}` : ''}
+        />
+      )}
+      {ten && (
+        <SignalTile
+          label="10Y Treasury"
+          value={ten.value !== null ? `${ten.value.toFixed(2)}%` : '—'}
+          sub={ten.change != null ? `Δ ${ten.change >= 0 ? '+' : ''}${ten.change.toFixed(2)}` : ''}
+        />
+      )}
+      {spread && (
+        <SignalTile
+          label="10Y-2Y"
+          value={spread.value !== null ? `${spread.value >= 0 ? '+' : ''}${spread.value.toFixed(2)}` : '—'}
+          sub={spread.value !== null && spread.value < 0 ? 'inverted' : 'normal'}
+          tone={spread.value !== null && spread.value < 0 ? 'negative' : 'positive'}
+        />
+      )}
+      {signals.providers && !signals.providers.fred && (
+        <SignalTile
+          label="Macro feed"
+          value="off"
+          sub="set FRED_API_KEY"
+          tone="neutral"
+        />
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const [selectedRange, setSelectedRange] = useState('30D');
   const [notificationCount] = useState(3);
+  const [signals, setSignals] = useState<SignalsSnapshot | null>(null);
   const navigate = useNavigate();
   const {
     portfolio,
@@ -112,6 +228,17 @@ export default function Home() {
     error,
     refetch,
   } = useDashboardData();
+
+  // Pull macro / sentiment signals once per dashboard load + every 5 min after.
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      getSignals().then((s) => { if (!cancelled) setSignals(s); }).catch(() => {});
+    };
+    load();
+    const interval = setInterval(load, 5 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
 
   async function handleToggleBot(id: string, current: boolean) {
     try {
@@ -254,6 +381,9 @@ export default function Home() {
         </div>
       )}
       <div className="space-y-5">
+        {/* Signals Strip — macro / sentiment / catalysts at a glance */}
+        <SignalsStrip signals={signals} />
+
         {/* Section 1: Hero Metrics Row */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:gap-5">
           <MetricCard
