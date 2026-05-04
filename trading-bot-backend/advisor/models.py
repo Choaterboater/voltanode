@@ -28,6 +28,22 @@ class PriceTarget:
 
 
 @dataclass
+class LLMCommentary:
+    """Optional LLM-generated commentary blended with the deterministic TA verdict."""
+
+    rationale: str  # Human-readable narrative tying indicators + news together
+    agreement: str  # "agrees", "disagrees", "mixed" — how the LLM views the TA verdict
+    adjusted_confidence: float  # 0–100, LLM's blended confidence after considering news
+    key_factors: List[str] = field(default_factory=list)  # Top 3-5 drivers
+    news_impact: str = "none"  # "high" | "medium" | "low" | "none"
+    article_count: int = 0
+    model: str = ""  # Which LLM produced this (e.g. "llama3.1:8b")
+    # When the LLM disagrees with the TA verdict, this is the action it
+    # would prefer. Empty string when it agrees or has no strong alternative.
+    alternative_verdict: str = ""  # "" | "BUY" | "SELL" | "HOLD" | "STRONG_BUY" | "STRONG_SELL"
+
+
+@dataclass
 class AnalysisResult:
     """Complete analysis result for a symbol."""
 
@@ -46,3 +62,4 @@ class AnalysisResult:
     take_profit: float
     time_horizon: str  # "short_term", "medium_term", "long_term"
     chart_data: Dict[str, Any] = field(default_factory=dict)
+    llm_commentary: "LLMCommentary | None" = None

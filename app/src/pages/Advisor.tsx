@@ -26,15 +26,16 @@ import {
 } from 'recharts';
 import Layout from '@/components/Layout';
 import Badge from '@/components/Badge';
-import { useAdvisor, type IndicatorReading, type PriceTarget } from '@/hooks/useAdvisor';
+import { useAdvisor, type IndicatorReading, type PriceTarget, type LLMCommentary } from '@/hooks/useAdvisor';
+import { Brain } from 'lucide-react';
 import { toast } from 'sonner';
 
-type TimeRange = '7d' | '28d' | '180d';
+type TimeRange = '30d' | '90d' | '365d';
 
 const timeRanges: { key: TimeRange; label: string }[] = [
-  { key: '7d', label: '1–7d' },
-  { key: '28d', label: '1–4w' },
-  { key: '180d', label: '1–6m' },
+  { key: '30d', label: '1mo' },
+  { key: '90d', label: '3mo' },
+  { key: '365d', label: '1yr' },
 ];
 
 const quickSelectCrypto = ['BTC', 'ETH', 'SOL', 'BNB'];
@@ -77,15 +78,17 @@ function formatCurrency(v: number) {
 }
 
 function timeHorizonLabel(h: string) {
-  if (h === 'short_term') return 'Short Term (1–4 weeks)';
-  if (h === 'medium_term') return 'Medium Term (1–3 months)';
-  return 'Long Term (3–12 months)';
+  // Labels mirror the lookback-range buttons (1mo / 3mo / 1yr) so the
+  // displayed horizon always matches what the user actually selected.
+  if (h === 'short_term') return 'Short Term (1 month)';
+  if (h === 'medium_term') return 'Medium Term (3 months)';
+  return 'Long Term (1 year)';
 }
 
 function rangeToDays(range: TimeRange): number {
-  if (range === '7d') return 7;
-  if (range === '28d') return 28;
-  return 180;
+  if (range === '30d') return 30;
+  if (range === '90d') return 90;
+  return 365;
 }
 
 // ── Indicator Card ──
@@ -225,6 +228,95 @@ function PriceChart({ chartData }: { chartData: { timestamps: string[]; close: n
   );
 }
 
+// ── LLM Commentary Card ──
+function LLMCommentaryCard({ commentary, taConfidence }: { commentary: LLMCommentary; taConfidence: number }) {
+  const agreementColor =
+    commentary.agreement === 'agrees'
+      ? 'text-success-green'
+      : commentary.agreement === 'disagrees'
+      ? 'text-danger-red'
+      : 'text-warning-amber';
+  const agreementBg =
+    commentary.agreement === 'agrees'
+      ? 'bg-success-green/10 border-success-green/30'
+      : commentary.agreement === 'disagrees'
+      ? 'bg-danger-red/10 border-danger-red/30'
+      : 'bg-warning-amber/10 border-warning-amber/30';
+  const impactColor =
+    commentary.news_impact === 'high'
+      ? 'danger'
+      : commentary.news_impact === 'medium'
+      ? 'warning'
+      : commentary.news_impact === 'low'
+      ? 'info'
+      : 'neutral';
+  const delta = commentary.adjusted_confidence - taConfidence;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.05 }}
+      className={`mt-4 rounded-md border p-3 ${agreementBg}`}
+    >
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="flex items-center gap-2">
+          <Brain className="h-4 w-4 text-accent-cyan" />
+          <span className="text-sm font-semibold text-text-primary">LLM Second Opinion</span>
+          <span className="text-[10px] font-mono text-text-muted">{commentary.model}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant={impactColor as 'danger' | 'warning' | 'info' | 'neutral'}>
+            news: {commentary.news_impact}
+          </Badge>
+          <span className={`text-xs font-mono font-medium ${agreementColor}`}>
+            {commentary.agreement}
+          </span>
+        </div>
+      </div>
+
+      {commentary.alternative_verdict && commentary.agreement === 'disagrees' && (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-accent-cyan/40 bg-accent-cyan/5 px-3 py-2">
+          <span className="text-xs text-text-muted">Recommends instead:</span>
+          <span className={`text-base font-bold ${verdictColor(commentary.alternative_verdict)}`}>
+            {commentary.alternative_verdict.replace('_', ' ')}
+          </span>
+        </div>
+      )}
+
+      <p className="text-sm leading-relaxed text-text-secondary mb-3">{commentary.rationale}</p>
+
+      {commentary.key_factors.length > 0 && (
+        <ul className="space-y-1 mb-3 text-xs text-text-secondary">
+          {commentary.key_factors.map((f, i) => (
+            <li key={i} className="flex gap-2">
+              <span className="text-accent-cyan">›</span>
+              <span>{f}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="flex items-center justify-between border-t border-border-subtle/50 pt-2 text-xs">
+        <span className="text-text-muted">
+          Adjusted confidence:{' '}
+          <span className="font-mono font-medium text-text-primary">
+            {commentary.adjusted_confidence.toFixed(1)}%
+          </span>
+          {Math.abs(delta) >= 0.5 && (
+            <span className={delta > 0 ? 'text-success-green ml-1' : 'text-danger-red ml-1'}>
+              ({delta > 0 ? '+' : ''}{delta.toFixed(1)} vs TA)
+            </span>
+          )}
+        </span>
+        <span className="text-text-muted font-mono">
+          {commentary.article_count} article{commentary.article_count === 1 ? '' : 's'}
+        </span>
+      </div>
+    </motion.div>
+  );
+}
+
 // ── Main Advisor Page ──
 export default function Advisor() {
   const location = useLocation();
@@ -232,7 +324,7 @@ export default function Advisor() {
 
   const [symbol, setSymbol] = useState(navState?.symbol || '');
   const [assetType, setAssetType] = useState<'crypto' | 'stock'>(navState?.assetType || 'crypto');
-  const [timeRange, setTimeRange] = useState<TimeRange>('28d');
+  const [timeRange, setTimeRange] = useState<TimeRange>('90d');
   const { result, loading, error, analyze } = useAdvisor();
 
   useEffect(() => {
@@ -426,6 +518,9 @@ export default function Advisor() {
                 <div className="mt-4 rounded-md bg-bg-input p-3">
                   <p className="text-sm leading-relaxed text-text-secondary">{result.summary}</p>
                 </div>
+
+                {/* LLM Commentary */}
+                {result.llm_commentary && <LLMCommentaryCard commentary={result.llm_commentary} taConfidence={result.confidence} />}
               </div>
 
               {/* Chart */}

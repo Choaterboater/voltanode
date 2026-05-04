@@ -14,12 +14,17 @@ class MeanReversionStrategy(BaseStrategy):
 
     name = "mean_reversion"
     SUPPORTS_MULTI_SYMBOL = True
+    # Looser defaults: RSI 45/55 (was 30/70) and tighter Bollinger band std=1.5
+    # (was 2.0) so the strategy actually fires entries on normal market noise.
+    # The 30/70/2.0 defaults are textbook but too strict for paper-trading
+    # observability — this set generates 2-5x more signals.
     DEFAULT_CONFIG = {
         "rsi_period": 14,
-        "rsi_overbought": 70,
-        "rsi_oversold": 30,
+        "rsi_overbought": 55,
+        "rsi_oversold": 45,
         "bb_period": 20,
-        "bb_std": 2.0,
+        "bb_std": 1.5,
+        "touch_tolerance": 0.02,  # within 2% of band counts as a touch
     }
 
     def generate_signal(self, data: pd.DataFrame, current_price: float) -> Signal:
@@ -75,8 +80,9 @@ class MeanReversionStrategy(BaseStrategy):
         # Overbought / oversold conditions
         is_oversold = current_rsi < cfg["rsi_oversold"]
         is_overbought = current_rsi > cfg["rsi_overbought"]
-        touches_lower = current_price <= current_lower * 1.01  # within 1% of lower band
-        touches_upper = current_price >= current_upper * 0.99  # within 1% of upper band
+        tol = float(cfg.get("touch_tolerance", 0.01))
+        touches_lower = current_price <= current_lower * (1 + tol)
+        touches_upper = current_price >= current_upper * (1 - tol)
 
         if is_oversold and touches_lower:
             # Buy signal

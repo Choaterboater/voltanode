@@ -134,7 +134,10 @@ def _get_engine(request: Request):
 
 
 def _get_config(request: Request) -> BotConfig:
-    return getattr(request.app.state, "config", BotConfig())
+    cfg = getattr(request.app.state, "config", None)
+    if cfg is None:
+        raise HTTPException(status_code=503, detail="Server configuration not initialized")
+    return cfg
 
 
 def _get_key_store() -> Optional[ApiKeyStore]:
@@ -156,12 +159,15 @@ async def get_live_mode(request: Request) -> dict:
     broker_connected = False
     broker_name = config.live_mode.default_broker
     if engine and hasattr(engine, "broker"):
-        broker_connected = engine.broker.is_connected()
-        # When live mode is OFF, show the configured default broker (not the mock
-        # broker the engine swaps to internally). When live mode is ON, report
-        # the actual connected broker.
         if config.live_mode.enabled:
+            # Live mode ON: report the actual running broker
             broker_name = engine.broker.name
+            if engine.broker.name == "mock" and config.live_mode.default_broker != "mock":
+                # Stale-mock: startup key restore failed, show configured broker as disconnected
+                broker_connected = False
+            else:
+                broker_connected = engine.broker.is_connected()
+        # Live mode OFF: broker_connected stays False — mock doesn't count as a real connection
 
     return {
         "live_mode": config.live_mode.enabled,
@@ -214,6 +220,10 @@ async def set_live_mode(request: Request, body: LiveModeToggleRequest) -> dict:
                             testnet=getattr(broker_cfg, "testnet", True),
                             paper=getattr(broker_cfg, "paper", True),
                         )
+                        try:
+                            engine.broker.disconnect()
+                        except Exception:
+                            pass
                         engine.broker = real_broker
                     else:
                         logger.warning("No encryption key available; cannot connect real broker")
@@ -224,6 +234,10 @@ async def set_live_mode(request: Request, body: LiveModeToggleRequest) -> dict:
         # Disabling live mode — swap back to mock broker
         if engine and hasattr(engine, "broker"):
             from brokers.registry import get_broker
+            try:
+                engine.broker.disconnect()
+            except Exception:
+                pass
             mock_broker = get_broker("mock")
             mock_broker.connect("mock_key", "mock_secret")
             engine.broker = mock_broker
@@ -318,8 +332,8 @@ async def store_api_keys(request: Request, body: ApiKeysRequest) -> dict:
     key_store = _get_key_store()
     if key_store is None:
         raise HTTPException(
-            status_code=500,
-            detail="VOLTANODE_SECRET_KEY not set. Cannot encrypt API keys.",
+            status_code=503,
+            detail="Encryption not configured on server. Set VOLTANODE_SECRET_KEY.",
         )
 
     broker_cfg = config.brokers.get(body.broker_name)

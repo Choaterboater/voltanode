@@ -8,6 +8,12 @@ import sys
 
 def main() -> None:
     """Main entry point."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
     parser = argparse.ArgumentParser(description="Paper Trading Bot")
     parser.add_argument(
         "--mode",

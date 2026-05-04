@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Hit the proxied path so dev-server vite.config.ts can route to the backend.
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 export interface IndicatorReading {
   name: string;
@@ -43,6 +44,17 @@ export interface ChartData {
   adx?: (number | null)[];
 }
 
+export interface LLMCommentary {
+  rationale: string;
+  agreement: 'agrees' | 'disagrees' | 'mixed';
+  adjusted_confidence: number;
+  key_factors: string[];
+  news_impact: 'high' | 'medium' | 'low' | 'none';
+  article_count: number;
+  model: string;
+  alternative_verdict: string; // "" | "BUY" | "SELL" | "HOLD" | "STRONG_BUY" | "STRONG_SELL"
+}
+
 export interface AnalysisResult {
   symbol: string;
   current_price: number;
@@ -60,6 +72,7 @@ export interface AnalysisResult {
   take_profit: number;
   time_horizon: string;
   chart_data: ChartData;
+  llm_commentary: LLMCommentary | null;
 }
 
 export function useAdvisor() {

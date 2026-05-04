@@ -34,6 +34,8 @@ class PortfolioResponse(BaseModel):
     unrealized_pnl: float
     realized_pnl: float
     timestamp: datetime
+    source: str = "paper"  # "paper" (local ledger) | "alpaca" | "binance" | other broker name
+    broker_connected: bool = False
 
 
 class DepositRequest(BaseModel):

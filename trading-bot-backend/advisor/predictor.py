@@ -39,35 +39,38 @@ class PricePredictor:
     # Public API
     # ------------------------------------------------------------------
 
-    def predict_targets(self, data: pd.DataFrame, current_price: float) -> List["PriceTarget"]:
+    def predict_targets(self, data: pd.DataFrame, current_price: float, lookback_days: int = 90) -> List["PriceTarget"]:
         """Generate price targets from all methods.
 
         Args:
             data: OHLCV DataFrame.
             current_price: Last known price.
+            lookback_days: Days of history used — enables forward projections for longer horizons.
 
         Returns:
-            List of PriceTarget objects sorted by probability descending.
+            List of PriceTarget objects: forward projections first, then technical levels.
         """
-        targets: List[_RawTarget] = []
+        # Forward projections shown first so they're prominent
+        forward = self._forward_projections(data, current_price, lookback_days)
 
-        targets.extend(self._atr_targets(data, current_price))
-        targets.extend(self._fibonacci_targets(data, current_price))
-        targets.extend(self._pivot_targets(data, current_price))
-        targets.extend(self._bollinger_targets(data, current_price))
-        targets.extend(self._ichimoku_targets(data, current_price))
+        technical: List[_RawTarget] = []
+        technical.extend(self._atr_targets(data, current_price))
+        technical.extend(self._fibonacci_targets(data, current_price))
+        technical.extend(self._pivot_targets(data, current_price))
+        technical.extend(self._bollinger_targets(data, current_price))
+        technical.extend(self._ichimoku_targets(data, current_price))
 
-        # Deduplicate near-identical prices (within 0.5 %)
-        unique: List[_RawTarget] = []
-        for t in sorted(targets, key=lambda x: x.probability, reverse=True):
+        # Deduplicate technical targets (within 0.5%)
+        unique_tech: List[_RawTarget] = []
+        for t in sorted(technical, key=lambda x: x.probability, reverse=True):
             if not any(
                 (t.price == u.price == 0)
                 or (u.price != 0 and abs(t.price / u.price - 1) < 0.005)
-                for u in unique
+                for u in unique_tech
             ):
-                unique.append(t)
+                unique_tech.append(t)
 
-        # Convert to PriceTarget dataclass
+        combined = forward + unique_tech[:8]
         return [
             PriceTarget(
                 label=t.label,
@@ -75,7 +78,7 @@ class PricePredictor:
                 probability=round(t.probability, 2),
                 rationale=t.rationale,
             )
-            for t in unique[:8]
+            for t in combined
         ]
 
     # ------------------------------------------------------------------
@@ -275,6 +278,96 @@ class PricePredictor:
                     rationale=f"Kijun-sen (26-period equilibrium) at {round(kijun, 2)} — key support/resistance.",
                 )
             )
+        return targets
+
+    def _forward_projections(self, data: pd.DataFrame, current_price: float, lookback_days: int) -> List[_RawTarget]:
+        """1Y and 3Y forward price projections using log-linear regression + CAGR blend."""
+        if len(data) < 30 or current_price <= 0:
+            return []
+
+        close = data["close"].values.astype(float)
+        n = len(close)
+
+        # Log-linear regression trend
+        t = np.arange(n, dtype=float)
+        log_prices = np.log(np.maximum(close, 1e-10))
+        coeffs = np.polyfit(t, log_prices, 1)
+        daily_log_growth = coeffs[0]
+        regression_annual = np.exp(daily_log_growth * 252) - 1
+
+        # CAGR from actual start→end
+        period_years = max(n / 252, 0.05)
+        cagr = (close[-1] / max(close[0], 1e-10)) ** (1.0 / period_years) - 1
+
+        # Blend regression and CAGR, then mean-revert toward a long-run baseline.
+        # Pure extrapolation of a hot recent year produces absurd 3Y numbers.
+        RAW_BLEND = (regression_annual + cagr) / 2.0
+        LONG_RUN_BASELINE = 0.12        # ~12%/yr historical equity market average
+        MEAN_REVERT_WEIGHT = 0.35       # 35% weight toward baseline, 65% toward data
+        blended_rate = RAW_BLEND * (1 - MEAN_REVERT_WEIGHT) + LONG_RUN_BASELINE * MEAN_REVERT_WEIGHT
+        # Hard cap: reasonable growth bounds; prevents moonshot/crash compounding
+        blended_rate = float(np.clip(blended_rate, -0.50, 0.80))
+
+        # Annualised historical volatility
+        log_returns = np.diff(log_prices)
+        annual_vol = float(np.std(log_returns) * np.sqrt(252)) if len(log_returns) > 1 else 0.30
+        annual_vol = min(annual_vol, 1.50)  # cap vol used in projections at 150%
+
+        targets: List[_RawTarget] = []
+
+        # Use actual data length, not lookback_days, for threshold checks.
+        # The analyzer always provides >= 252 bars when available (fed from 1Y fetch).
+        horizons = []
+        if n >= 90:
+            horizons.append((1, 0.55))   # 55% = direction confidence for 1-year trend
+        if n >= 252:
+            horizons.append((3, 0.45))   # 45% = direction confidence for 3-year trend
+
+        data_years = round(n / 252, 1)
+
+        for years, base_prob in horizons:
+            base = current_price * ((1 + blended_rate) ** years)
+            bull = current_price * ((1 + blended_rate + annual_vol * 0.75) ** years)
+            bear = current_price * ((1 + blended_rate - annual_vol * 0.75) ** years)
+
+            # Clamp negatives
+            base = max(base, current_price * 0.01)
+            bull = max(bull, current_price * 0.01)
+            bear = max(bear, current_price * 0.01)
+
+            pct = (base / current_price - 1) * 100
+            cagr_pct = blended_rate * 100
+            vol_pct = annual_vol * 100
+
+            targets.append(_RawTarget(
+                label=f"{years}Y Projection",
+                price=base,
+                probability=base_prob,
+                rationale=(
+                    f"{years}-year trend projection: {'+' if pct >= 0 else ''}{pct:.1f}% "
+                    f"(blended CAGR {cagr_pct:+.1f}%/yr, vol {vol_pct:.1f}%/yr). "
+                    f"Based on {data_years}Y of history. Confidence bar = trend direction strength, not exact-price certainty."
+                ),
+            ))
+            targets.append(_RawTarget(
+                label=f"{years}Y Bull Case",
+                price=bull,
+                probability=round(base_prob * 0.70, 2),
+                rationale=(
+                    f"{years}-year bull scenario (+0.75σ): "
+                    f"{(bull / current_price - 1) * 100:+.1f}% from current price."
+                ),
+            ))
+            targets.append(_RawTarget(
+                label=f"{years}Y Bear Case",
+                price=bear,
+                probability=round(base_prob * 0.70, 2),
+                rationale=(
+                    f"{years}-year bear scenario (−0.75σ): "
+                    f"{(bear / current_price - 1) * 100:+.1f}% from current price."
+                ),
+            ))
+
         return targets
 
     # ------------------------------------------------------------------

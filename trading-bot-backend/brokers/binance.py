@@ -33,6 +33,8 @@ class BinanceBroker(BrokerAdapter):
     MAINNET_BASE = "https://api.binance.com"
     TESTNET_BASE = "https://testnet.binance.vision"
 
+    _CONN_CACHE_TTL = 30.0
+
     def __init__(self, testnet: bool = True) -> None:
         self._testnet = testnet
         self._base_url = self.TESTNET_BASE if testnet else self.MAINNET_BASE
@@ -40,6 +42,7 @@ class BinanceBroker(BrokerAdapter):
         self._api_secret = ""
         self._session = requests.Session()
         self._recv_window = 5000
+        self._conn_cache: tuple[bool, float] | None = None
 
     def connect(self, api_key: str, api_secret: str, **kwargs: Any) -> bool:
         self._api_key = api_key.strip()
@@ -63,11 +66,16 @@ class BinanceBroker(BrokerAdapter):
             raise BrokerConnectionError(f"Binance connection failed: {exc}") from exc
 
     def is_connected(self) -> bool:
+        now = time.monotonic()
+        if self._conn_cache is not None and now - self._conn_cache[1] < self._CONN_CACHE_TTL:
+            return self._conn_cache[0]
         try:
             self._request("GET", "/api/v3/ping")
-            return True
+            result = True
         except Exception:
-            return False
+            result = False
+        self._conn_cache = (result, now)
+        return result
 
     def _signature(self, query_string: str) -> str:
         return hmac.new(
@@ -299,6 +307,7 @@ class BinanceBroker(BrokerAdapter):
         return self._request("GET", "/api/v3/account", signed=True)
 
     def disconnect(self) -> None:
+        self._conn_cache = None
         self._session.close()
 
     @staticmethod

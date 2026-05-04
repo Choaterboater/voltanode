@@ -53,16 +53,29 @@ class MockBroker(BrokerAdapter):
         self._balances: Dict[str, float] = {"USDT": 10000.0, "USD": 10000.0}
         self._positions: Dict[str, MockPosition] = {}
         self._prices: Dict[str, float] = {
+            # Bare tickers (used when strategy config has symbol="BTC" etc.)
+            "BTC": 65000.0,
+            "ETH": 3500.0,
+            "SOL": 150.0,
+            "BNB": 600.0,
+            "ADA": 0.45,
+            "XRP": 0.60,
+            "DOGE": 0.15,
+            "AVAX": 35.0,
+            # Suffixed variants
             "BTCUSDT": 65000.0,
             "ETHUSDT": 3500.0,
             "SOLUSDT": 150.0,
             "ADAUSDT": 0.45,
             "BTCUSD": 65000.0,
             "ETHUSD": 3500.0,
-            "AAPL": 180.0,
-            "TSLA": 240.0,
+            # Stocks
+            "AAPL": 210.0,
+            "TSLA": 250.0,
+            "NVDA": 950.0,
             "MSFT": 420.0,
             "GOOGL": 170.0,
+            "CAT": 350.0,
         }
         self._order_counter = 0
         self._orders: Dict[str, dict] = {}  # broker_order_id -> order info

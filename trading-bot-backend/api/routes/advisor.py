@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
@@ -42,6 +42,18 @@ class PriceTargetModel(BaseModel):
     rationale: str
 
 
+class LLMCommentaryModel(BaseModel):
+    """Optional LLM-generated commentary blended with the deterministic verdict."""
+    rationale: str
+    agreement: str  # "agrees" | "disagrees" | "mixed"
+    adjusted_confidence: float  # 0-100
+    key_factors: List[str] = []
+    news_impact: str = "none"  # "high" | "medium" | "low" | "none"
+    article_count: int = 0
+    model: str = ""
+    alternative_verdict: str = ""  # "" | "BUY" | "SELL" | "HOLD" | "STRONG_BUY" | "STRONG_SELL"
+
+
 class AnalysisResponse(BaseModel):
     """Full analysis response."""
     symbol: str
@@ -60,12 +72,27 @@ class AnalysisResponse(BaseModel):
     take_profit: float
     time_horizon: str
     chart_data: dict = {}
+    llm_commentary: Optional[LLMCommentaryModel] = None
 
 
 # ── Helpers ──
 
 def _analysis_to_response(result: AnalysisResult) -> AnalysisResponse:
     """Convert internal AnalysisResult to API response model."""
+    commentary = None
+    if result.llm_commentary is not None:
+        c = result.llm_commentary
+        commentary = LLMCommentaryModel(
+            rationale=c.rationale,
+            agreement=c.agreement,
+            adjusted_confidence=c.adjusted_confidence,
+            key_factors=c.key_factors,
+            news_impact=c.news_impact,
+            article_count=c.article_count,
+            model=c.model,
+            alternative_verdict=c.alternative_verdict,
+        )
+
     return AnalysisResponse(
         symbol=result.symbol,
         current_price=result.current_price,
@@ -100,6 +127,7 @@ def _analysis_to_response(result: AnalysisResult) -> AnalysisResponse:
         take_profit=result.take_profit,
         time_horizon=result.time_horizon,
         chart_data=result.chart_data,
+        llm_commentary=commentary,
     )
 
 

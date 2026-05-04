@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 import logging
+import time
 import requests
 
 logger = logging.getLogger("volta.brokers")
@@ -47,6 +48,8 @@ class AlpacaBroker(BrokerAdapter):
         "TAO", "ARKM", "PORTAL", "DEGEN", "POLY",
     }
 
+    _CONN_CACHE_TTL = 30.0
+
     def __init__(self, paper: bool = True) -> None:
         self._paper = paper
         self._base_url = self.PAPER_BASE if paper else self.LIVE_BASE
@@ -54,6 +57,7 @@ class AlpacaBroker(BrokerAdapter):
         self._api_key = ""
         self._api_secret = ""
         self._session = requests.Session()
+        self._conn_cache: tuple[bool, float] | None = None
 
     def connect(self, api_key: str, api_secret: str, **kwargs: Any) -> bool:
         self._api_key = api_key.strip()
@@ -79,11 +83,16 @@ class AlpacaBroker(BrokerAdapter):
             raise BrokerConnectionError(f"Alpaca connection failed: {exc}") from exc
 
     def is_connected(self) -> bool:
+        now = time.monotonic()
+        if self._conn_cache is not None and now - self._conn_cache[1] < self._CONN_CACHE_TTL:
+            return self._conn_cache[0]
         try:
             self._request("GET", "/v2/account")
-            return True
+            result = True
         except Exception:
-            return False
+            result = False
+        self._conn_cache = (result, now)
+        return result
 
     def _request(self, method: str, path: str, json: Any = None, params: Any = None) -> Any:
         url = f"{self._base_url}{path}"
@@ -369,4 +378,5 @@ class AlpacaBroker(BrokerAdapter):
         return self._request("GET", "/v2/account")
 
     def disconnect(self) -> None:
+        self._conn_cache = None
         self._session.close()

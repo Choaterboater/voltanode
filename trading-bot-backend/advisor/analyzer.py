@@ -96,7 +96,7 @@ class SymbolAnalyzer:
         # ── 7. Chart data ──
         chart_data = self._build_chart_data(data, indicators)
 
-        return AnalysisResult(
+        result = AnalysisResult(
             symbol=symbol,
             current_price=round(current_price, 4),
             asset_type=asset_type,
@@ -114,6 +114,21 @@ class SymbolAnalyzer:
             chart_data=chart_data,
         )
 
+        # ── 8. Optional LLM commentary (Llama / OpenAI / Anthropic / OpenRouter) ──
+        # Runs in a thread so the requests-based LLM clients don't block the
+        # asyncio event loop. Failures are non-fatal — the deterministic
+        # analysis is always returned even if the LLM call errors.
+        try:
+            from advisor.llm_advisor import generate_commentary
+            commentary = await asyncio.to_thread(generate_commentary, result)
+            if commentary is not None:
+                result.llm_commentary = commentary
+        except Exception as exc:
+            import logging as _log
+            _log.getLogger("volta.advisor").warning(f"LLM commentary skipped: {exc}")
+
+        return result
+
     # ------------------------------------------------------------------
     # Data fetching
     # ------------------------------------------------------------------
@@ -126,7 +141,14 @@ class SymbolAnalyzer:
             if asset_type == "crypto":
                 df = await self.market_data.get_crypto_ohlcv(symbol, days=lookback_days)
             else:
-                period_map = {7: "5d", 28: "1mo", 90: "3mo", 180: "6mo", 365: "1y"}
+                # Map lookback days → yfinance period string. Must include the
+                # current UI ranges (30/90/365) plus legacy values for callers
+                # that pass arbitrary numbers.
+                period_map = {
+                    7: "5d", 14: "1mo", 28: "1mo", 30: "1mo",
+                    60: "3mo", 90: "3mo", 180: "6mo",
+                    365: "1y", 730: "2y",
+                }
                 period = period_map.get(lookback_days, "1y")
                 df = self.market_data.get_stock_ohlcv(symbol, period=period)
             if df is not None and not df.empty:
@@ -446,12 +468,12 @@ class SymbolAnalyzer:
             entry_low = current_price - atr * 0.5
             entry_high = current_price + atr * 0.5
 
-        # Time horizon based on user's selected lookback period
-        # (passed via data.attrs set in _normalise_df / _synthetic_data)
+        # Time horizon based on user's selected lookback period.
+        # Buckets line up with the UI's range buttons (1mo / 3mo / 1yr).
         lookback_days = getattr(data, 'attrs', {}).get('lookback_days', 90)
-        if lookback_days <= 7:
+        if lookback_days <= 30:
             time_horizon = "short_term"
-        elif lookback_days <= 28:
+        elif lookback_days <= 90:
             time_horizon = "medium_term"
         else:
             time_horizon = "long_term"
