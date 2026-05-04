@@ -80,6 +80,12 @@ class ResearchReport:
     fundamentals_raw: Dict[str, Any] = field(default_factory=dict)
     generated_at: str = ""
 
+    # External signal context (best-effort, empty when keys/data missing)
+    macro_context: Dict[str, Any] = field(default_factory=dict)
+    insider_context: Dict[str, Any] = field(default_factory=dict)
+    earnings_context: Dict[str, Any] = field(default_factory=dict)
+    fear_greed_context: Dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         return d
@@ -237,6 +243,13 @@ def build_research_report(
 
     timeframe = "6-12 months" if ta_result.asset_type == "stock" else "1-3 months"
 
+    # Pull external signal context (FRED macro, Finnhub earnings/insider,
+    # alternative.me Fear & Greed). All best-effort — None when keys missing.
+    macro_ctx = _fetch_macro_context()
+    insider_ctx = _fetch_insider_context(ta_result.symbol, ta_result.asset_type)
+    earnings_ctx = _fetch_next_earnings(ta_result.symbol, ta_result.asset_type, snap.next_earnings_date)
+    fg_ctx = _fetch_fear_greed_context()
+
     report = ResearchReport(
         symbol=ta_result.symbol.upper(),
         display_name=getattr(ta_result, "display_name", "") or snap.name or ta_result.symbol.upper(),
@@ -249,13 +262,17 @@ def build_research_report(
         fundamental=fundamental,
         technical=technical,
         sentiment=sentiment,
-        next_earnings_date=snap.next_earnings_date,
+        next_earnings_date=earnings_ctx.get("date") or snap.next_earnings_date,
         analyst_target_median=snap.analyst_target_median,
         analyst_count=snap.analyst_count,
         sector=snap.sector,
         industry=snap.industry,
         fundamentals_raw=snap.to_dict(),
         generated_at=datetime.now(timezone.utc).isoformat(),
+        macro_context=macro_ctx,
+        insider_context=insider_ctx,
+        earnings_context=earnings_ctx,
+        fear_greed_context=fg_ctx,
     )
 
     # Optional rich narrative — best-effort, never fatal
@@ -273,6 +290,99 @@ def build_research_report(
         logger.warning(f"Research narrative generation failed: {exc}")
 
     return report
+
+
+# ── External signal context fetchers ────────────────────────────────
+
+
+def _fetch_macro_context() -> Dict[str, Any]:
+    """Pull FRED snapshot for the LLM prompt. Empty when key missing."""
+    try:
+        from signals import fred
+        if not fred.is_configured():
+            return {}
+        snap = fred.fetch_macro_snapshot()
+        if snap is None:
+            return {}
+        out: Dict[str, Any] = {}
+        for sid, obs in snap.series.items():
+            out[sid] = {
+                "value": obs.value,
+                "date": obs.date,
+                "change": obs.change,
+                "name": obs.name,
+            }
+        return out
+    except Exception as exc:
+        logger.debug(f"macro context fetch failed: {exc}")
+        return {}
+
+
+def _fetch_insider_context(symbol: str, asset_type: str) -> Dict[str, Any]:
+    """Pull insider Form 4 summary (Finnhub) for stocks."""
+    if asset_type != "stock":
+        return {}
+    try:
+        from signals import finnhub
+        if not finnhub.is_configured():
+            return {}
+        return finnhub.insider_summary(symbol)
+    except Exception as exc:
+        logger.debug(f"insider context fetch failed for {symbol}: {exc}")
+        return {}
+
+
+def _fetch_next_earnings(symbol: str, asset_type: str, fallback_date: Optional[str]) -> Dict[str, Any]:
+    """Look up the next earnings event via Finnhub. Falls back to yfinance ts."""
+    if asset_type != "stock":
+        return {}
+    try:
+        from signals import finnhub
+        if finnhub.is_configured():
+            entry = finnhub.earnings_for_symbol(symbol)
+            if entry is not None:
+                from dataclasses import asdict as _asdict
+                d = _asdict(entry)
+                # Days until
+                try:
+                    edate = datetime.strptime(d["date"], "%Y-%m-%d").date()
+                    today = datetime.now(timezone.utc).date()
+                    d["days_until"] = max(0, (edate - today).days)
+                except (ValueError, TypeError):
+                    d["days_until"] = None
+                return d
+    except Exception as exc:
+        logger.debug(f"earnings context fetch failed for {symbol}: {exc}")
+    if fallback_date:
+        try:
+            edate = datetime.fromisoformat(fallback_date).date()
+            today = datetime.now(timezone.utc).date()
+            return {
+                "symbol": symbol.upper(),
+                "date": fallback_date,
+                "days_until": max(0, (edate - today).days),
+                "source": "yfinance",
+            }
+        except (ValueError, TypeError):
+            pass
+    return {}
+
+
+def _fetch_fear_greed_context() -> Dict[str, Any]:
+    """Crypto Fear & Greed snapshot (relevant for both crypto and risk-on/off context)."""
+    try:
+        from signals.fear_greed import fetch_fear_greed
+        sig = fetch_fear_greed()
+        if sig is None:
+            return {}
+        return {
+            "value": sig.value,
+            "label": sig.label,
+            "is_extreme_fear": sig.is_extreme_fear,
+            "is_extreme_greed": sig.is_extreme_greed,
+        }
+    except Exception:
+        return {}
 
 
 # ── LLM narrative generation ────────────────────────────────────────
@@ -297,8 +407,26 @@ TECHNICAL ({t_weight:.0%} weight) — score {t_score}/100, label {t_label}
 SENTIMENT ({s_weight:.0%} weight) — score {s_score}/100, label {s_label}
   rationale: {s_rationale}
 
+MACRO CONTEXT (current US economy):
+{macro_block}
+
+EARNINGS / CATALYSTS:
+{earnings_block}
+
+INSIDER ACTIVITY (Form 4 last 180 days):
+{insider_block}
+
+MARKET SENTIMENT (crypto Fear & Greed proxy for risk-on/off):
+{fg_block}
+
 OVERALL composite score: {overall}/100 → {verdict}
-NEXT EARNINGS DATE: {earnings}
+
+When forming your thesis, EXPLICITLY weave macro / earnings proximity /
+insider tone into the narrative. For example:
+  - If earnings are within 7 days → caution against new entries.
+  - If insiders are net selling significantly → flag as red flag.
+  - If VIX > 25 or yield curve inverted → adjust risk framing.
+  - If 10y-2y has just un-inverted → mention reflation tone.
 
 Produce a JSON object with exactly these keys (no markdown, no extra text):
 {{
@@ -367,7 +495,10 @@ def _generate_narrative(
         s_rationale=report.sentiment.rationale,
         overall=report.overall_score,
         verdict=report.overall_label,
-        earnings=report.next_earnings_date or "unknown",
+        macro_block=_format_macro_block(report.macro_context),
+        earnings_block=_format_earnings_block(report.earnings_context),
+        insider_block=_format_insider_block(report.insider_context),
+        fg_block=_format_fg_block(report.fear_greed_context),
     )
 
     raw, model_name = _call_research_llm(prompt, advanced=advanced)
@@ -459,3 +590,79 @@ def _parse_research_json(text: str) -> Optional[Dict[str, Any]]:
     except json.JSONDecodeError as exc:
         logger.warning(f"Research JSON parse failed: {exc}")
         return None
+
+
+# ── Prompt block formatters ─────────────────────────────────────────
+
+
+def _format_macro_block(macro: Dict[str, Any]) -> str:
+    if not macro:
+        return "  (FRED feed not configured — no macro context available)"
+    lines: List[str] = []
+    for sid, obs in macro.items():
+        v = obs.get("value")
+        chg = obs.get("change")
+        chg_str = f" (Δ {chg:+.2f})" if chg is not None else ""
+        if v is not None:
+            lines.append(f"  {obs.get('name', sid)}: {v:.2f}{chg_str} as of {obs.get('date', '')}")
+    return "\n".join(lines) if lines else "  (no macro data)"
+
+
+def _format_earnings_block(earn: Dict[str, Any]) -> str:
+    if not earn:
+        return "  No upcoming earnings tracked for this symbol."
+    date = earn.get("date") or "unknown"
+    days = earn.get("days_until")
+    eps = earn.get("eps_estimate")
+    rev = earn.get("revenue_estimate")
+    hour = earn.get("hour", "")
+    parts = [f"  Next earnings: {date}"]
+    if days is not None:
+        urgency = ""
+        if days <= 2:
+            urgency = " (IMMINENT — within 2 days)"
+        elif days <= 7:
+            urgency = " (within 1 week)"
+        elif days <= 14:
+            urgency = " (within 2 weeks)"
+        parts.append(f"  Days until: {days}{urgency}")
+    if hour:
+        parts.append(f"  Time: {'before market open' if hour == 'bmo' else 'after market close' if hour == 'amc' else hour}")
+    if eps is not None:
+        parts.append(f"  Consensus EPS estimate: {eps:.2f}")
+    if rev is not None:
+        parts.append(f"  Consensus revenue estimate: ${rev:,.0f}")
+    return "\n".join(parts)
+
+
+def _format_insider_block(insider: Dict[str, Any]) -> str:
+    if not insider:
+        return "  (Finnhub not configured or no insider data)"
+    buys = insider.get("buys", 0)
+    sells = insider.get("sells", 0)
+    buy_v = insider.get("buy_value_usd", 0) or 0
+    sell_v = insider.get("sell_value_usd", 0) or 0
+    net_v = insider.get("net_value_usd", 0) or 0
+    tone = insider.get("tone", "neutral")
+    if buys == 0 and sells == 0:
+        return "  No insider transactions in the last 180 days."
+    flag = ""
+    if abs(net_v) > 100_000_000:
+        flag = " — MATERIAL SIZE"
+    return (
+        f"  Buys: {buys} (${buy_v:,.0f})  /  Sells: {sells} (${sell_v:,.0f})\n"
+        f"  Net: ${net_v:,.0f} → tone {tone.upper()}{flag}"
+    )
+
+
+def _format_fg_block(fg: Dict[str, Any]) -> str:
+    if not fg:
+        return "  (Fear & Greed unavailable)"
+    v = fg.get("value", 50)
+    label = fg.get("label", "")
+    flag = ""
+    if fg.get("is_extreme_fear"):
+        flag = " — historically a contrarian buy zone"
+    elif fg.get("is_extreme_greed"):
+        flag = " — historically a contrarian caution zone"
+    return f"  Crypto F&G index: {v}/100 ({label}){flag}"
