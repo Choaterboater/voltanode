@@ -681,6 +681,15 @@ class LiveTradingEngine(PaperTradingEngine):
             if held <= 0:
                 order.status = OrderStatus.REJECTED
                 self.submit_order(order, order.account_id)
+                # No position to sell — same cycle as dust SELLs. Suppress
+                # this (strategy, symbol, side) for 1 hour so the bot stops
+                # firing the same impossible SELL every 5 min.
+                if order.strategy_id:
+                    from datetime import timedelta as _td
+                    key = (order.strategy_id, order.symbol, order.side.value)
+                    self._dust_suppressed_until[key] = (
+                        datetime.now(timezone.utc) + _td(hours=1)
+                    )
                 return FillResult(
                     order_id=order.id,
                     symbol=order.symbol,
