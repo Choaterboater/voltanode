@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from advisor.analyzer import SymbolAnalyzer
 from advisor.models import AnalysisResult, IndicatorReading, PriceTarget
+from advisor.research import build_research_report
 from data.cache import DataCache
 from data.fetcher import MarketData
 from bot.config import BotConfig
@@ -183,3 +184,37 @@ async def analyze_symbol_get(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return _analysis_to_response(result)
+
+
+# ── Multi-dimension research report (Kavout/InvestGPT-style) ──
+
+@router.get("/research")
+async def research_symbol(
+    symbol: str = Query(..., description="Trading symbol"),
+    asset_type: str = Query(default="stock"),
+    lookback_days: int = Query(default=365, ge=7, le=730),
+    advanced: bool = Query(default=False, description="Use OpenRouter for richer narrative"),
+) -> Dict[str, Any]:
+    """Run a Kavout-style multi-dimensional research report.
+
+    Combines the existing TA pipeline with yfinance fundamentals and the
+    aggregated news-sentiment summary. Returns weighted Fundamental /
+    Technical / Sentiment scores plus an LLM-generated narrative
+    (Investment Thesis, Bull/Bear, Action Plan, Bottom Line).
+    """
+    cache = DataCache(cache_dir="./data/cache")
+    market_data = MarketData(cache=cache, config=BotConfig())
+    analyzer = SymbolAnalyzer(market_data=market_data)
+    try:
+        ta = await analyzer.analyze(
+            symbol=symbol,
+            asset_type=asset_type,
+            lookback_days=lookback_days,
+            advanced=False,  # we run our own LLM here, skip the second-opinion call
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    import asyncio as _asyncio
+    report = await _asyncio.to_thread(build_research_report, ta, advanced)
+    return report.to_dict()
