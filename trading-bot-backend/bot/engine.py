@@ -604,6 +604,10 @@ class LiveTradingEngine(PaperTradingEngine):
 
         # Map internal order ID -> broker order ID for live tracking
         self._broker_order_ids: Dict[str, str] = {}
+        # (strategy_id, symbol, side) -> datetime when suppression expires.
+        # Used to silence dust-rejection re-tries that would otherwise re-fire
+        # every 5 minutes once the standard reject cooldown expires.
+        self._dust_suppressed_until: Dict[Tuple[str, str, str], datetime] = {}
 
     def execute_order(
         self, order: Order, current_price: float | None = None
@@ -622,6 +626,21 @@ class LiveTradingEngine(PaperTradingEngine):
             BrokerConnectionError: If broker is not connected.
             SafetyValidationError: If order violates safety limits.
         """
+        # 0. Dust-suppression: if this (strategy, symbol, side) was recently
+        # rejected as dust, drop silently. Avoids the "every 5 min the cooldown
+        # expires, the bot retries, dust skip rejects, log spam" cycle.
+        if order.strategy_id:
+            key = (order.strategy_id, order.symbol, order.side.value)
+            until = self._dust_suppressed_until.get(key)
+            if until is not None and until > datetime.now(timezone.utc):
+                order.status = OrderStatus.REJECTED
+                return FillResult(
+                    order_id=order.id, symbol=order.symbol, filled_qty=0.0,
+                    filled_price=0.0, fee=0.0, slippage=0.0,
+                    timestamp=datetime.now(timezone.utc), side=order.side,
+                    realized_pnl=None, broker_order_id="",
+                )
+
         # 1. Hard kill switch check
         self.kill_switch.check()
 
@@ -691,9 +710,16 @@ class LiveTradingEngine(PaperTradingEngine):
             if last_price > 0 and order.quantity * last_price < 10.0:
                 order.status = OrderStatus.REJECTED
                 self.submit_order(order, order.account_id)
+                if order.strategy_id:
+                    from datetime import timedelta as _td
+                    key = (order.strategy_id, order.symbol, order.side.value)
+                    self._dust_suppressed_until[key] = (
+                        datetime.now(timezone.utc) + _td(hours=1)
+                    )
                 logging.getLogger("volta.engine").info(
                     f"Skipping dust SELL {order.symbol}: "
-                    f"{order.quantity} × ${last_price:.4f} ≈ ${order.quantity * last_price:.2f} < $10 min"
+                    f"{order.quantity} × ${last_price:.4f} ≈ ${order.quantity * last_price:.2f} < $10 min "
+                    f"(suppressing for 1h)"
                 )
                 return FillResult(
                     order_id=order.id,
