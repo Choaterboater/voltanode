@@ -692,9 +692,12 @@ class LiveTradingEngine(PaperTradingEngine):
                     broker_order_id="",
                 )
             if held < order.quantity:
-                # Clamp down — close exactly what we hold. Round to 8 decimals
-                # to avoid float precision rejecting at the broker.
-                clamped = round(held, 8)
+                # Clamp down — close exactly what we hold. FLOOR to 8 decimals
+                # (not round) — round() can produce a value greater than held
+                # via banker's rounding (e.g. 0.734893907 → 0.73489391), which
+                # the broker then rejects as "insufficient qty".
+                import math as _math
+                clamped = _math.floor(held * 1e8) / 1e8
                 logging.getLogger("volta.engine").info(
                     f"Clamping SELL {order.symbol}: requested {order.quantity} → held {clamped}"
                 )
