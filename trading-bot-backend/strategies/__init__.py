@@ -14,6 +14,7 @@ from strategies.macd import MACDStrategy
 from strategies.ensemble_ml import EnsembleMLStrategy
 from strategies.news_sentiment import NewsSentimentStrategy
 from strategies.multi_coin import MultiCoinMomentumStrategy
+from strategies.simple_trend import SimpleTrendStrategy
 
 
 # Strategy registry
@@ -27,6 +28,7 @@ STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
     "ensemble_ml": EnsembleMLStrategy,
     "news_sentiment": NewsSentimentStrategy,
     "multi_coin": MultiCoinMomentumStrategy,
+    "simple_trend": SimpleTrendStrategy,
 }
 
 

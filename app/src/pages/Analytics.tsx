@@ -344,7 +344,7 @@ export default function Analytics() {
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-text-primary">Trade History</h3>
             <button
-              onClick={() => window.open('http://localhost:8000/trades/export?format=csv', '_blank')}
+              onClick={() => window.open('/api/trades/export?format=csv', '_blank')}
               className="flex items-center gap-1.5 rounded-md bg-bg-input px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
             >
               <Download className="h-3.5 w-3.5" />

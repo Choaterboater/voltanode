@@ -139,8 +139,8 @@ function mapTrades(trades: ApiTrade[]): Trade[] {
 
 export function useDashboardData() {
   const [portfolio, setPortfolio] = useState<Portfolio>({
-    totalEquity: 20000,
-    availableBalance: 20000,
+    totalEquity: 0,
+    availableBalance: 0,
     marginUsed: 0,
     dailyPnl: 0,
     dailyPnlPercent: 0,
