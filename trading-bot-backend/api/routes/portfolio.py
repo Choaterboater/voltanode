@@ -78,15 +78,35 @@ def _live_broker_to_response(account_id: str, eng: Any) -> PortfolioResponse | N
         logger.warning(f"Live broker fetch failed, falling back to simulated portfolio: {exc}")
         return None
 
+    # Overlay engine's tick-loop prices over broker-reported current_price.
+    # Alpaca paper position pricing lags noticeably; the engine fetches fresh
+    # prices every tick (~5-15s) into _current_prices. Use those when newer.
+    live_prices = getattr(eng, "_current_prices", {}) or {}
+
     positions: List[PositionResponse] = []
     for p in raw_positions:
         symbol = p.get("symbol", "")
         size = float(p.get("qty", p.get("size", 0)) or 0)
         entry = float(p.get("avg_entry_price", p.get("entry_price", 0)) or 0)
-        current = float(p.get("current_price", p.get("market_price", entry)) or entry)
+        broker_current = float(p.get("current_price", p.get("market_price", entry)) or entry)
+        # Engine map keys are typically the bot's symbol — try a few variants.
+        sym_upper = symbol.upper()
+        canonical = sym_upper.replace("USD", "").replace("/", "").replace("-", "")
+        live = (
+            live_prices.get(symbol)
+            or live_prices.get(sym_upper)
+            or live_prices.get(canonical)
+            or live_prices.get(sym_upper + "USD")
+        )
+        current = float(live) if live else broker_current
         side = (p.get("side") or ("long" if size >= 0 else "short")).lower()
-        market_value = float(p.get("market_value", abs(size) * current) or 0)
-        unrealized_pnl = float(p.get("unrealized_pl", p.get("unrealized_pnl", 0)) or 0)
+        # Recompute mark-to-market with the fresher price.
+        market_value = abs(size) * current
+        if current and entry:
+            sign = 1 if side == "long" else -1
+            unrealized_pnl = sign * (current - entry) * abs(size)
+        else:
+            unrealized_pnl = float(p.get("unrealized_pl", p.get("unrealized_pnl", 0)) or 0)
         positions.append(
             PositionResponse(
                 symbol=symbol,
