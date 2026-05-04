@@ -41,6 +41,9 @@ class LLMCommentary:
     # When the LLM disagrees with the TA verdict, this is the action it
     # would prefer. Empty string when it agrees or has no strong alternative.
     alternative_verdict: str = ""  # "" | "BUY" | "SELL" | "HOLD" | "STRONG_BUY" | "STRONG_SELL"
+    # Heavy/Advanced mode only — richer reasoning surface.
+    risk_factors: List[str] = field(default_factory=list)
+    catalysts: List[str] = field(default_factory=list)
 
 
 @dataclass

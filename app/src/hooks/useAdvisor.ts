@@ -53,6 +53,8 @@ export interface LLMCommentary {
   article_count: number;
   model: string;
   alternative_verdict: string; // "" | "BUY" | "SELL" | "HOLD" | "STRONG_BUY" | "STRONG_SELL"
+  risk_factors?: string[];
+  catalysts?: string[];
 }
 
 export interface AnalysisResult {

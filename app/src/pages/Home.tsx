@@ -43,14 +43,7 @@ import Badge from '@/components/Badge';
 import StatusDot from '@/components/StatusDot';
 import DataTable from '@/components/DataTable';
 import type { Trade } from '@/types';
-import {
-  performanceMetrics,
-  assetAllocation,
-  equityCurveData,
-  alerts,
-  balanceSparkline,
-  pnlSparkline,
-} from '@/data/mockData';
+import { alerts } from '@/data/mockData';
 
 const timeRanges = ['1H', '24H', '7D', '30D', 'ALL'];
 
@@ -227,7 +220,14 @@ export default function Home() {
     loading,
     error,
     refetch,
+    equityHistory,
+    allocation,
+    performance: perfMetricsRaw,
   } = useDashboardData();
+  const perfMetrics = perfMetricsRaw ?? {
+    winRate: null, sharpeRatio: null, maxDrawdownPercent: null,
+    profitFactor: null, tradesPerDay: null, totalTrades: 0,
+  };
 
   // Pull macro / sentiment signals once per dashboard load + every 5 min after.
   useEffect(() => {
@@ -250,6 +250,23 @@ export default function Home() {
   }
 
   const runningCount = strategies.filter((s: ApiStrategy) => s.is_active).length;
+
+  // Real equity-curve data derived from broker snapshots stored backend-side.
+  const equityCurve = (equityHistory ?? []).map((p) => ({
+    date: new Date(p.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    equity: p.equity,
+  }));
+  const allocList = allocation ?? [];
+  // Trailing equity points double as a balance sparkline; if we have nothing
+  // yet (fresh account, no snapshots written) we pass an empty array and the
+  // sparkline component renders nothing.
+  const balanceSpark = equityCurve.slice(-24).map((p) => p.equity);
+  // Approx PnL spark: equity delta vs first observation in the window.
+  const pnlSpark = balanceSpark.length > 0
+    ? balanceSpark.map((v) => v - balanceSpark[0])
+    : [];
+  const fmtMetric = (v: number | null, digits = 2, suffix = '') =>
+    v === null || !isFinite(v) ? '—' : `${v.toFixed(digits)}${suffix}`;
 
   const formatCurrency = (v: number) =>
     `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -394,7 +411,7 @@ export default function Home() {
             icon={<Wallet className="h-5 w-5" />}
             delay={0}
           >
-            <MiniSparkline data={balanceSparkline} color="#10B981" />
+            {balanceSpark.length > 0 && <MiniSparkline data={balanceSpark} color="#10B981" />}
           </MetricCard>
 
           <MetricCard
@@ -405,7 +422,7 @@ export default function Home() {
             icon={<TrendingUp className="h-5 w-5 text-success-green" />}
             delay={0.08}
           >
-            <MiniSparkline data={pnlSparkline} color="#10B981" />
+            {pnlSpark.length > 0 && <MiniSparkline data={pnlSpark} color="#10B981" />}
           </MetricCard>
 
           <MetricCard
@@ -442,14 +459,14 @@ export default function Home() {
 
           <MetricCard
             label="Win Rate (30D)"
-            value={formatPercent(performanceMetrics.winRate)}
-            delta="+5.2% vs last month"
-            deltaPositive={true}
+            value={perfMetrics.winRate === null ? '—' : formatPercent(perfMetrics.winRate)}
+            delta={perfMetrics.totalTrades === 0 ? 'no closed trades' : `${perfMetrics.totalTrades} closed`}
+            deltaPositive={perfMetrics.winRate !== null && perfMetrics.winRate >= 50}
             icon={<Target className="h-5 w-5" />}
             delay={0.24}
           >
             <div className="flex items-center gap-3">
-              <DonutChart percentage={performanceMetrics.winRate} />
+              <DonutChart percentage={perfMetrics.winRate ?? 0} />
               <span className="text-xs text-text-muted">Win Rate</span>
             </div>
           </MetricCard>
@@ -468,9 +485,15 @@ export default function Home() {
               <h2 className="text-base font-semibold text-text-primary">Portfolio Equity</h2>
               <p className="text-xs text-text-muted">Paper account performance over time</p>
             </div>
+            {equityCurve.length === 0 ? (
+              <div className="flex h-[320px] xl:h-[380px] flex-col items-center justify-center gap-2 text-center text-text-muted">
+                <p className="text-sm">No equity history yet</p>
+                <p className="text-xs">Snapshots accumulate once the engine has been running for a few minutes.</p>
+              </div>
+            ) : (
             <div className="h-[320px] xl:h-[380px]">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={equityCurveData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                <AreaChart data={equityCurve} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#06B6D4" stopOpacity={0.15} />
@@ -513,6 +536,7 @@ export default function Home() {
                 </AreaChart>
               </ResponsiveContainer>
             </div>
+            )}
           </motion.div>
 
           {/* Right: Allocation + Key Stats */}
@@ -525,38 +549,42 @@ export default function Home() {
               className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
             >
               <h3 className="text-sm font-semibold text-text-primary">Allocation</h3>
+              {allocList.length === 0 ? (
+                <p className="mt-3 text-xs text-text-muted">No positions yet.</p>
+              ) : (
               <div className="mt-3 flex items-center gap-4">
                 <div className="h-[140px] w-[140px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
-                        data={assetAllocation}
+                        data={allocList}
                         cx="50%"
                         cy="50%"
                         innerRadius={40}
                         outerRadius={65}
-                        dataKey="percentage"
+                        dataKey="value"
                         stroke="none"
                         animationBegin={0}
                         animationDuration={800}
                       >
-                        {assetAllocation.map((entry) => (
-                          <Cell key={entry.symbol} fill={entry.color} />
+                        {allocList.map((entry) => (
+                          <Cell key={entry.name} fill={entry.color} />
                         ))}
                       </Pie>
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
                 <div className="flex-1 space-y-2">
-                  {assetAllocation.map((asset) => (
-                    <div key={asset.symbol} className="flex items-center gap-2">
+                  {allocList.map((asset) => (
+                    <div key={asset.name} className="flex items-center gap-2">
                       <div className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: asset.color }} />
-                      <span className="text-xs text-text-secondary w-10">{asset.symbol}</span>
-                      <span className="text-xs font-mono text-text-primary">{asset.percentage}%</span>
+                      <span className="text-xs text-text-secondary w-10">{asset.name}</span>
+                      <span className="text-xs font-mono text-text-primary">{asset.value}%</span>
                     </div>
                   ))}
                 </div>
               </div>
+              )}
             </motion.div>
 
             {/* Key Performance Stats */}
@@ -570,21 +598,24 @@ export default function Home() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="border-b border-border-subtle pb-2">
                   <p className="text-xs text-text-muted">Sharpe Ratio</p>
-                  <p className="font-mono text-sm text-text-primary">{performanceMetrics.sharpeRatio.toFixed(2)}</p>
+                  <p className="font-mono text-sm text-text-primary">{fmtMetric(perfMetrics.sharpeRatio)}</p>
                 </div>
                 <div className="border-b border-border-subtle pb-2">
                   <p className="text-xs text-text-muted">Max Drawdown</p>
-                  <p className="font-mono text-sm text-danger-red">{performanceMetrics.maxDrawdownPercent.toFixed(1)}%</p>
+                  <p className="font-mono text-sm text-danger-red">{fmtMetric(perfMetrics.maxDrawdownPercent, 1, '%')}</p>
                 </div>
                 <div className="border-b border-border-subtle pb-2">
                   <p className="text-xs text-text-muted">Profit Factor</p>
-                  <p className="font-mono text-sm text-success-green">{performanceMetrics.profitFactor.toFixed(2)}</p>
+                  <p className="font-mono text-sm text-success-green">{fmtMetric(perfMetrics.profitFactor)}</p>
                 </div>
                 <div className="border-b-0 pb-0">
-                  <p className="text-xs text-text-muted">Trades / Day</p>
-                  <p className="font-mono text-sm text-text-primary">{performanceMetrics.tradesPerDay.toFixed(1)}</p>
+                  <p className="text-xs text-text-muted">Total Trades</p>
+                  <p className="font-mono text-sm text-text-primary">{perfMetrics.totalTrades}</p>
                 </div>
               </div>
+              {perfMetrics.totalTrades === 0 && (
+                <p className="mt-2 text-[11px] text-text-muted">Stats fill in after the first closed trades.</p>
+              )}
             </motion.div>
           </div>
         </div>

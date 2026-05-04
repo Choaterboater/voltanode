@@ -119,6 +119,20 @@ async def _run_tick_loop(app: FastAPI) -> None:
                 await asyncio.sleep(interval)
                 continue
 
+            # US equity market is closed Sat/Sun and outside 9:30-16:00 ET on
+            # weekdays. Skip stock-asset strategies entirely when closed —
+            # otherwise every tick produces a broker rejection that the
+            # debounce caps at 1 per 30s but still wastes API calls.
+            from datetime import datetime as _dt
+            try:
+                from zoneinfo import ZoneInfo
+                _now_et = _dt.now(ZoneInfo("America/New_York"))
+            except Exception:
+                _now_et = _dt.utcnow()
+            _is_weekday = _now_et.weekday() < 5
+            _mins = _now_et.hour * 60 + _now_et.minute
+            _equity_open = _is_weekday and 570 <= _mins < 960  # 9:30-16:00 ET
+
             # Gather unique (symbol, asset_class) pairs across all active
             # strategies. Each strategy may declare multiple symbols via
             # config.symbols (list) or a single config.symbol.
@@ -133,6 +147,10 @@ async def _run_tick_loop(app: FastAPI) -> None:
                         asset_class = AssetClass[asset_class_str]
                     except KeyError:
                         asset_class = AssetClass.CRYPTO
+
+                    # Skip stock strategies when the equity market is closed.
+                    if asset_class == AssetClass.STOCK and not _equity_open:
+                        continue
 
                     # Resolve the strategy's configured symbol list.
                     if hasattr(strategy, "configured_symbols"):

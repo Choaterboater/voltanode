@@ -143,7 +143,10 @@ class SymbolAnalyzer:
         try:
             from advisor.llm_advisor import generate_commentary
             commentary = await asyncio.to_thread(
-                generate_commentary, result, "openrouter" if advanced else None
+                generate_commentary,
+                result,
+                "openrouter" if advanced else None,
+                advanced,  # heavy=True when Advanced toggle is on
             )
             if commentary is not None:
                 result.llm_commentary = commentary

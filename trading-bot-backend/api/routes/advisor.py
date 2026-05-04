@@ -54,6 +54,8 @@ class LLMCommentaryModel(BaseModel):
     article_count: int = 0
     model: str = ""
     alternative_verdict: str = ""  # "" | "BUY" | "SELL" | "HOLD" | "STRONG_BUY" | "STRONG_SELL"
+    risk_factors: List[str] = []
+    catalysts: List[str] = []
 
 
 class AnalysisResponse(BaseModel):
@@ -96,6 +98,8 @@ def _analysis_to_response(result: AnalysisResult) -> AnalysisResponse:
             article_count=c.article_count,
             model=c.model,
             alternative_verdict=c.alternative_verdict,
+            risk_factors=getattr(c, "risk_factors", []) or [],
+            catalysts=getattr(c, "catalysts", []) or [],
         )
 
     return AnalysisResponse(

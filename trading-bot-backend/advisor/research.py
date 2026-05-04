@@ -527,7 +527,7 @@ def _call_research_llm(prompt: str, advanced: bool) -> Tuple[Optional[str], str]
     # Try OpenRouter first when key is set
     if api_key:
         from advisor.llm_advisor import _openrouter_model_chain
-        chain = _openrouter_model_chain()
+        chain = _openrouter_model_chain(heavy=advanced)
         for candidate in chain:
             raw = _call_openai_compat(prompt, candidate, "https://openrouter.ai/api/v1", api_key)
             if raw:

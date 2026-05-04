@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -172,6 +173,34 @@ class PaperTradingEngine:
             self._orders[account_id] = {}
         self._orders[account_id][order.id] = order
         return order.id
+
+    def _is_debounced(self, order: Order) -> bool:
+        """Per-(strategy, symbol, side) cooldown to prevent tick-spam when an
+        order will fail downstream every tick (SELL with no position, market-
+        closed BUYs, Alpaca-incompatible symbols, etc.).
+
+        Returns True if a matching order was submitted within the last 30s
+        and is either still pending or was rejected — caller should drop the
+        new order silently.
+        """
+        if not order.strategy_id:
+            return False
+        from datetime import timedelta as _td
+        cutoff = datetime.now(timezone.utc) - _td(seconds=30)
+        for o in self._orders.get(order.account_id, {}).values():
+            if o.id == order.id:
+                continue
+            if o.strategy_id != order.strategy_id:
+                continue
+            if o.symbol != order.symbol or o.side != order.side:
+                continue
+            if o.status in (OrderStatus.PENDING, OrderStatus.PARTIAL):
+                return True
+            if o.status == OrderStatus.REJECTED:
+                ts = getattr(o, "created_at", None)
+                if ts is not None and ts > cutoff:
+                    return True
+        return False
 
     def cancel_order(self, order_id: str, account_id: str = "default") -> bool:
         """Cancel a pending order.
@@ -409,7 +438,7 @@ class PaperTradingEngine:
                     )
                     if signal is not None and hasattr(signal, "to_order"):
                         order = signal.to_order(account_id)
-                        if order is not None:
+                        if order is not None and not self._is_debounced(order):
                             self.submit_order(order, account_id)
                             # Auto-execute market orders immediately
                             if order.order_type.value == "market" and tick.price:
@@ -422,10 +451,22 @@ class PaperTradingEngine:
                                     if signal.take_profit is not None:
                                         pos.take_profit = signal.take_profit
 
-        # Check pending orders for fills
+        # Check pending orders for fills.
+        # In live mode the order is already at the broker after the first
+        # execute_order call — re-submitting would 422 with "client_order_id
+        # must be unique". Poll get_order_status to refresh, and only
+        # re-execute orders that haven't been broker-submitted yet.
         for account_id, orders in self._orders.items():
             for order in list(orders.values()):
-                if order.status == OrderStatus.PENDING and order.symbol == tick.symbol:
+                if order.status != OrderStatus.PENDING or order.symbol != tick.symbol:
+                    continue
+                broker_ids = getattr(self, "_broker_order_ids", None)
+                if broker_ids is not None and order.id in broker_ids:
+                    try:
+                        self.get_order_status(order.id, account_id)
+                    except Exception:
+                        pass
+                else:
                     self.execute_order(order, tick.price)
 
         # Check trailing stops
@@ -443,17 +484,26 @@ class PaperTradingEngine:
                 pass  # Could log or emit events
 
     def on_fill(self, fill: FillResult) -> None:
-        """Callback when an order is filled."""
-        # Find the account_id for this fill by looking up the order
+        """Callback when an order is filled.
+
+        Only the strategy that placed the order is notified — broadcasting to
+        every strategy would inflate every bot's trade_count on each fill.
+        Manual orders (no strategy_id) notify nobody.
+        """
         account_id = "default"
+        owning_strategy_id: str | None = None
         for acc_id, orders in self._orders.items():
             if fill.order_id in orders:
                 account_id = acc_id
+                owning_strategy_id = orders[fill.order_id].strategy_id
                 break
         portfolio = self._portfolios.get(account_id, self._portfolios.get("default"))
-        # Notify strategies
+        if owning_strategy_id is None:
+            return
         for strategies in self._strategies.values():
             for strategy in strategies:
+                if getattr(strategy, "strategy_id", None) != owning_strategy_id:
+                    continue
                 if hasattr(strategy, "on_fill"):
                     strategy.on_fill(fill, portfolio)
 
@@ -575,7 +625,7 @@ class LiveTradingEngine(PaperTradingEngine):
         # 3. Get portfolio for safety checks
         portfolio = self.get_portfolio(order.account_id)
 
-        # 3a. Reject SELLs when there's no broker position to sell. Crypto on
+        # 3b. Reject SELLs when there's no broker position to sell. Crypto on
         # Alpaca paper does not allow shorting, so unmatched sells just queue
         # forever in 'pending'. Cheaper to drop them locally than to spam the
         # broker each tick.
@@ -610,31 +660,6 @@ class LiveTradingEngine(PaperTradingEngine):
                     broker_order_id="",
                 )
 
-        # 3b. Per-strategy/symbol debounce: if there's already a pending order
-        # for the same (strategy, symbol, side) within the last few ticks, skip.
-        if order.strategy_id:
-            recent = [
-                o for o in self._orders.get(order.account_id, {}).values()
-                if (o.strategy_id == order.strategy_id
-                    and o.symbol == order.symbol
-                    and o.side == order.side
-                    and o.status in (OrderStatus.PENDING, OrderStatus.PARTIAL))
-            ]
-            if recent:
-                order.status = OrderStatus.REJECTED
-                return FillResult(
-                    order_id=order.id,
-                    symbol=order.symbol,
-                    filled_qty=0.0,
-                    filled_price=0.0,
-                    fee=0.0,
-                    slippage=0.0,
-                    timestamp=datetime.now(timezone.utc),
-                    side=order.side,
-                    realized_pnl=None,
-                    broker_order_id="",
-                )
-
         # 4. Safety validation
         self.safety_validator.validate_order(
             order,
@@ -643,8 +668,30 @@ class LiveTradingEngine(PaperTradingEngine):
             self.daily_tracker.daily_pnl,
         )
 
-        # 5. Execute via broker
-        fill = self.broker.place_order(order)
+        # 5. Execute via broker. On exception (e.g. market closed for stocks
+        # on weekends, Alpaca-incompatible symbol), persist the order as
+        # REJECTED so the debounce above suppresses retries on the next tick.
+        try:
+            fill = self.broker.place_order(order)
+        except Exception as broker_exc:
+            order.status = OrderStatus.REJECTED
+            self.submit_order(order, order.account_id)
+            logging.getLogger("volta.engine").info(
+                f"Broker rejected {order.side.value} {order.symbol} "
+                f"({order.strategy_id}): {broker_exc}"
+            )
+            return FillResult(
+                order_id=order.id,
+                symbol=order.symbol,
+                filled_qty=0.0,
+                filled_price=0.0,
+                fee=0.0,
+                slippage=0.0,
+                timestamp=datetime.now(timezone.utc),
+                side=order.side,
+                realized_pnl=None,
+                broker_order_id="",
+            )
 
         # 5a. Track broker order ID for later polling/cancel
         if fill.broker_order_id:

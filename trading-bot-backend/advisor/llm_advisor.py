@@ -141,12 +141,27 @@ def _format_news(news_data: Dict[str, Any]) -> str:
     return f"{head}\n" + "\n".join(bullets)
 
 
-def _build_prompt(result: AnalysisResult, news_data: Dict[str, Any]) -> str:
-    """Construct the structured prompt sent to the LLM."""
+def _build_prompt(result: AnalysisResult, news_data: Dict[str, Any], heavy: bool = False) -> str:
+    """Construct the structured prompt sent to the LLM.
+
+    When ``heavy=True`` the prompt asks for richer reasoning — extra ``risk_factors``
+    and ``catalysts`` arrays — leveraging the larger model's capacity.
+    """
     targets_str = "\n".join(
         f"  - {t.label}: ${t.price:.4f} (probability {t.probability:.0%}) — {t.rationale}"
         for t in result.price_targets[:4]
     ) or "  (no targets)"
+    extra_fields = ""
+    extra_rules = ""
+    if heavy:
+        extra_fields = (
+            ',\n  "risk_factors": ["specific downside risks visible in the data, 2-4 items"]'
+            ',\n  "catalysts": ["specific upside catalysts or watch-items, 2-4 items"]'
+        )
+        extra_rules = (
+            "\n- HEAVY MODE: also populate risk_factors and catalysts. Be specific — "
+            "reference the actual indicators or headlines, no generic boilerplate."
+        )
 
     return f"""You are a professional trading analyst providing a SECOND OPINION on a deterministic technical analysis verdict. Be concise, factual, and ground every claim in the data given. Do NOT invent prices, percentages, or facts not present in the inputs.
 
@@ -173,7 +188,7 @@ TASK: Reply with ONLY a JSON object — no prose before or after — with this e
   "adjusted_confidence": <number 0-100>,
   "news_impact": "high" | "medium" | "low" | "none",
   "key_factors": ["...", "...", "..."],
-  "rationale": "2-3 sentence narrative tying TA + news together"
+  "rationale": "2-3 sentence narrative tying TA + news together"{extra_fields}
 }}
 
 Rules:
@@ -189,7 +204,7 @@ Rules:
 - "adjusted_confidence" = your blended confidence after considering news; if no news, return the TA confidence rounded. Do NOT swing the confidence by more than 25 points from the TA confidence.
 - "news_impact" = how materially the news could move price ("none" if there's no news)
 - "key_factors" = 3-5 concrete drivers, e.g. "RSI 72 overbought", "META beat earnings", "no fresh catalysts"
-- "rationale" = plain English, max 3 sentences. If you disagree, briefly justify your alternative_verdict.
+- "rationale" = plain English, max 3 sentences. If you disagree, briefly justify your alternative_verdict.{extra_rules}
 """
 
 
@@ -212,39 +227,47 @@ def _call_ollama(prompt: str, model: str, timeout: float = 60.0) -> Optional[str
         return None
 
 
-def _openrouter_model_chain() -> List[str]:
+_HEAVY_MODELS = [
+    "inclusionai/ling-2.6-1t:free",            # 1T MoE — biggest available
+    "openai/gpt-oss-120b:free",                # 120B, very reliable
+    "nvidia/nemotron-3-super-120b-a12b:free",  # 120B
+    "minimax/minimax-m2.5:free",               # large MoE, 196K ctx
+    "z-ai/glm-4.5-air:free",                   # solid mid-large
+]
+
+_FAST_MODELS = [
+    "meta-llama/llama-3.3-70b-instruct:free",  # 70B, fast & reliable
+    "google/gemma-4-31b-it:free",              # 31B, very fast
+    "qwen/qwen3-next-80b-a3b-instruct:free",   # 80B Qwen3
+    "tencent/hy3-preview:free",                # Hunyuan 3 preview
+    "openai/gpt-oss-120b:free",                # last-resort heavy fallback
+]
+
+
+def _openrouter_model_chain(heavy: bool = False) -> List[str]:
     """Build the ordered list of OpenRouter model ids to try.
 
-    The configured ``OPENROUTER_MODEL`` (or ``LLM_MODEL`` if not set) goes
-    first; then a small free-tier fallback chain so a single 429 / outage
-    doesn't kill the Advanced path. ``OPENROUTER_FALLBACK_MODELS`` (comma-
-    separated) overrides the default fallback list.
+    Two preset chains:
+      - ``heavy=True`` (Advanced toggle): 120B+/1T frontier models first.
+        Slower (~3-15s) but substantially smarter reasoning and structure.
+      - ``heavy=False`` (Standard): fast 30-70B models first. ~1-3s typical.
+
+    The configured ``OPENROUTER_MODEL`` (or ``LLM_MODEL`` if set) is always
+    tried first regardless of heavy. ``OPENROUTER_FALLBACK_MODELS`` overrides
+    the default fallbacks (applied to whichever preset is selected).
     """
     primary = (
         os.environ.get("OPENROUTER_MODEL")
-        or os.environ.get("LLM_MODEL", "qwen/qwen-2.5-72b-instruct:free")
+        or os.environ.get("LLM_MODEL", "")
     ).strip()
+    # Skip non-OpenRouter primaries (e.g. Ollama tags like "qwen2.5:14b").
+    if primary and "/" not in primary:
+        primary = ""
     fb_env = os.environ.get("OPENROUTER_FALLBACK_MODELS", "").strip()
     if fb_env:
         fallbacks = [m.strip() for m in fb_env.split(",") if m.strip()]
     else:
-        # Curated free-tier chain — verified live on OpenRouter and ordered
-        # by observed latency × reliability. Snapshot from this build's
-        # smoke tests (re-probe via the /api/v1/models endpoint to refresh).
-        # Diversified across 7 vendors so one provider's 429 doesn't kill
-        # the whole chain. Fast small responders go first; large fallbacks
-        # last so we don't pay big-model latency unnecessarily.
-        fallbacks = [
-            "openai/gpt-oss-120b:free",                # ~1.6s, 120B, very reliable
-            "inclusionai/ling-2.6-1t:free",            # ~1.7s, 1T MoE, fast
-            "nvidia/nemotron-3-super-120b-a12b:free",  # known stable 120B
-            "minimax/minimax-m2.5:free",               # ~10s, 196K ctx, decent
-            "z-ai/glm-4.5-air:free",                   # solid, sometimes wraps JSON in fences
-            "qwen/qwen3-next-80b-a3b-instruct:free",   # 80B Qwen3, frequently 429s
-            "google/gemma-4-31b-it:free",              # Gemma 4
-            "meta-llama/llama-3.3-70b-instruct:free",  # Llama 3.3 70B
-            "tencent/hy3-preview:free",                # Hunyuan 3 preview
-        ]
+        fallbacks = _HEAVY_MODELS if heavy else _FAST_MODELS
     chain: List[str] = []
     for m in [primary, *fallbacks]:
         if m and m not in chain:
@@ -339,6 +362,15 @@ def _parse_response(raw: str, fallback_confidence: float) -> Dict[str, Any]:
     if alt_verdict not in valid_verdicts:
         alt_verdict = ""
 
+    risks = obj.get("risk_factors", [])
+    if not isinstance(risks, list):
+        risks = []
+    risks = [str(r).strip() for r in risks if str(r).strip()][:5]
+    cats = obj.get("catalysts", [])
+    if not isinstance(cats, list):
+        cats = []
+    cats = [str(c).strip() for c in cats if str(c).strip()][:5]
+
     return {
         "agreement": agreement,
         "alternative_verdict": alt_verdict,
@@ -346,6 +378,8 @@ def _parse_response(raw: str, fallback_confidence: float) -> Dict[str, Any]:
         "news_impact": news_impact,
         "key_factors": factors,
         "rationale": rationale,
+        "risk_factors": risks,
+        "catalysts": cats,
     }
 
 
@@ -354,7 +388,9 @@ def _parse_response(raw: str, fallback_confidence: float) -> Dict[str, Any]:
 # ──────────────────────────────────────────────────────────────────────
 
 def generate_commentary(
-    result: AnalysisResult, override_provider: Optional[str] = None
+    result: AnalysisResult,
+    override_provider: Optional[str] = None,
+    heavy: bool = False,
 ) -> Optional[LLMCommentary]:
     """Produce blended LLM commentary for an analysis result.
 
@@ -372,7 +408,7 @@ def generate_commentary(
 
     ticker = _normalize_symbol_for_news(result.symbol, result.asset_type)
     news_data = _fetch_recent_news(ticker)
-    prompt = _build_prompt(result, news_data)
+    prompt = _build_prompt(result, news_data, heavy=heavy)
 
     raw: Optional[str] = None
     model_name = ""
@@ -397,7 +433,7 @@ def generate_commentary(
         # Fallback chain — try the configured model first, then drop down
         # through a list of free OpenRouter models so a single 429 doesn't
         # collapse the Advanced path.
-        models = _openrouter_model_chain()
+        models = _openrouter_model_chain(heavy=heavy)
         for candidate in models:
             raw = _call_openai_compat(prompt, candidate, "https://openrouter.ai/api/v1", api_key)
             if raw:
@@ -445,6 +481,8 @@ def generate_commentary(
         article_count=article_count,
         model=model_name,
         alternative_verdict=alt,
+        risk_factors=parsed.get("risk_factors", []),
+        catalysts=parsed.get("catalysts", []),
     )
 
 

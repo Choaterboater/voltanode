@@ -4,13 +4,61 @@ import {
   getPrices,
   getStrategies,
   getTrades,
+  getEquityHistory,
   type ApiPortfolio,
   type ApiPrice,
   type ApiStrategy,
   type ApiTrade,
+  type EquityPoint,
 } from '@/lib/api';
 import type { Portfolio, Position, Trade, MarketTicker } from '@/types';
-import { bots, equityCurveData, alerts, performanceMetrics, assetAllocation, balanceSparkline, pnlSparkline } from '@/data/mockData';
+import { bots, alerts } from '@/data/mockData';
+
+export interface AllocationSlice { name: string; value: number; color: string }
+export interface PerformanceMetrics {
+  winRate: number | null;
+  sharpeRatio: number | null;
+  maxDrawdownPercent: number | null;
+  profitFactor: number | null;
+  tradesPerDay: number | null;
+  totalTrades: number;
+}
+
+const ALLOC_PALETTE = ['#06B6D4', '#A78BFA', '#10B981', '#F59E0B', '#EF4444', '#22D3EE', '#F472B6', '#84CC16'];
+
+function deriveAllocation(api: ApiPortfolio): AllocationSlice[] {
+  const slices: AllocationSlice[] = [];
+  const total = api.total_equity || 1;
+  api.positions.forEach((p, i) => {
+    const value = p.size * p.current_price;
+    if (value > 0) {
+      slices.push({
+        name: p.symbol.replace(/USD$/, '').replace(/USDT$/, ''),
+        value: Math.round((value / total) * 1000) / 10,
+        color: ALLOC_PALETTE[i % ALLOC_PALETTE.length],
+      });
+    }
+  });
+  const cash = api.balances?.USD ?? 0;
+  if (cash > 0) {
+    slices.push({ name: 'USD', value: Math.round((cash / total) * 1000) / 10, color: '#64748B' });
+  }
+  return slices;
+}
+
+function derivePerformance(trades: Trade[]): PerformanceMetrics {
+  const closed = trades.filter(t => t.pnl !== 0);
+  const total = closed.length;
+  if (total === 0) {
+    return { winRate: null, sharpeRatio: null, maxDrawdownPercent: null, profitFactor: null, tradesPerDay: null, totalTrades: 0 };
+  }
+  const wins = closed.filter(t => t.pnl > 0);
+  const winRate = (wins.length / total) * 100;
+  const grossWin = wins.reduce((s, t) => s + t.pnl, 0);
+  const grossLoss = Math.abs(closed.filter(t => t.pnl < 0).reduce((s, t) => s + t.pnl, 0));
+  const profitFactor = grossLoss > 0 ? grossWin / grossLoss : null;
+  return { winRate, sharpeRatio: null, maxDrawdownPercent: null, profitFactor, tradesPerDay: null, totalTrades: total };
+}
 
 const CRYPTO_SYMBOLS = ['bitcoin', 'ethereum', 'solana', 'avalanche-2', 'chainlink', 'matic-network', 'dogecoin', 'ripple', 'cardano', 'polkadot'];
 const SYMBOL_MAP: Record<string, string> = {
@@ -103,6 +151,11 @@ export function useDashboardData() {
   const [tickers, setTickers] = useState<MarketTicker[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [strategies, setStrategies] = useState<ApiStrategy[]>([]);
+  const [equityHistory, setEquityHistory] = useState<EquityPoint[]>([]);
+  const [allocation, setAllocation] = useState<AllocationSlice[]>([]);
+  const [perf, setPerf] = useState<PerformanceMetrics>({
+    winRate: null, sharpeRatio: null, maxDrawdownPercent: null, profitFactor: null, tradesPerDay: null, totalTrades: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const cancelledRef = useRef(false);
@@ -113,18 +166,23 @@ export function useDashboardData() {
       // Only show the full-page spinner on the very first load. Background
       // polls keep stale data on screen so the dashboard doesn't flash.
       if (!hasLoadedRef.current) setLoading(true);
-      const [portRes, priceRes, stratRes, tradeRes] = await Promise.all([
+      const [portRes, priceRes, stratRes, tradeRes, equityRes] = await Promise.all([
         getPortfolio(),
         getPrices(CRYPTO_SYMBOLS),
         getStrategies(),
         getTrades(),
+        getEquityHistory('default', '30D').catch(() => ({ points: [] as EquityPoint[] })),
       ]);
       if (cancelledRef.current) return;
       setPortfolio(mapPortfolio(portRes));
       setPositions(mapPositions(portRes));
       setTickers(mapTickers(priceRes));
       setStrategies(stratRes.strategies);
-      setTrades(mapTrades(tradeRes));
+      const mapped = mapTrades(tradeRes);
+      setTrades(mapped);
+      setEquityHistory(equityRes.points || []);
+      setAllocation(deriveAllocation(portRes));
+      setPerf(derivePerformance(mapped));
       setError(null);
       hasLoadedRef.current = true;
     } catch (e) {
@@ -155,13 +213,10 @@ export function useDashboardData() {
     loading,
     error,
     refetch: load,
-    // Keep mock fallbacks for rich UI sections backend doesn't serve yet
     bots,
-    equityCurveData,
     alerts,
-    performanceMetrics,
-    assetAllocation,
-    balanceSparkline,
-    pnlSparkline,
+    equityHistory,
+    allocation,
+    performance: perf,
   };
 }

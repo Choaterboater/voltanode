@@ -448,6 +448,37 @@ function LLMCommentaryCard({ commentary, taConfidence }: { commentary: LLMCommen
         </ul>
       )}
 
+      {(commentary.risk_factors?.length || commentary.catalysts?.length) ? (
+        <div className="mb-3 grid gap-3 sm:grid-cols-2 text-xs">
+          {commentary.risk_factors && commentary.risk_factors.length > 0 && (
+            <div className="rounded-md border border-danger-red/30 bg-danger-red/5 p-2">
+              <div className="mb-1 font-semibold text-danger-red">Risks</div>
+              <ul className="space-y-1 text-text-secondary">
+                {commentary.risk_factors.map((r, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="text-danger-red">›</span>
+                    <span>{r}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {commentary.catalysts && commentary.catalysts.length > 0 && (
+            <div className="rounded-md border border-success-green/30 bg-success-green/5 p-2">
+              <div className="mb-1 font-semibold text-success-green">Catalysts</div>
+              <ul className="space-y-1 text-text-secondary">
+                {commentary.catalysts.map((c, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="text-success-green">›</span>
+                    <span>{c}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-between border-t border-border-subtle/50 pt-2 text-xs">
         <span className="text-text-muted">
           Adjusted confidence:{' '}
