@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, Dict
+
 import pandas as pd
 import numpy as np
 
@@ -26,6 +28,10 @@ class MeanReversionStrategy(BaseStrategy):
         "bb_std": 1.5,
         "touch_tolerance": 0.02,  # within 2% of band counts as a touch
     }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._last_signal_bar: Dict[str, Any] = {}
 
     def generate_signal(self, data: pd.DataFrame, current_price: float) -> Signal:
         """Generate signal based on RSI and Bollinger Bands.
@@ -77,6 +83,19 @@ class MeanReversionStrategy(BaseStrategy):
 
         symbol = data.attrs.get("symbol", "unknown")
 
+        # Per-bar latch — tick frequency >> bar frequency, so without this
+        # the same RSI/BB condition fires on every tick all day.
+        latest_bar = data.index[-1] if len(data.index) else None
+        if latest_bar is not None and self._last_signal_bar.get(symbol) == latest_bar:
+            return Signal(
+                strategy_id=self.strategy_id,
+                symbol=symbol,
+                signal_type=SignalType.HOLD,
+                confidence=0.0,
+                timestamp=pd.Timestamp.now(),
+                metadata={"trigger": "already_fired_this_bar"},
+            )
+
         # Overbought / oversold conditions
         is_oversold = current_rsi < cfg["rsi_oversold"]
         is_overbought = current_rsi > cfg["rsi_overbought"]
@@ -85,6 +104,7 @@ class MeanReversionStrategy(BaseStrategy):
         touches_upper = current_price >= current_upper * (1 - tol)
 
         if is_oversold and touches_lower:
+            self._last_signal_bar[symbol] = latest_bar
             # Buy signal
             confidence = min(1.0, (cfg["rsi_oversold"] - current_rsi) / cfg["rsi_oversold"] + 0.3)
             signal = Signal(
@@ -108,6 +128,7 @@ class MeanReversionStrategy(BaseStrategy):
             return signal
 
         if is_overbought and touches_upper:
+            self._last_signal_bar[symbol] = latest_bar
             # Sell signal
             confidence = min(1.0, (current_rsi - cfg["rsi_overbought"]) / (100 - cfg["rsi_overbought"]) + 0.3)
             signal = Signal(

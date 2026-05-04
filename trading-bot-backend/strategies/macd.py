@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, Dict
+
 import pandas as pd
 import numpy as np
 
@@ -19,6 +21,10 @@ class MACDStrategy(BaseStrategy):
         "slow": 26,
         "signal": 9,
     }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._last_signal_bar: Dict[str, Any] = {}
 
     def generate_signal(self, data: pd.DataFrame, current_price: float) -> Signal:
         """Generate signal based on MACD crossover.
@@ -63,6 +69,19 @@ class MACDStrategy(BaseStrategy):
 
         symbol = data.attrs.get("symbol", "unknown")
 
+        # Per-bar latch — bars are daily; without this the same crossover
+        # fires every ~5s tick all day.
+        latest_bar = data.index[-1] if len(data.index) else None
+        if latest_bar is not None and self._last_signal_bar.get(symbol) == latest_bar:
+            return Signal(
+                strategy_id=self.strategy_id,
+                symbol=symbol,
+                signal_type=SignalType.HOLD,
+                confidence=0.0,
+                timestamp=pd.Timestamp.now(),
+                metadata={"trigger": "already_fired_this_bar"},
+            )
+
         # Crossover detection
         cross_up = prev_macd <= prev_signal and curr_macd > curr_signal
         cross_down = prev_macd >= prev_signal and curr_macd < curr_signal
@@ -72,6 +91,7 @@ class MACDStrategy(BaseStrategy):
         hist_negative = curr_histogram < 0
 
         if cross_up and hist_positive:
+            self._last_signal_bar[symbol] = latest_bar
             # Normalize confidence by MACD distance from zero relative to price
             distance = abs(curr_macd - curr_signal)
             confidence = min(1.0, 0.5 + distance / (current_price * 0.01))
@@ -95,6 +115,7 @@ class MACDStrategy(BaseStrategy):
             return signal
 
         if cross_down and hist_negative:
+            self._last_signal_bar[symbol] = latest_bar
             distance = abs(curr_macd - curr_signal)
             confidence = min(1.0, 0.5 + distance / (current_price * 0.01))
             signal = Signal(

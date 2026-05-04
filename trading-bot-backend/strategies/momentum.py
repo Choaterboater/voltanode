@@ -23,6 +23,14 @@ class MomentumStrategy(BaseStrategy):
         "trend_filter_ema": 200,
     }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Per-symbol last bar timestamp we emitted a non-HOLD signal for.
+        # Strategy.on_tick is called every ~5s but bars are daily/hourly —
+        # without this latch, the same crossover fires hundreds of times
+        # within a single bar.
+        self._last_signal_bar: Dict[str, Any] = {}
+
     def generate_signal(self, data: pd.DataFrame, current_price: float) -> Signal:
         """Generate signal based on EMA crossover.
 
@@ -64,6 +72,20 @@ class MomentumStrategy(BaseStrategy):
 
         symbol = data.attrs.get("symbol", "unknown")
 
+        # Per-bar latch: skip if we already fired on this bar's index. Bars
+        # come in daily here so without this we'd re-fire the same cross
+        # every ~5s for the rest of the day.
+        latest_bar = data.index[-1] if len(data.index) else None
+        if latest_bar is not None and self._last_signal_bar.get(symbol) == latest_bar:
+            return Signal(
+                strategy_id=self.strategy_id,
+                symbol=symbol,
+                signal_type=SignalType.HOLD,
+                confidence=0.0,
+                timestamp=pd.Timestamp.now(),
+                metadata={"trigger": "already_fired_this_bar"},
+            )
+
         # Crossover detection
         cross_up = prev_fast <= prev_slow and curr_fast > curr_slow
         cross_down = prev_fast >= prev_slow and curr_fast < curr_slow
@@ -75,6 +97,7 @@ class MomentumStrategy(BaseStrategy):
         atr = self._calculate_atr(data, 14)
 
         if cross_up and above_trend:
+            self._last_signal_bar[symbol] = latest_bar
             # Calculate confidence based on momentum strength
             momentum = abs(curr_fast - curr_slow) / (atr if atr > 0 else 1.0)
             confidence = min(1.0, 0.5 + min(momentum * 0.1, 0.5))
@@ -98,6 +121,7 @@ class MomentumStrategy(BaseStrategy):
             return signal
 
         if cross_down:
+            self._last_signal_bar[symbol] = latest_bar
             momentum = abs(curr_fast - curr_slow) / (atr if atr > 0 else 1.0)
             confidence = min(1.0, 0.5 + min(momentum * 0.1, 0.5))
             signal = Signal(
