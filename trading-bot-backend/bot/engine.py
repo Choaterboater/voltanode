@@ -179,14 +179,16 @@ class PaperTradingEngine:
         order will fail downstream every tick (SELL with no position, market-
         closed BUYs, Alpaca-incompatible symbols, etc.).
 
-        Returns True if a matching order was submitted within the last 30s
-        and is either still pending or was rejected — caller should drop the
-        new order silently.
+        Returns True if a matching order was submitted within the cooldown
+        window and is either still pending or was rejected — caller should
+        drop the new order silently. 5-minute cooldown so structural
+        rejections (no holdings, dust, market-closed) don't churn while
+        still letting transient errors retry within a reasonable window.
         """
         if not order.strategy_id:
             return False
         from datetime import timedelta as _td
-        cutoff = datetime.now(timezone.utc) - _td(seconds=30)
+        cutoff = datetime.now(timezone.utc) - _td(minutes=5)
         for o in self._orders.get(order.account_id, {}).values():
             if o.id == order.id:
                 continue
