@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 from api.models import OrderRequest, OrderResponse
 from bot.engine import PaperTradingEngine, LiveTradingEngine
-from bot.orders import Order, OrderType
+from bot.orders import Order, OrderStatus, OrderType
 from bot.config import OrderSide, AssetClass
 
 
@@ -95,7 +95,12 @@ async def place_order(request: Request, body: OrderRequest) -> OrderResponse:
     if _is_live_mode():
         try:
             fill = engine.execute_order(order)
-            if fill.filled_qty >= order.quantity:
+            # Reflect the order's final status — engine may have set REJECTED
+            # via the sell-guard or per-strategy debounce path, in which case
+            # filled_qty is 0 and the response should NOT say "pending".
+            if order.status == OrderStatus.REJECTED:
+                status = "rejected"
+            elif fill.filled_qty >= order.quantity:
                 status = "filled"
             elif fill.filled_qty > 0:
                 status = "partial"

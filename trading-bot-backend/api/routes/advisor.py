@@ -23,6 +23,7 @@ class AnalyzeRequest(BaseModel):
     symbol: str
     asset_type: str = "crypto"  # "crypto" or "stock"
     lookback_days: int = 90
+    advanced: bool = False  # Force OpenRouter (cloud LLM) instead of local Ollama
 
 
 class IndicatorReadingModel(BaseModel):
@@ -57,6 +58,9 @@ class LLMCommentaryModel(BaseModel):
 class AnalysisResponse(BaseModel):
     """Full analysis response."""
     symbol: str
+    display_name: str = ""
+    exchange: str = ""
+    sector: str = ""
     current_price: float
     asset_type: str
     verdict: str
@@ -95,6 +99,9 @@ def _analysis_to_response(result: AnalysisResult) -> AnalysisResponse:
 
     return AnalysisResponse(
         symbol=result.symbol,
+        display_name=getattr(result, "display_name", "") or "",
+        exchange=getattr(result, "exchange", "") or "",
+        sector=getattr(result, "sector", "") or "",
         current_price=result.current_price,
         asset_type=result.asset_type,
         verdict=result.verdict,
@@ -148,6 +155,7 @@ async def analyze_symbol(request: AnalyzeRequest) -> AnalysisResponse:
             symbol=request.symbol,
             asset_type=request.asset_type,
             lookback_days=request.lookback_days,
+            advanced=request.advanced,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -159,6 +167,7 @@ async def analyze_symbol_get(
     symbol: str = Query(..., description="Trading symbol (e.g. bitcoin or AAPL)"),
     asset_type: str = Query(default="crypto", description="'crypto' or 'stock'"),
     lookback_days: int = Query(default=90, ge=7, le=730, description="Days of history"),
+    advanced: bool = Query(default=False, description="Use OpenRouter cloud LLM"),
 ) -> AnalysisResponse:
     """GET version of /analyze for easy browser testing."""
     cache = DataCache(cache_dir="./data/cache")
@@ -169,6 +178,7 @@ async def analyze_symbol_get(
             symbol=symbol,
             asset_type=asset_type,
             lookback_days=lookback_days,
+            advanced=advanced,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

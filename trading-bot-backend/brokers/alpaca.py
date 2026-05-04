@@ -98,18 +98,33 @@ class AlpacaBroker(BrokerAdapter):
         url = f"{self._base_url}{path}"
         try:
             response = self._session.request(method, url, json=json, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-
-            if isinstance(data, dict) and "code" in data and "message" in data:
-                raise BrokerConnectionError(f"Alpaca API error {data['code']}: {data['message']}")
-            return data
-        except requests.exceptions.HTTPError as exc:
-            status = exc.response.status_code if exc.response else 0
-            text = exc.response.text if exc.response else ""
-            raise BrokerConnectionError(f"Alpaca HTTP {status}: {text}") from exc
         except requests.exceptions.RequestException as exc:
+            logger.warning(f"Alpaca {method} {path} network error: {exc}")
             raise BrokerConnectionError(f"Alpaca request failed: {exc}") from exc
+
+        # Log non-2xx responses with body so debugging order rejections is
+        # actually possible. Empty-body 4xx hits used to surface as the
+        # opaque "Alpaca HTTP 0: " when raise_for_status raised an HTTPError
+        # whose `response` attribute happened to be None.
+        if response.status_code >= 400:
+            body_text = response.text or "<empty body>"
+            logger.warning(
+                f"Alpaca {method} {path} returned {response.status_code}: {body_text[:500]}"
+            )
+            raise BrokerConnectionError(
+                f"Alpaca HTTP {response.status_code}: {body_text[:300]}"
+            )
+
+        try:
+            data = response.json()
+        except ValueError:
+            raise BrokerConnectionError(
+                f"Alpaca returned non-JSON ({response.status_code}): {response.text[:200]}"
+            )
+
+        if isinstance(data, dict) and "code" in data and "message" in data:
+            raise BrokerConnectionError(f"Alpaca API error {data['code']}: {data['message']}")
+        return data
 
     def get_balance(self) -> Dict[str, float]:
         account = self._request("GET", "/v2/account")

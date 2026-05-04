@@ -306,13 +306,20 @@ def _parse_response(raw: str, fallback_confidence: float) -> Dict[str, Any]:
 # Public entry point
 # ──────────────────────────────────────────────────────────────────────
 
-def generate_commentary(result: AnalysisResult) -> Optional[LLMCommentary]:
+def generate_commentary(
+    result: AnalysisResult, override_provider: Optional[str] = None
+) -> Optional[LLMCommentary]:
     """Produce blended LLM commentary for an analysis result.
+
+    When ``override_provider`` is supplied (e.g. ``"openrouter"`` from the
+    Advanced toggle), it takes precedence over ``LLM_PROVIDER``. OpenRouter
+    reads ``OPENROUTER_API_KEY`` so it doesn't collide with whatever
+    ``LLM_API_KEY`` is set to for the default provider.
 
     Returns ``None`` if no LLM is configured or the call fails — callers should
     fall back to pure TA in that case.
     """
-    provider = (os.environ.get("LLM_PROVIDER") or "").strip().lower()
+    provider = (override_provider or os.environ.get("LLM_PROVIDER") or "").strip().lower()
     if not provider:
         return None
 
@@ -334,10 +341,16 @@ def generate_commentary(result: AnalysisResult) -> Optional[LLMCommentary]:
         model_name = os.environ.get("LLM_MODEL", "gpt-4o-mini")
         raw = _call_openai_compat(prompt, model_name, "https://api.openai.com/v1", api_key)
     elif provider == "openrouter":
-        api_key = os.environ.get("LLM_API_KEY", "")
+        # Prefer a dedicated OPENROUTER_API_KEY so users can keep a local
+        # Ollama default while still wiring up cloud-grade analysis.
+        api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY", "")
         if not api_key:
+            logger.warning("Advanced LLM requested but OPENROUTER_API_KEY not set")
             return None
-        model_name = os.environ.get("LLM_MODEL", "openai/gpt-4o-mini")
+        model_name = (
+            os.environ.get("OPENROUTER_MODEL")
+            or os.environ.get("LLM_MODEL", "anthropic/claude-3.5-sonnet")
+        )
         raw = _call_openai_compat(prompt, model_name, "https://openrouter.ai/api/v1", api_key)
     elif provider == "anthropic":
         api_key = os.environ.get("LLM_API_KEY", "")

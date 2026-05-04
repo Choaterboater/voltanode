@@ -104,6 +104,7 @@ export default function Home() {
   const navigate = useNavigate();
   const {
     portfolio,
+    positions,
     tickers,
     trades,
     strategies,
@@ -161,8 +162,8 @@ export default function Home() {
     </>
   );
 
-  const longCount = portfolio.marginUsed > 0 ? 1 : 0;
-  const shortCount = 0;
+  const longCount = positions.filter((p) => p.side === 'long').length;
+  const shortCount = positions.filter((p) => p.side === 'short').length;
   const totalPos = longCount + shortCount;
 
   const tradeColumns = [
@@ -258,8 +259,8 @@ export default function Home() {
           <MetricCard
             label="Total Virtual Balance"
             value={formatCurrency(portfolio.totalEquity)}
-            delta="3.24%"
-            deltaPositive={true}
+            delta={`${portfolio.totalPnlPercent >= 0 ? '+' : ''}${portfolio.totalPnlPercent.toFixed(2)}%`}
+            deltaPositive={portfolio.totalPnlPercent >= 0}
             icon={<Wallet className="h-5 w-5" />}
             delay={0}
           >
@@ -267,10 +268,10 @@ export default function Home() {
           </MetricCard>
 
           <MetricCard
-            label="Today's P&L"
-            value={`+${formatCurrency(portfolio.dailyPnl)}`}
+            label="Unrealized P&L"
+            value={`${portfolio.dailyPnl >= 0 ? '+' : ''}${formatCurrency(portfolio.dailyPnl)}`}
             delta={`${portfolio.dailyPnlPercent.toFixed(2)}%`}
-            deltaPositive={true}
+            deltaPositive={portfolio.dailyPnl >= 0}
             icon={<TrendingUp className="h-5 w-5 text-success-green" />}
             delay={0.08}
           >
@@ -291,20 +292,20 @@ export default function Home() {
                 <div className="flex-1 h-1.5 rounded-full bg-bg-input overflow-hidden">
                   <div
                     className="h-full rounded-full bg-success-green"
-                    style={{ width: `${(longCount / totalPos) * 100}%` }}
+                    style={{ width: totalPos > 0 ? `${(longCount / totalPos) * 100}%` : '0%' }}
                   />
                 </div>
-                <span className="text-xs font-mono text-text-secondary w-8">{Math.round((longCount / totalPos) * 100)}%</span>
+                <span className="text-xs font-mono text-text-secondary w-8">{totalPos > 0 ? Math.round((longCount / totalPos) * 100) : 0}%</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-text-muted w-12">Shorts</span>
                 <div className="flex-1 h-1.5 rounded-full bg-bg-input overflow-hidden">
                   <div
                     className="h-full rounded-full bg-danger-red"
-                    style={{ width: `${(shortCount / totalPos) * 100}%` }}
+                    style={{ width: totalPos > 0 ? `${(shortCount / totalPos) * 100}%` : '0%' }}
                   />
                 </div>
-                <span className="text-xs font-mono text-text-secondary w-8">{Math.round((shortCount / totalPos) * 100)}%</span>
+                <span className="text-xs font-mono text-text-secondary w-8">{totalPos > 0 ? Math.round((shortCount / totalPos) * 100) : 0}%</span>
               </div>
             </div>
           </MetricCard>

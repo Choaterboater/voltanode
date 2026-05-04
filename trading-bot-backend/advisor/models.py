@@ -63,3 +63,8 @@ class AnalysisResult:
     time_horizon: str  # "short_term", "medium_term", "long_term"
     chart_data: Dict[str, Any] = field(default_factory=dict)
     llm_commentary: "LLMCommentary | None" = None
+    # Display metadata — pulled from yfinance / CoinGecko at analyze time so
+    # the UI can show a real company / coin name above the ticker.
+    display_name: str = ""  # e.g. "Caterpillar Inc.", "Bitcoin"
+    exchange: str = ""  # e.g. "NYSE", "NASDAQ", "" for crypto
+    sector: str = ""  # e.g. "Industrials", "" for crypto

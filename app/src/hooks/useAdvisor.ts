@@ -57,6 +57,9 @@ export interface LLMCommentary {
 
 export interface AnalysisResult {
   symbol: string;
+  display_name?: string;
+  exchange?: string;
+  sector?: string;
   current_price: number;
   asset_type: string;
   verdict: string;
@@ -80,12 +83,18 @@ export function useAdvisor() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const analyze = useCallback(async (symbol: string, assetType: 'crypto' | 'stock' = 'crypto', lookbackDays = 90) => {
+  const analyze = useCallback(async (
+    symbol: string,
+    assetType: 'crypto' | 'stock' = 'crypto',
+    lookbackDays = 90,
+    advanced = false,
+  ) => {
     setLoading(true);
     setError(null);
     setResult(null);
     try {
-      const res = await fetch(`${API_BASE}/advisor/analyze?symbol=${encodeURIComponent(symbol)}&asset_type=${assetType}&lookback_days=${lookbackDays}`, {
+      const url = `${API_BASE}/advisor/analyze?symbol=${encodeURIComponent(symbol)}&asset_type=${assetType}&lookback_days=${lookbackDays}&advanced=${advanced ? 'true' : 'false'}`;
+      const res = await fetch(url, {
         headers: { 'Content-Type': 'application/json' },
       });
       if (!res.ok) {

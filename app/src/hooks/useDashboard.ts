@@ -44,17 +44,24 @@ function mapPortfolio(api: ApiPortfolio): Portfolio {
 }
 
 function mapPositions(api: ApiPortfolio): Position[] {
-  return api.positions.map((p, i) => ({
-    id: `pos-${i}`,
-    symbol: p.symbol.replace('-', '/'),
-    side: p.side === 'LONG' ? 'long' : 'short',
-    size: p.size,
-    entryPrice: p.entry_price,
-    markPrice: p.current_price,
-    pnl: p.unrealized_pnl,
-    pnlPercent: ((p.current_price - p.entry_price) / p.entry_price) * 100 * (p.side === 'SHORT' ? -1 : 1),
-    openedAt: p.opened_at,
-  }));
+  return api.positions.map((p, i) => {
+    const sideUpper = String(p.side ?? '').toUpperCase();
+    const isShort = sideUpper === 'SHORT';
+    return {
+      id: `pos-${i}`,
+      symbol: p.symbol.replace('-', '/'),
+      side: isShort ? 'short' : 'long',
+      size: p.size,
+      entryPrice: p.entry_price,
+      markPrice: p.current_price,
+      pnl: p.unrealized_pnl,
+      pnlPercent:
+        p.entry_price > 0
+          ? ((p.current_price - p.entry_price) / p.entry_price) * 100 * (isShort ? -1 : 1)
+          : 0,
+      openedAt: p.opened_at,
+    };
+  });
 }
 
 function mapTickers(prices: ApiPrice[]): MarketTicker[] {

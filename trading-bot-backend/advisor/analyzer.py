@@ -48,6 +48,7 @@ class SymbolAnalyzer:
         symbol: str,
         asset_type: str = "crypto",
         lookback_days: int = 90,
+        advanced: bool = False,
     ) -> AnalysisResult:
         """Run the full analysis pipeline.
 
@@ -96,6 +97,11 @@ class SymbolAnalyzer:
         # ── 7. Chart data ──
         chart_data = self._build_chart_data(data, indicators)
 
+        # Display metadata — best-effort, never fatal.
+        display_name, exchange, sector = await asyncio.to_thread(
+            self._fetch_display_metadata, symbol, asset_type
+        )
+
         result = AnalysisResult(
             symbol=symbol,
             current_price=round(current_price, 4),
@@ -112,15 +118,21 @@ class SymbolAnalyzer:
             take_profit=round(take_profit, 4),
             time_horizon=time_horizon,
             chart_data=chart_data,
+            display_name=display_name,
+            exchange=exchange,
+            sector=sector,
         )
 
         # ── 8. Optional LLM commentary (Llama / OpenAI / Anthropic / OpenRouter) ──
         # Runs in a thread so the requests-based LLM clients don't block the
         # asyncio event loop. Failures are non-fatal — the deterministic
         # analysis is always returned even if the LLM call errors.
+        # When advanced=True, force the OpenRouter provider regardless of env.
         try:
             from advisor.llm_advisor import generate_commentary
-            commentary = await asyncio.to_thread(generate_commentary, result)
+            commentary = await asyncio.to_thread(
+                generate_commentary, result, "openrouter" if advanced else None
+            )
             if commentary is not None:
                 result.llm_commentary = commentary
         except Exception as exc:
@@ -128,6 +140,29 @@ class SymbolAnalyzer:
             _log.getLogger("volta.advisor").warning(f"LLM commentary skipped: {exc}")
 
         return result
+
+    def _fetch_display_metadata(self, symbol: str, asset_type: str) -> tuple[str, str, str]:
+        """Return (display_name, exchange, sector). All fields best-effort.
+
+        Stocks → yfinance Ticker.info
+        Crypto → CoinGecko coin metadata cache
+        """
+        try:
+            if asset_type == "stock":
+                import yfinance as yf
+                info = yf.Ticker(symbol).info or {}
+                name = info.get("longName") or info.get("shortName") or symbol.upper()
+                exchange = info.get("exchange") or info.get("fullExchangeName") or ""
+                sector = info.get("sector") or ""
+                return str(name), str(exchange), str(sector)
+            else:
+                # CoinGecko: derive a friendly display name from the id slug
+                # without an extra API call (e.g. 'matic-network' -> 'Matic Network')
+                # and let the ticker map fill in for short aliases.
+                friendly = symbol.replace("-", " ").replace("_", " ").title()
+                return friendly, "", ""
+        except Exception:
+            return symbol.upper(), "", ""
 
     # ------------------------------------------------------------------
     # Data fetching

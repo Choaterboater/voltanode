@@ -325,6 +325,7 @@ export default function Advisor() {
   const [symbol, setSymbol] = useState(navState?.symbol || '');
   const [assetType, setAssetType] = useState<'crypto' | 'stock'>(navState?.assetType || 'crypto');
   const [timeRange, setTimeRange] = useState<TimeRange>('90d');
+  const [advanced, setAdvanced] = useState<boolean>(false);
   const { result, loading, error, analyze } = useAdvisor();
 
   useEffect(() => {
@@ -341,7 +342,7 @@ export default function Advisor() {
       return;
     }
     try {
-      await analyze(symbol.trim(), assetType, rangeToDays(timeRange));
+      await analyze(symbol.trim(), assetType, rangeToDays(timeRange), advanced);
     } catch {
       toast.error('Analysis failed. Check the symbol and try again.');
     }
@@ -449,6 +450,22 @@ export default function Advisor() {
             </button>
           </div>
 
+          {/* Advanced toggle — routes the LLM call to OpenRouter (cloud) */}
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <label className="inline-flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={advanced}
+                onChange={(e) => setAdvanced(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-border-subtle bg-bg-input accent-accent-cyan"
+              />
+              <span className="text-xs text-text-muted">
+                Advanced (cloud LLM)
+                {advanced && <span className="ml-1 text-accent-cyan">— OpenRouter</span>}
+              </span>
+            </label>
+          </div>
+
           {/* Quick select */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <span className="text-xs text-text-muted">Quick select:</span>
@@ -482,6 +499,30 @@ export default function Advisor() {
             >
               {/* Verdict Card */}
               <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-5">
+                {/* Symbol header — company/coin name and big price up top */}
+                <div className="mb-4 flex items-end justify-between border-b border-border-subtle pb-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-wider text-text-muted">
+                      {result.symbol.toUpperCase()}
+                      {result.exchange && (
+                        <span className="ml-2 text-text-muted/70">· {result.exchange}</span>
+                      )}
+                      {result.sector && (
+                        <span className="ml-2 text-text-muted/70">· {result.sector}</span>
+                      )}
+                    </p>
+                    <h3 className="mt-0.5 text-xl font-semibold text-text-primary">
+                      {result.display_name || result.symbol.toUpperCase()}
+                    </h3>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-text-muted">Last price</p>
+                    <p className="font-mono text-3xl font-bold text-text-primary tabular-nums">
+                      {formatCurrency(result.current_price)}
+                    </p>
+                  </div>
+                </div>
+
                 <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-between">
                   <div className="flex items-center gap-4">
                     <div className={`flex h-14 w-14 items-center justify-center rounded-full ${verdictBg(result.verdict)} bg-opacity-20 text-text-inverse`}>
@@ -492,7 +533,7 @@ export default function Advisor() {
                         {result.verdict.replace('_', ' ')}
                       </h2>
                       <p className="text-xs text-text-muted">
-                        {result.symbol.toUpperCase()} · {formatCurrency(result.current_price)}
+                        Verdict for {result.symbol.toUpperCase()}
                       </p>
                     </div>
                   </div>
