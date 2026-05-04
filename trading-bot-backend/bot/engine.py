@@ -187,6 +187,13 @@ class PaperTradingEngine:
         """
         if not order.strategy_id:
             return False
+        # Long-term suppression — held=0 / dust SELLs that we've already
+        # rejected once. 1-hour TTL set in execute_order. If still active,
+        # drop without even storing the order so the monitor doesn't see it.
+        sup_key = (order.strategy_id, order.symbol, order.side.value)
+        sup_until = self._dust_suppressed_until.get(sup_key) if hasattr(self, "_dust_suppressed_until") else None
+        if sup_until is not None and sup_until > datetime.now(timezone.utc):
+            return True
         from datetime import timedelta as _td
         cutoff = datetime.now(timezone.utc) - _td(minutes=5)
         for o in self._orders.get(order.account_id, {}).values():
