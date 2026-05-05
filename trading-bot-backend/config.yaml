@@ -328,7 +328,7 @@ safety:
   max_exposure_pct: 50.0
   require_confirmation: true
   kill_switch_on_disconnect: true
-  max_orders_per_minute: 10
+  max_orders_per_minute: 60
   allowed_symbols: []
   blocked_symbols: []
   webhook_url: ''
