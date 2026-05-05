@@ -312,6 +312,34 @@ def create_app() -> FastAPI:
         # Without this, _running stays False and on_tick is never called.
         engine.start()
 
+        # Sync broker positions into the engine's local portfolio mirror so
+        # subsequent SELL fills can compute realized P&L against a real entry
+        # price. Without this, anything held when the engine started has
+        # entry_price=0 / no record, and partial closes show $0 P&L.
+        try:
+            if getattr(engine, "broker", None) and engine.broker.is_connected() and engine.broker.name != "mock":
+                from bot.portfolio import PositionSide as _PS
+                portfolio_obj = engine.get_portfolio("default")
+                broker_positions = engine.broker.get_positions()
+                synced = 0
+                for p in broker_positions or []:
+                    sym = (p.get("symbol") or "").upper()
+                    if not sym:
+                        continue
+                    qty = abs(float(p.get("qty", p.get("size", 0)) or 0))
+                    entry = float(p.get("avg_entry_price", p.get("entry_price", 0)) or 0)
+                    if qty <= 0 or entry <= 0:
+                        continue
+                    side = (p.get("side") or "long").lower()
+                    pside = _PS.SHORT if side == "short" else _PS.LONG
+                    if portfolio_obj.get_position(sym) is None:
+                        portfolio_obj.open_position(sym, pside, qty, entry)
+                        synced += 1
+                if synced:
+                    logger.info(f"Synced {synced} broker position(s) into engine portfolio")
+        except Exception as exc:
+            logger.warning(f"Broker position sync failed: {exc}")
+
         # Restore persisted bots so they survive restarts.
         try:
             restored = strategies.restore_strategies(engine)
