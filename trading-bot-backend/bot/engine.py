@@ -855,13 +855,29 @@ class LiveTradingEngine(PaperTradingEngine):
                     broker_order_id="",
                 )
 
-        # 4. Safety validation
-        self.safety_validator.validate_order(
-            order,
-            portfolio,
-            self.config,
-            self.daily_tracker.daily_pnl,
-        )
+        # 4. Safety validation. If the rate-limit validator raises, mark
+        # the order REJECTED so the on_tick polling loop stops retrying
+        # forever (each retry consumes more rate budget, creating a
+        # deadlock).
+        try:
+            self.safety_validator.validate_order(
+                order,
+                portfolio,
+                self.config,
+                self.daily_tracker.daily_pnl,
+            )
+        except SafetyValidationError as sv_exc:
+            order.status = OrderStatus.REJECTED
+            self.submit_order(order, order.account_id)
+            logging.getLogger("volta.engine").info(
+                f"Safety rejected {order.side.value} {order.symbol}: {sv_exc}"
+            )
+            return FillResult(
+                order_id=order.id, symbol=order.symbol, filled_qty=0.0,
+                filled_price=0.0, fee=0.0, slippage=0.0,
+                timestamp=datetime.now(timezone.utc), side=order.side,
+                realized_pnl=None, broker_order_id="",
+            )
 
         # 5. Execute via broker. On exception (e.g. market closed for stocks
         # on weekends, Alpaca-incompatible symbol), persist the order as
