@@ -85,6 +85,9 @@ class PaperTradingEngine:
         self._trades: List[Trade] = []
         self._running: bool = False
         self._current_prices: Dict[str, float] = {}
+        # Optional file-backed fill persistence so trade history survives
+        # restarts. Set via set_fills_persistence(path).
+        self._fills_path: Optional[Any] = None
 
         # Initialize default account
         default_balance = config.backtest.default_initial_balance if config.backtest else {"USDT": 10000.0}
@@ -173,6 +176,75 @@ class PaperTradingEngine:
             self._orders[account_id] = {}
         self._orders[account_id][order.id] = order
         return order.id
+
+    def set_fills_persistence(self, path: Any) -> None:
+        """Enable JSONL file-backed persistence of fills + load any existing file.
+
+        Each fill is appended to the file as one JSON line; on construction
+        the file is read so trade history survives restarts.
+        """
+        import json as _json
+        from pathlib import Path as _Path
+        p = _Path(path)
+        self._fills_path = p
+        if p.exists():
+            try:
+                loaded = 0
+                with p.open("r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            d = _json.loads(line)
+                            from datetime import datetime as _dt
+                            fr = FillResult(
+                                order_id=d.get("order_id", ""),
+                                symbol=d.get("symbol", ""),
+                                filled_qty=float(d.get("filled_qty", 0)),
+                                filled_price=float(d.get("filled_price", 0)),
+                                fee=float(d.get("fee", 0)),
+                                slippage=float(d.get("slippage", 0)),
+                                timestamp=_dt.fromisoformat(d["timestamp"]) if d.get("timestamp") else _dt.now(timezone.utc),
+                                side=OrderSide(d.get("side", "buy")),
+                                realized_pnl=d.get("realized_pnl"),
+                                broker_order_id=d.get("broker_order_id", ""),
+                            )
+                            self._fills.append(fr)
+                            loaded += 1
+                        except Exception:
+                            continue
+                if loaded:
+                    import logging as _log
+                    _log.getLogger("volta.engine").info(f"Loaded {loaded} fill(s) from {p.name}")
+            except Exception as exc:
+                import logging as _log
+                _log.getLogger("volta.engine").warning(f"Could not load fills from {p}: {exc}")
+
+    def _persist_fill(self, fill: FillResult) -> None:
+        """Append a fill to the JSONL file if persistence is enabled."""
+        if self._fills_path is None:
+            return
+        try:
+            import json as _json
+            self._fills_path.parent.mkdir(parents=True, exist_ok=True)
+            ts = fill.timestamp.isoformat() if hasattr(fill.timestamp, "isoformat") else str(fill.timestamp)
+            row = {
+                "order_id": fill.order_id,
+                "symbol": fill.symbol,
+                "filled_qty": fill.filled_qty,
+                "filled_price": fill.filled_price,
+                "fee": fill.fee,
+                "slippage": fill.slippage,
+                "timestamp": ts,
+                "side": fill.side.value,
+                "realized_pnl": fill.realized_pnl,
+                "broker_order_id": fill.broker_order_id,
+            }
+            with self._fills_path.open("a") as f:
+                f.write(_json.dumps(row) + "\n")
+        except Exception:
+            pass
 
     def _is_debounced(self, order: Order) -> bool:
         """Per-(strategy, symbol, side) cooldown to prevent tick-spam when an
@@ -296,6 +368,7 @@ class PaperTradingEngine:
             order.status = OrderStatus.FILLED
 
             self._fills.append(fill)
+            self._persist_fill(fill)
             self._update_portfolio_on_fill(order, fill, portfolio)
             self.on_fill(fill)
         return fill
@@ -813,6 +886,7 @@ class LiveTradingEngine(PaperTradingEngine):
         if fill.filled_qty > 0:
             self.daily_tracker.record(fill)
             self._fills.append(fill)
+            self._persist_fill(fill)
             self._update_portfolio_on_fill(order, fill, portfolio)
             self.on_fill(fill)
 
@@ -880,6 +954,7 @@ class LiveTradingEngine(PaperTradingEngine):
                         )
                         self.daily_tracker.record(fill)
                         self._fills.append(fill)
+                        self._persist_fill(fill)
                         portfolio = self.get_portfolio(account_id)
                         self._update_portfolio_on_fill(local_order, fill, portfolio)
                         self.on_fill(fill)

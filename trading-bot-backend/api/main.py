@@ -293,6 +293,14 @@ def create_app() -> FastAPI:
         engine = LiveTradingEngine(config=config, broker=broker)
         engine.market_data = market_data
 
+        # Enable file-backed fill persistence so trade history survives
+        # restarts. Loads any existing fills.jsonl on init.
+        try:
+            fills_path = Path(config.app.data_dir) / "fills.jsonl"
+            engine.set_fills_persistence(fills_path)
+        except Exception as exc:
+            logger.warning(f"Could not enable fill persistence: {exc}")
+
         # Set engine on routers
         portfolio.set_engine(engine)
         strategies.set_engine(engine)
