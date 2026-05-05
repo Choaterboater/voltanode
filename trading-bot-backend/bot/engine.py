@@ -507,33 +507,60 @@ class PaperTradingEngine:
                     self.submit_order(close_order, account_id)
                     self.execute_order(close_order, tick.price)
 
-        # Notify registered strategies of tick
+        # Notify registered strategies of tick.
+        # Two-pass to support ensemble-agreement veto: collect all signals
+        # first, then if BUY and SELL exist for the same symbol on the same
+        # tick (different bots disagreeing), suppress both — they're a
+        # wash trade that costs spread but produces no net direction.
+        pending: List[tuple] = []  # (account_id, strategy, signal, order)
         for account_id, strategies in self._strategies.items():
             for strategy in strategies:
                 if not getattr(strategy, "is_active", True):
                     continue
-                if hasattr(strategy, "on_tick"):
-                    portfolio = self._portfolios.get(account_id)
-                    signal = strategy.on_tick(
-                        tick,
-                        portfolio,
-                        ohlcv_data=ohlcv_data,
-                        signal_context=signal_context,
-                    )
-                    if signal is not None and hasattr(signal, "to_order"):
-                        order = signal.to_order(account_id)
-                        if order is not None and not self._is_debounced(order):
-                            self.submit_order(order, account_id)
-                            # Auto-execute market orders immediately
-                            if order.order_type.value == "market" and tick.price:
-                                self.execute_order(order, tick.price)
-                                # Store stop-loss / take-profit on the open position
-                                pos = portfolio.get_position(tick.symbol)
-                                if pos and pos.status == "open":
-                                    if signal.stop_loss is not None:
-                                        pos.stop_loss = signal.stop_loss
-                                    if signal.take_profit is not None:
-                                        pos.take_profit = signal.take_profit
+                if not hasattr(strategy, "on_tick"):
+                    continue
+                portfolio = self._portfolios.get(account_id)
+                signal = strategy.on_tick(
+                    tick,
+                    portfolio,
+                    ohlcv_data=ohlcv_data,
+                    signal_context=signal_context,
+                )
+                if signal is None or not hasattr(signal, "to_order"):
+                    continue
+                order = signal.to_order(account_id)
+                if order is None or self._is_debounced(order):
+                    continue
+                pending.append((account_id, strategy, signal, order))
+
+        # Veto step: if both BUY and SELL appear for the same (symbol),
+        # suppress all of them. Logged as INFO so the wash-trade pattern
+        # is visible if it happens often.
+        from collections import defaultdict as _dd
+        by_symbol: Dict[str, set] = _dd(set)
+        for _, _, _, ord_ in pending:
+            by_symbol[ord_.symbol].add(ord_.side.value)
+        vetoed_symbols = {sym for sym, sides in by_symbol.items() if len(sides) > 1}
+        if vetoed_symbols:
+            logging.getLogger("volta.engine").info(
+                f"Ensemble veto: opposing signals on {sorted(vetoed_symbols)} — both sides dropped"
+            )
+
+        for account_id, strategy, signal, order in pending:
+            if order.symbol in vetoed_symbols:
+                continue
+            self.submit_order(order, account_id)
+            if order.order_type.value == "market" and tick.price:
+                self.execute_order(order, tick.price)
+                # Store stop-loss / take-profit on the open position
+                portfolio = self._portfolios.get(account_id)
+                if portfolio is not None:
+                    pos = portfolio.get_position(tick.symbol)
+                    if pos and pos.status == "open":
+                        if signal.stop_loss is not None:
+                            pos.stop_loss = signal.stop_loss
+                        if signal.take_profit is not None:
+                            pos.take_profit = signal.take_profit
 
         # Check pending orders for fills.
         # In live mode the order is already at the broker after the first

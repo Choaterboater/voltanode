@@ -345,6 +345,32 @@ def create_app() -> FastAPI:
                         synced += 1
                 if synced:
                     logger.info(f"Synced {synced} broker position(s) into engine portfolio")
+                # Prime _current_prices so the portfolio endpoint can show
+                # real P&L immediately. Otherwise stocks show $0 unrealized
+                # until the tick loop happens to pull each one.
+                from bot.config import AssetClass as _AC
+                primed = 0
+                for p in broker_positions or []:
+                    sym = (p.get("symbol") or "").upper()
+                    if not sym:
+                        continue
+                    # Strip USD suffix for crypto, otherwise treat as stock.
+                    if sym.endswith("USD") and len(sym) > 3:
+                        bot_sym = sym[:-3]
+                        ac = _AC.CRYPTO
+                    else:
+                        bot_sym = sym
+                        ac = _AC.STOCK
+                    try:
+                        price = await market_data.get_price(bot_sym, ac)
+                        if price and price > 0:
+                            engine._current_prices[bot_sym] = price
+                            engine._current_prices[sym] = price
+                            primed += 1
+                    except Exception:
+                        continue
+                if primed:
+                    logger.info(f"Primed {primed} live price(s) for held positions")
         except Exception as exc:
             logger.warning(f"Broker position sync failed: {exc}")
 
