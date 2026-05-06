@@ -12,14 +12,14 @@ import {
 import type { Portfolio, Position, Trade, MarketTicker } from '@/types';
 import { bots, equityCurveData, alerts, performanceMetrics, assetAllocation, balanceSparkline, pnlSparkline } from '@/data/mockData';
 
-const CRYPTO_SYMBOLS = ['bitcoin', 'ethereum', 'solana', 'avalanche-2', 'chainlink', 'matic-network', 'dogecoin', 'ripple', 'cardano', 'polkadot'];
+const CRYPTO_SYMBOLS = ['bitcoin', 'ethereum', 'solana', 'avalanche-2', 'chainlink', 'polygon-ecosystem-token', 'dogecoin', 'ripple', 'cardano', 'polkadot'];
 const SYMBOL_MAP: Record<string, string> = {
   bitcoin: 'BTC',
   ethereum: 'ETH',
   solana: 'SOL',
   'avalanche-2': 'AVAX',
   chainlink: 'LINK',
-  'matic-network': 'MATIC',
+  'polygon-ecosystem-token': 'MATIC',
   dogecoin: 'DOGE',
   ripple: 'XRP',
   cardano: 'ADA',

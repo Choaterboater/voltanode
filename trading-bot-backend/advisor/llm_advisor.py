@@ -33,7 +33,7 @@ logger = logging.getLogger("volta.advisor.llm")
 _CG_TO_TICKER: Dict[str, str] = {
     "bitcoin": "BTC", "ethereum": "ETH", "solana": "SOL", "cardano": "ADA",
     "ripple": "XRP", "polkadot": "DOT", "chainlink": "LINK", "avalanche-2": "AVAX",
-    "matic-network": "MATIC", "binancecoin": "BNB", "dogecoin": "DOGE",
+    "polygon-ecosystem-token": "MATIC", "binancecoin": "BNB", "dogecoin": "DOGE",
     "shiba-inu": "SHIB", "tron": "TRX", "litecoin": "LTC", "bitcoin-cash": "BCH",
     "uniswap": "UNI", "cosmos": "ATOM", "ethereum-classic": "ETC", "stellar": "XLM",
     "filecoin": "FIL", "algorand": "ALGO", "near": "NEAR", "aave": "AAVE",

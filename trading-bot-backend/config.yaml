@@ -29,7 +29,7 @@ market_data:
     - polkadot
     - chainlink
     - avalanche-2
-    - matic-network
+    - polygon-ecosystem-token
     - dogecoin
     - shiba-inu
     - tron
@@ -84,7 +84,7 @@ market_data:
     - synthetix-network-token
     - yearn-finance
     - balancer
-    - sushiswap
+    - sushi
     - 1inch
     - band-protocol
     - aptos
