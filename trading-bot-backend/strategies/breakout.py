@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, Dict
+
 import pandas as pd
 import numpy as np
 
@@ -18,6 +20,10 @@ class BreakoutStrategy(BaseStrategy):
         "volume_multiplier": 1.5,
         "breakout_threshold_pct": 0.005,
     }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._last_signal_bar: Dict[str, Any] = {}
 
     def generate_signal(self, data: pd.DataFrame, current_price: float) -> Signal:
         """Generate signal on support/resistance breakout.
@@ -58,11 +64,24 @@ class BreakoutStrategy(BaseStrategy):
 
         symbol = data.attrs.get("symbol", "unknown")
 
+        # Per-bar latch — fire once per bar regardless of intra-bar ticks.
+        latest_bar = data.index[-1] if len(data.index) else None
+        if latest_bar is not None and self._last_signal_bar.get(symbol) == latest_bar:
+            return Signal(
+                strategy_id=self.strategy_id,
+                symbol=symbol,
+                signal_type=SignalType.HOLD,
+                confidence=0.0,
+                timestamp=pd.Timestamp.now(),
+                metadata={"trigger": "already_fired_this_bar"},
+            )
+
         # Breakout above resistance
         threshold = resistance * cfg["breakout_threshold_pct"]
         volume_confirmed = current_volume > avg_volume * cfg["volume_multiplier"]
 
         if current_price > resistance + threshold and volume_confirmed and prev_close <= resistance:
+            self._last_signal_bar[symbol] = latest_bar
             breakout_pct = (current_price - resistance) / resistance
             confidence = min(1.0, 0.5 + breakout_pct * 10)
             signal = Signal(
@@ -87,6 +106,7 @@ class BreakoutStrategy(BaseStrategy):
 
         # Breakdown below support
         if current_price < support - threshold and volume_confirmed and prev_close >= support:
+            self._last_signal_bar[symbol] = latest_bar
             breakdown_pct = (support - current_price) / support
             confidence = min(1.0, 0.5 + breakdown_pct * 10)
             signal = Signal(
