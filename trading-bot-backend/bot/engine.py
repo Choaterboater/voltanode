@@ -504,8 +504,14 @@ class PaperTradingEngine:
                         account_id=account_id,
                         strategy_id="sltp_manager",
                     )
-                    self.submit_order(close_order, account_id)
-                    self.execute_order(close_order, tick.price)
+                    # Gate through debounce — without this, every tick where
+                    # price is past the stop creates a fresh duplicate order.
+                    # The first close goes through, subsequent ones get
+                    # silently dropped instead of polluting _orders with
+                    # rejected duplicates.
+                    if not self._is_debounced(close_order):
+                        self.submit_order(close_order, account_id)
+                        self.execute_order(close_order, tick.price)
 
         # Notify registered strategies of tick.
         # Two-pass to support ensemble-agreement veto: collect all signals
