@@ -429,7 +429,7 @@ export default function Home() {
             label="Active Positions"
             value={`${totalPos}`}
             delta={`${longCount} long / ${shortCount} short`}
-            deltaPositive={true}
+            deltaTone="neutral"
             icon={<BarChart3 className="h-5 w-5" />}
             delay={0.16}
           >
@@ -461,7 +461,7 @@ export default function Home() {
             label="Win Rate (30D)"
             value={perfMetrics.winRate === null ? '—' : formatPercent(perfMetrics.winRate)}
             delta={perfMetrics.totalTrades === 0 ? 'no closed trades' : `${perfMetrics.totalTrades} closed`}
-            deltaPositive={perfMetrics.winRate !== null && perfMetrics.winRate >= 50}
+            deltaTone="neutral"
             icon={<Target className="h-5 w-5" />}
             delay={0.24}
           >
