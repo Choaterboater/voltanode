@@ -211,18 +211,43 @@ class PaperTradingEngine:
                                 broker_order_id=d.get("broker_order_id", ""),
                             )
                             self._fills.append(fr)
+                            # Backfill the Trade record too, so /trades/ and the
+                            # Analytics page reflect historical fills (otherwise
+                            # only this-session fills get a Trade row, leaving
+                            # the page nearly empty across restarts).
+                            self._trades.append(
+                                Trade(
+                                    id=str(uuid.uuid4()),
+                                    order_id=fr.order_id,
+                                    strategy_id=d.get("strategy_id", "") or "",
+                                    symbol=fr.symbol,
+                                    side=fr.side.value if hasattr(fr.side, "value") else str(fr.side),
+                                    quantity=fr.filled_qty,
+                                    price=fr.filled_price,
+                                    fee=fr.fee,
+                                    realized_pnl=fr.realized_pnl,
+                                    timestamp=fr.timestamp,
+                                )
+                            )
                             loaded += 1
                         except Exception:
                             continue
                 if loaded:
                     import logging as _log
-                    _log.getLogger("volta.engine").info(f"Loaded {loaded} fill(s) from {p.name}")
+                    _log.getLogger("volta.engine").info(
+                        f"Loaded {loaded} fill(s) from {p.name} "
+                        f"(backfilled into trade history)"
+                    )
             except Exception as exc:
                 import logging as _log
                 _log.getLogger("volta.engine").warning(f"Could not load fills from {p}: {exc}")
 
-    def _persist_fill(self, fill: FillResult) -> None:
-        """Append a fill to the JSONL file if persistence is enabled."""
+    def _persist_fill(self, fill: FillResult, strategy_id: str = "") -> None:
+        """Append a fill to the JSONL file if persistence is enabled.
+
+        ``strategy_id`` is persisted so the next-startup backfill can
+        attribute historical trades to the right bot in Analytics.
+        """
         if self._fills_path is None:
             return
         try:
@@ -240,6 +265,7 @@ class PaperTradingEngine:
                 "side": fill.side.value,
                 "realized_pnl": fill.realized_pnl,
                 "broker_order_id": fill.broker_order_id,
+                "strategy_id": strategy_id,
             }
             with self._fills_path.open("a") as f:
                 f.write(_json.dumps(row) + "\n")
@@ -368,7 +394,7 @@ class PaperTradingEngine:
             order.status = OrderStatus.FILLED
 
             self._fills.append(fill)
-            self._persist_fill(fill)
+            self._persist_fill(fill, strategy_id=order.strategy_id or "")
             self._update_portfolio_on_fill(order, fill, portfolio)
             self.on_fill(fill)
         return fill
@@ -539,9 +565,8 @@ class PaperTradingEngine:
                     continue
                 pending.append((account_id, strategy, signal, order))
 
-        # Veto step: if both BUY and SELL appear for the same (symbol),
-        # suppress all of them. Logged as INFO so the wash-trade pattern
-        # is visible if it happens often.
+        # Veto step 1 — opposing-side veto: if both BUY and SELL appear for
+        # the same symbol, suppress all of them (wash trade).
         from collections import defaultdict as _dd
         by_symbol: Dict[str, set] = _dd(set)
         for _, _, _, ord_ in pending:
@@ -552,9 +577,40 @@ class PaperTradingEngine:
                 f"Ensemble veto: opposing signals on {sorted(vetoed_symbols)} — both sides dropped"
             )
 
+        # Veto step 2 — same-side dedup: when multiple bots fire the SAME
+        # direction on the same symbol on the same tick, only the highest-
+        # confidence signal goes through. Without this, e.g. ``squeeze`` and
+        # ``auto_discovery`` both BUYing RXT in the same tick stacks 2× the
+        # intended position size on a single ticker. Loser strategies are
+        # logged so duplicates are visible.
+        best_per_key: Dict[tuple, tuple] = {}
+        deduped_dropped: List[tuple] = []
         for account_id, strategy, signal, order in pending:
             if order.symbol in vetoed_symbols:
                 continue
+            key = (order.symbol, order.side.value, account_id)
+            existing = best_per_key.get(key)
+            if existing is None:
+                best_per_key[key] = (account_id, strategy, signal, order)
+                continue
+            ex_signal = existing[2]
+            ex_conf = float(getattr(ex_signal, "confidence", 0) or 0)
+            new_conf = float(getattr(signal, "confidence", 0) or 0)
+            if new_conf > ex_conf:
+                deduped_dropped.append(existing)
+                best_per_key[key] = (account_id, strategy, signal, order)
+            else:
+                deduped_dropped.append((account_id, strategy, signal, order))
+        if deduped_dropped:
+            dropped_summary = ", ".join(
+                f"{o.symbol}:{o.side.value} from {(s.strategy_id or '?')[:25]}"
+                for _, s, _, o in deduped_dropped
+            )
+            logging.getLogger("volta.engine").info(
+                f"Same-side dedup: dropped {len(deduped_dropped)} duplicate signal(s) — {dropped_summary}"
+            )
+
+        for account_id, strategy, signal, order in best_per_key.values():
             self.submit_order(order, account_id)
             if order.order_type.value == "market" and tick.price:
                 self.execute_order(order, tick.price)
@@ -935,7 +991,7 @@ class LiveTradingEngine(PaperTradingEngine):
         if fill.filled_qty > 0:
             self.daily_tracker.record(fill)
             self._fills.append(fill)
-            self._persist_fill(fill)
+            self._persist_fill(fill, strategy_id=order.strategy_id or "")
             self._update_portfolio_on_fill(order, fill, portfolio)
             self.on_fill(fill)
 
@@ -1003,7 +1059,7 @@ class LiveTradingEngine(PaperTradingEngine):
                         )
                         self.daily_tracker.record(fill)
                         self._fills.append(fill)
-                        self._persist_fill(fill)
+                        self._persist_fill(fill, strategy_id=local_order.strategy_id or "")
                         portfolio = self.get_portfolio(account_id)
                         self._update_portfolio_on_fill(local_order, fill, portfolio)
                         self.on_fill(fill)

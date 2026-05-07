@@ -39,16 +39,26 @@ class PricePredictor:
     # Public API
     # ------------------------------------------------------------------
 
-    def predict_targets(self, data: pd.DataFrame, current_price: float, lookback_days: int = 90) -> List["PriceTarget"]:
+    def predict_targets(
+        self,
+        data: pd.DataFrame,
+        current_price: float,
+        lookback_days: int = 90,
+        fundamentals: "Fundamentals | None" = None,  # type: ignore  # noqa: F821
+    ) -> List["PriceTarget"]:
         """Generate price targets from all methods.
 
         Args:
             data: OHLCV DataFrame.
             current_price: Last known price.
             lookback_days: Days of history used — enables forward projections for longer horizons.
+            fundamentals: Optional ``Fundamentals`` snapshot. When present (stocks only),
+                three squeeze-specific targets are appended: trigger, cover-cost wall,
+                and theoretical-max. Driven by short-interest %, float, and ADV.
 
         Returns:
-            List of PriceTarget objects: forward projections first, then technical levels.
+            List of PriceTarget objects: forward projections first, then technical levels,
+            with squeeze targets appended when relevant.
         """
         # Forward projections shown first so they're prominent
         forward = self._forward_projections(data, current_price, lookback_days)
@@ -70,7 +80,8 @@ class PricePredictor:
             ):
                 unique_tech.append(t)
 
-        combined = forward + unique_tech[:8]
+        squeeze = self._squeeze_targets(data, current_price, fundamentals)
+        combined = forward + unique_tech[:8] + squeeze
         return [
             PriceTarget(
                 label=t.label,
@@ -85,6 +96,110 @@ class PricePredictor:
     # Method implementations
     # ------------------------------------------------------------------
 
+    def _squeeze_targets(
+        self,
+        data: pd.DataFrame,
+        current_price: float,
+        fundamentals: "Fundamentals | None",  # type: ignore  # noqa: F821
+    ) -> List[_RawTarget]:
+        """Squeeze-specific upside targets.
+
+        Three levels, each meaningful only when shorts are crowded into the
+        name (SI% of float >= 8%):
+
+        * **Squeeze Trigger** — recent N-bar high. Above this, shorts entered
+          at lower prices are underwater and pressure to cover ramps. Often
+          the first technical breakout that forces 10b5-1 cover orders.
+
+        * **Cover-Cost Wall** — current_price + (SI shares / ADV) × avg
+          daily range. The level where short-cover demand exhausts available
+          liquidity, modeling the *minimum* upside the shorts must absorb if
+          all of them cover at average daily volume.
+
+        * **Theoretical Max** — current_price × (1 + SI% × 1.5). Rough upside
+          ceiling if every short is forced to cover at progressively higher
+          prices. Pessimistic for shorts; aspirational for longs. The 1.5×
+          multiplier reflects historical squeeze geometry — covers don't
+          happen at flat prices, they ladder up.
+        """
+        if fundamentals is None or len(data) < 25:
+            return []
+        si_frac = getattr(fundamentals, "short_pct_of_float", None)
+        if si_frac is None or si_frac < 0.08:
+            # Not crowded enough to be a "squeeze" candidate — skip.
+            return []
+        float_shares = getattr(fundamentals, "float_shares", None)
+        adv = getattr(fundamentals, "avg_daily_volume_10d", None) or getattr(
+            fundamentals, "avg_daily_volume_3m", None
+        )
+
+        out: List[_RawTarget] = []
+        si_pct = si_frac * 100.0
+
+        # 1) Squeeze trigger: prior 20-bar high (the level shorts hate to see broken).
+        try:
+            prior_high = float(data["high"].iloc[-21:-1].max())
+            if prior_high > current_price:
+                up_pct = (prior_high - current_price) / current_price * 100
+                out.append(
+                    _RawTarget(
+                        label="Short-Squeeze Trigger",
+                        price=prior_high,
+                        probability=0.5,
+                        rationale=(
+                            f"20-bar high — break above this forces shorts deeper underwater. "
+                            f"With {si_pct:.1f}% short interest, breaking here ramps cover-pressure. "
+                            f"{up_pct:+.1f}% from here."
+                        ),
+                    )
+                )
+        except Exception:
+            pass
+
+        # 2) Cover-cost wall: how high would price need to go for shorts to fully cover
+        #    at average daily volume? Use SI shares / ADV days × avg daily range.
+        if float_shares and adv and adv > 0:
+            si_shares = si_frac * float_shares
+            days_to_cover = si_shares / adv
+            try:
+                # Recent average daily range (high-low) over last 14 bars
+                avg_range = float(
+                    (data["high"].iloc[-14:] - data["low"].iloc[-14:]).mean()
+                )
+                cover_wall = current_price + (days_to_cover * avg_range * 0.6)
+                up_pct = (cover_wall - current_price) / current_price * 100
+                out.append(
+                    _RawTarget(
+                        label="Short-Cover Wall",
+                        price=cover_wall,
+                        probability=0.35,
+                        rationale=(
+                            f"Cover-Cost Wall — {days_to_cover:.1f} days-to-cover × 60% of avg daily range. "
+                            f"How far the price would have to rise for shorts to fully buy back at average daily volume. "
+                            f"{up_pct:+.1f}% from here."
+                        ),
+                    )
+                )
+            except Exception:
+                pass
+
+        # 3) Theoretical max — aspirational ceiling tying SI directly to upside.
+        theoretical = current_price * (1 + si_frac * 1.5)
+        up_pct = (theoretical - current_price) / current_price * 100
+        out.append(
+            _RawTarget(
+                label="Best-Case Squeeze Target",
+                price=theoretical,
+                probability=0.20,
+                rationale=(
+                    f"Theoretical Squeeze Max — current price × (1 + SI%×1.5). "
+                    f"Only achieved if shorts capitulate AND float stays tight. "
+                    f"The dream scenario. {up_pct:+.1f}% from here."
+                ),
+            )
+        )
+        return out
+
     def _atr_targets(self, data: pd.DataFrame, current_price: float) -> List[_RawTarget]:
         """ATR-based stop-loss and take-profit channels."""
         atr = compute_atr(data, 14).iloc[-1]
@@ -94,35 +209,35 @@ class PricePredictor:
         # 1× ATR (moderate, high probability)
         targets.append(
             _RawTarget(
-                label="ATR Support (1×)",
+                label="Likely Daily Floor",
                 price=current_price - atr,
                 probability=0.72,
-                rationale=f"1× ATR support at {round(current_price - atr, 2)} based on 14-day volatility ({round(atr, 2)}).",
+                rationale=f"ATR Support (1×) — one typical daily move below current price. Based on 14-day Average True Range of {round(atr, 2)}.",
             )
         )
         targets.append(
             _RawTarget(
-                label="ATR Resistance (1×)",
+                label="Likely Daily Ceiling",
                 price=current_price + atr,
                 probability=0.68,
-                rationale=f"1× ATR resistance at {round(current_price + atr, 2)} — typical daily range.",
+                rationale=f"ATR Resistance (1×) — one typical daily move above current price. 14-day ATR = {round(atr, 2)}.",
             )
         )
         # 2× ATR (aggressive, lower probability)
         targets.append(
             _RawTarget(
-                label="Deep Support (2× ATR)",
+                label="Strong Drop Target",
                 price=current_price - 2 * atr,
                 probability=0.55,
-                rationale=f"2× ATR deep support at {round(current_price - 2 * atr, 2)} — rare but significant reversal zone.",
+                rationale=f"Deep Support (2× ATR) — rare but significant reversal zone. Two full daily moves below current price.",
             )
         )
         targets.append(
             _RawTarget(
-                label="Strong Resistance (2× ATR)",
+                label="Strong Rally Target",
                 price=current_price + 2 * atr,
                 probability=0.50,
-                rationale=f"2× ATR extended target at {round(current_price + 2 * atr, 2)} — requires sustained momentum.",
+                rationale=f"Strong Resistance (2× ATR) — requires sustained momentum. Two full daily moves above current price.",
             )
         )
         return targets
@@ -137,12 +252,12 @@ class PricePredictor:
 
         targets = []
         # Use extension levels beyond 1.0 for upside, below 0.0 for downside
-        extension_levels = {
-            "Fib 1.272 Extension": 1.272,
-            "Fib 1.618 Extension": 1.618,
-            "Fib 0.0 Retracement (Swing Low)": 0.0,
-        }
-        for label, ratio in extension_levels.items():
+        extension_specs = [
+            ("Extended Upside Target", 1.272, "Fib 1.272 Extension"),
+            ("Far Upside Target", 1.618, "Fib 1.618 Extension"),
+            ("Recent Bottom", 0.0, "Fib 0.0 Retracement (Swing Low)"),
+        ]
+        for friendly, ratio, technical in extension_specs:
             if ratio <= 1.0:
                 price = swing_low + ratio * diff
                 prob = 0.60 if ratio == 0.0 else 0.45
@@ -152,24 +267,27 @@ class PricePredictor:
 
             targets.append(
                 _RawTarget(
-                    label=label,
+                    label=friendly,
                     price=price,
                     probability=prob,
-                    rationale=f"Fibonacci {label.split()[1]} level from recent swing ({round(swing_low, 2)}–{round(swing_high, 2)}).",
+                    rationale=f"{technical} from recent swing ({round(swing_low, 2)}–{round(swing_high, 2)}).",
                 )
             )
 
         # Key retracement levels as support / resistance
-        for lvl_name, lvl_val in [("0.618", 0.618), ("0.382", 0.382)]:
+        for lvl_name, lvl_val, friendly in [
+            ("0.618", 0.618, "Major Recovery Level"),
+            ("0.382", 0.382, "Minor Recovery Level"),
+        ]:
             price = swing_low + lvl_val * diff
             dist_pct = abs(price / current_price - 1)
             if dist_pct > 0.01:  # only include if not basically current price
                 targets.append(
                     _RawTarget(
-                        label=f"Fib {lvl_name} Retracement",
+                        label=friendly,
                         price=price,
                         probability=0.62 if lvl_name == "0.618" else 0.58,
-                        rationale=f"Key Fibonacci {lvl_name} retracement level at {round(price, 2)} — high-confluence zone.",
+                        rationale=f"Fibonacci {lvl_name} retracement — high-confluence zone where rallies often stall or break out.",
                     )
                 )
         return targets
@@ -179,23 +297,23 @@ class PricePredictor:
         pivots = compute_pivot_points(data)
         targets = []
         mapping = [
-            ("R3", "Pivot R3 — extreme resistance", 0.35),
-            ("R2", "Pivot R2 — strong resistance", 0.55),
-            ("R1", "Pivot R1 — initial resistance", 0.70),
-            ("S1", "Pivot S1 — initial support", 0.70),
-            ("S2", "Pivot S2 — strong support", 0.55),
-            ("S3", "Pivot S3 — extreme support", 0.35),
+            ("R3", "Far Resistance", "Pivot R3 (extreme)", 0.35),
+            ("R2", "Strong Resistance", "Pivot R2", 0.55),
+            ("R1", "First Resistance", "Pivot R1", 0.70),
+            ("S1", "First Support", "Pivot S1", 0.70),
+            ("S2", "Strong Support", "Pivot S2", 0.55),
+            ("S3", "Far Support", "Pivot S3 (extreme)", 0.35),
         ]
-        for key, desc, prob in mapping:
+        for key, friendly, technical, prob in mapping:
             price = pivots[key]
             # Only include if reasonably close (within 3× current move potential)
             if price > 0 and abs(price / current_price - 1) < 0.30:
                 targets.append(
                     _RawTarget(
-                        label=f"Pivot {key}",
+                        label=friendly,
                         price=price,
                         probability=prob,
-                        rationale=f"{desc} calculated from last bar HLC at {round(price, 2)}.",
+                        rationale=f"{technical} — calculated from yesterday's high/low/close. Day-trader-style bounce / rejection level.",
                     )
                 )
         return targets
@@ -216,29 +334,29 @@ class PricePredictor:
 
         targets.append(
             _RawTarget(
-                label="BB Upper (2σ)",
+                label="Volatility Ceiling",
                 price=upper,
                 probability=0.60 if not squeeze else 0.75,
-                rationale=f"Upper Bollinger Band at {round(upper, 2)} — mean-reversion resistance." +
+                rationale="Upper Bollinger Band (2σ) — mean-reversion resistance edge." +
                           (" Band squeeze detected — higher breakout probability." if squeeze else ""),
             )
         )
         targets.append(
             _RawTarget(
-                label="BB Lower (2σ)",
+                label="Volatility Floor",
                 price=lower,
                 probability=0.60 if not squeeze else 0.75,
-                rationale=f"Lower Bollinger Band at {round(lower, 2)} — mean-reversion support." +
+                rationale="Lower Bollinger Band (2σ) — mean-reversion support edge." +
                           (" Band squeeze detected — higher breakdown probability." if squeeze else ""),
             )
         )
         # Middle as equilibrium
         targets.append(
             _RawTarget(
-                label="BB Middle (20 SMA)",
+                label="Monthly Average",
                 price=middle,
                 probability=0.65,
-                rationale=f"20-period SMA equilibrium at {round(middle, 2)} — reversion target.",
+                rationale="BB Middle / 20-period SMA — the price the stock has averaged over the last month. Reversion target.",
             )
         )
         return targets
@@ -254,28 +372,28 @@ class PricePredictor:
         if not pd.isna(senkou_a) and senkou_a > 0:
             targets.append(
                 _RawTarget(
-                    label="Senkou Span A (Cloud)",
+                    label="Cloud Edge (Near)",
                     price=senkou_a,
                     probability=0.58,
-                    rationale=f"Leading span A at {round(senkou_a, 2)} — first cloud boundary, momentum proxy.",
+                    rationale="Senkou Span A — Ichimoku cloud's first boundary, a momentum-proxy support/resistance.",
                 )
             )
         if not pd.isna(senkou_b) and senkou_b > 0:
             targets.append(
                 _RawTarget(
-                    label="Senkou Span B (Cloud)",
+                    label="Cloud Edge (Far)",
                     price=senkou_b,
                     probability=0.55,
-                    rationale=f"Leading span B at {round(senkou_b, 2)} — stronger cloud boundary, long-term equilibrium.",
+                    rationale="Senkou Span B — Ichimoku cloud's stronger boundary, long-term equilibrium level.",
                 )
             )
         if not pd.isna(kijun) and kijun > 0:
             targets.append(
                 _RawTarget(
-                    label="Kijun-sen (Base Line)",
+                    label="Multi-week Equilibrium",
                     price=kijun,
                     probability=0.62,
-                    rationale=f"Kijun-sen (26-period equilibrium) at {round(kijun, 2)} — key support/resistance.",
+                    rationale="Kijun-sen (Ichimoku Base Line, 26-period) — key support/resistance over the last few weeks.",
                 )
             )
         return targets

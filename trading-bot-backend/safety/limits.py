@@ -130,12 +130,24 @@ class SafetyValidator:
             )
 
         # 4. Exposure check
+        # SELL orders close (or reduce) a long position — they DECREASE
+        # exposure rather than add to it. The original check added
+        # ``order_notional`` regardless of side, which made it impossible to
+        # flatten a position once total exposure was already over the limit
+        # (a deadlock — the very orders that would bring you back under cap
+        # were rejected for being over cap).
         current_exposure = sum(
             p.market_value for p in portfolio.get_all_positions()
         )
-        new_exposure = current_exposure + order_notional
+        side_val = getattr(order.side, "value", str(order.side)).lower()
+        if side_val == "sell":
+            # Closing exposure: cap by zero so we don't go negative on
+            # weird state, but never reject a SELL on exposure grounds.
+            new_exposure = max(0.0, current_exposure - order_notional)
+        else:
+            new_exposure = current_exposure + order_notional
         exposure_pct = (new_exposure / total_equity) * 100.0 if total_equity > 0 else 0.0
-        if exposure_pct > cfg.max_exposure_pct:
+        if side_val != "sell" and exposure_pct > cfg.max_exposure_pct:
             raise SafetyValidationError(
                 f"Exposure {exposure_pct:.2f}% exceeds limit {cfg.max_exposure_pct}%."
             )

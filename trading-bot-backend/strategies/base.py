@@ -184,7 +184,37 @@ class BaseStrategy(ABC):
             ohlcv_data = ohlcv_data.copy()
             ohlcv_data.attrs["symbol"] = tick.symbol
             self._signal_context = sig_ctx  # available to generate_signal subclasses
-            return self.generate_signal(ohlcv_data, tick.price)
+            signal = self.generate_signal(ohlcv_data, tick.price)
+            # Position-aware BUY gate: if the strategy proposes to open a
+            # long but the portfolio already has an open long position on
+            # the same symbol, downgrade to HOLD. This kills the "every
+            # backend restart adds another BUY" bug — strategies' in-memory
+            # ``_last_side`` latch is wiped on restart, so without this
+            # check they re-fire BUY on every already-held name.
+            if signal is not None and signal.signal_type == SignalType.BUY and portfolio is not None:
+                try:
+                    pos = portfolio.get_position(tick.symbol)
+                except Exception:
+                    pos = None
+                if pos is not None and getattr(pos, "size", 0) > 0 and getattr(pos, "status", "") == "open":
+                    import logging as _log
+                    _log.getLogger("volta.engine").debug(
+                        f"position-aware gate: {self.strategy_id} BUY on {tick.symbol} "
+                        f"suppressed — already long {float(getattr(pos, 'size', 0))} shares"
+                    )
+                    return Signal(
+                        strategy_id=self.strategy_id,
+                        symbol=tick.symbol,
+                        signal_type=SignalType.HOLD,
+                        confidence=0.0,
+                        timestamp=signal.timestamp,
+                        metadata={
+                            "trigger": "already_holding_long",
+                            "held_qty": float(getattr(pos, "size", 0)),
+                            "original_trigger": (signal.metadata or {}).get("trigger"),
+                        },
+                    )
+            return signal
         return None
 
     #: Strategies that want to bypass the macro/earnings gates can set this False.

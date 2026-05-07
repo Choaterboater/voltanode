@@ -1,0 +1,171 @@
+"""User watchlist — JSON-file-backed persistent store.
+
+Single-tenant (one watchlist per backend instance). Stored at
+``data/watchlist.json`` so it survives backend restarts. Each entry has:
+
+* ``symbol`` — uppercased ticker
+* ``asset_type`` — "stock" or "crypto"
+* ``note`` — optional free-text annotation
+* ``source`` — where the entry came from ("manual", "squeeze", "scanner",
+  etc.) so the UI can show provenance
+* ``added_at`` — ISO timestamp
+
+The Squeeze and Scanner pages POST here when an operator promotes a ranked
+candidate to their watchlist. The Watchlist page GETs the full list.
+Removal is by symbol+asset_type.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger("volta.watchlist")
+
+router = APIRouter()
+
+_STORE_PATH = Path("data") / "watchlist.json"
+
+
+def _load_all() -> List[Dict[str, Any]]:
+    """Load the full watchlist from disk. Empty list on missing/corrupt."""
+    if not _STORE_PATH.exists():
+        return []
+    try:
+        data = json.loads(_STORE_PATH.read_text())
+        if isinstance(data, list):
+            return data
+    except Exception as exc:
+        logger.warning("watchlist: read failed: %s", exc)
+    return []
+
+
+def _save_all(items: List[Dict[str, Any]]) -> None:
+    """Atomically write the watchlist to disk."""
+    _STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _STORE_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(items, indent=2))
+    tmp.replace(_STORE_PATH)
+
+
+def _key(symbol: str, asset_type: str) -> tuple[str, str]:
+    """Canonical dedup key — uppercase symbol + lowercase asset_type."""
+    return (symbol.strip().upper(), asset_type.strip().lower())
+
+
+# ── Request models ──
+
+class WatchlistAddRequest(BaseModel):
+    symbol: str
+    asset_type: str = Field(default="stock", description="'stock' or 'crypto'")
+    note: Optional[str] = None
+    source: str = Field(default="manual", description="manual | squeeze | scanner | advisor")
+
+
+# ── Endpoints ──
+
+@router.get("/")
+async def list_watchlist(asset_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return the full watchlist, newest first. Optionally filter by asset_type."""
+    items = _load_all()
+    if asset_type:
+        items = [it for it in items if str(it.get("asset_type", "")).lower() == asset_type.lower()]
+    items.sort(key=lambda x: str(x.get("added_at", "")), reverse=True)
+    return items
+
+
+@router.post("/")
+async def add_to_watchlist(req: WatchlistAddRequest) -> Dict[str, Any]:
+    """Add a ticker to the watchlist. Idempotent — re-adding refreshes the
+    note + source + added_at without duplicating."""
+    sym = req.symbol.strip().upper()
+    if not sym:
+        raise HTTPException(status_code=400, detail="symbol required")
+    asset = req.asset_type.strip().lower()
+    if asset not in ("stock", "crypto"):
+        raise HTTPException(status_code=400, detail="asset_type must be 'stock' or 'crypto'")
+
+    items = _load_all()
+    target_key = _key(sym, asset)
+    # Strip any existing entry with the same symbol+asset_type (idempotent overwrite)
+    items = [it for it in items if _key(it.get("symbol", ""), it.get("asset_type", "")) != target_key]
+
+    new_item = {
+        "symbol": sym,
+        "asset_type": asset,
+        "note": req.note,
+        "source": req.source,
+        "added_at": datetime.now(timezone.utc).isoformat(),
+    }
+    items.append(new_item)
+    _save_all(items)
+    return {"status": "added", "item": new_item, "total": len(items)}
+
+
+@router.post("/bulk")
+async def bulk_add_to_watchlist(items: List[WatchlistAddRequest]) -> Dict[str, Any]:
+    """Add many tickers in one call. Each item is the same shape as POST /.
+
+    Convenience endpoint for external apps (e.g. another scanner / alerts
+    pipeline) that want to push a batch of picks at once. Idempotent —
+    re-posting the same symbol+asset_type refreshes the entry's note +
+    source rather than duplicating.
+    """
+    if not items:
+        return {"status": "noop", "added": 0, "total": len(_load_all())}
+    existing = _load_all()
+    for req in items:
+        sym = req.symbol.strip().upper()
+        if not sym:
+            continue
+        asset = req.asset_type.strip().lower()
+        if asset not in ("stock", "crypto"):
+            continue
+        target_key = _key(sym, asset)
+        existing = [
+            it for it in existing
+            if _key(it.get("symbol", ""), it.get("asset_type", "")) != target_key
+        ]
+        existing.append({
+            "symbol": sym,
+            "asset_type": asset,
+            "note": req.note,
+            "source": req.source,
+            "added_at": datetime.now(timezone.utc).isoformat(),
+        })
+    _save_all(existing)
+    return {"status": "ok", "added": len(items), "total": len(existing)}
+
+
+@router.delete("/{symbol}")
+async def remove_from_watchlist(symbol: str, asset_type: str = "stock") -> Dict[str, Any]:
+    """Remove a ticker from the watchlist by symbol + asset_type."""
+    sym = symbol.strip().upper()
+    asset = asset_type.strip().lower()
+    items = _load_all()
+    target_key = _key(sym, asset)
+    before = len(items)
+    items = [it for it in items if _key(it.get("symbol", ""), it.get("asset_type", "")) != target_key]
+    removed = before - len(items)
+    if removed == 0:
+        raise HTTPException(status_code=404, detail=f"{sym} ({asset}) not in watchlist")
+    _save_all(items)
+    return {"status": "removed", "symbol": sym, "asset_type": asset, "remaining": len(items)}
+
+
+@router.get("/contains/{symbol}")
+async def contains(symbol: str, asset_type: str = "stock") -> Dict[str, Any]:
+    """Quick check used by buttons to render 'On Watchlist' vs 'Add'."""
+    sym = symbol.strip().upper()
+    asset = asset_type.strip().lower()
+    target_key = _key(sym, asset)
+    for it in _load_all():
+        if _key(it.get("symbol", ""), it.get("asset_type", "")) == target_key:
+            return {"symbol": sym, "asset_type": asset, "in_watchlist": True, "item": it}
+    return {"symbol": sym, "asset_type": asset, "in_watchlist": False}

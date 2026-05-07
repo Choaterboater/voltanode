@@ -209,11 +209,39 @@ def _verdict_from_score(score: int) -> Tuple[str, str]:
 # ── Public entry point ──────────────────────────────────────────────
 
 
+def _timeframe_for_lookback(lookback_days: int, asset_type: str) -> str:
+    """Map the user-selected lookback window to a human-readable horizon string.
+
+    The frontend's range buttons (1mo / 3mo / 1yr) pass through as
+    lookback_days = 30 / 90 / 365 — the result here should track that selection
+    instead of being a constant per asset class.
+    """
+    d = int(lookback_days or 0)
+    if d <= 14:
+        return "days to 2 weeks"
+    if d <= 35:
+        return "2-6 weeks"
+    if d <= 100:
+        return "1-3 months"
+    if d <= 200:
+        return "3-6 months"
+    if d <= 400:
+        return "6-12 months"
+    return "12+ months"
+
+
 def build_research_report(
     ta_result: AnalysisResult,
     advanced: bool = False,
+    lookback_days: Optional[int] = None,
 ) -> ResearchReport:
-    """Assemble the multi-dimension report from an existing TA analysis."""
+    """Assemble the multi-dimension report from an existing TA analysis.
+
+    ``lookback_days`` should be the same value the caller passed to
+    ``SymbolAnalyzer.analyze`` so the report's ``optimal_timeframe`` matches
+    what the user actually requested. When omitted, falls back to a sensible
+    default per asset class.
+    """
     snap = fetch_fundamentals(ta_result.symbol, ta_result.asset_type)
     f_score, f_rationale = score_fundamentals(snap)
 
@@ -242,12 +270,19 @@ def build_research_report(
     verdict, _label = _verdict_from_score(overall)
     confidence = max(40, min(95, overall))  # confidence floor for sane UI
 
-    timeframe = "6-12 months" if ta_result.asset_type == "stock" else "1-3 months"
+    # Honour the user-selected lookback window when present; fall back to the
+    # historical asset-class default only if the caller didn't pass one through.
+    if lookback_days is not None:
+        timeframe = _timeframe_for_lookback(int(lookback_days), ta_result.asset_type)
+    else:
+        timeframe = "6-12 months" if ta_result.asset_type == "stock" else "1-3 months"
 
     # Pull external signal context (FRED macro, Finnhub earnings/insider,
     # alternative.me Fear & Greed). All best-effort — None when keys missing.
     macro_ctx = _fetch_macro_context()
-    insider_ctx = _fetch_insider_context(ta_result.symbol, ta_result.asset_type)
+    insider_ctx = _fetch_insider_context(
+        ta_result.symbol, ta_result.asset_type, current_price=ta_result.current_price
+    )
     earnings_ctx = _fetch_next_earnings(ta_result.symbol, ta_result.asset_type, snap.next_earnings_date)
     fg_ctx = _fetch_fear_greed_context()
 
@@ -320,15 +355,25 @@ def _fetch_macro_context() -> Dict[str, Any]:
         return {}
 
 
-def _fetch_insider_context(symbol: str, asset_type: str) -> Dict[str, Any]:
-    """Pull insider Form 4 summary (Finnhub) for stocks."""
+def _fetch_insider_context(
+    symbol: str,
+    asset_type: str,
+    current_price: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Pull insider Form 4 summary (Finnhub) for stocks.
+
+    Passes ``current_price`` through so the aggregator can drop
+    derivative-settlement filings whose reported prices are unrelated to
+    the real market (CAR / Pentwater $700 issue → kept totals from
+    inflating to fictitious billions).
+    """
     if asset_type != "stock":
         return {}
     try:
         from signals import finnhub
         if not finnhub.is_configured():
             return {}
-        return finnhub.insider_summary(symbol)
+        return finnhub.insider_summary(symbol, reference_price=current_price)
     except Exception as exc:
         logger.debug(f"insider context fetch failed for {symbol}: {exc}")
         return {}
@@ -359,6 +404,24 @@ def _fetch_next_earnings(symbol: str, asset_type: str, fallback_date: Optional[s
         try:
             edate = datetime.fromisoformat(fallback_date).date()
             today = datetime.now(timezone.utc).date()
+            # If the "next" earnings date yfinance returned is actually in the
+            # past (yfinance falls back to the last reported quarter when the
+            # next one hasn't been formally announced), project +90 days as an
+            # estimate so the UI shows a forward-looking horizon. Mark source
+            # explicitly so callers / the LLM can disambiguate.
+            from datetime import timedelta as _td
+            if edate < today:
+                projected = edate + _td(days=90)
+                # Keep adding quarters until we land in the future.
+                while projected < today:
+                    projected = projected + _td(days=90)
+                return {
+                    "symbol": symbol.upper(),
+                    "date": projected.isoformat(),
+                    "last_reported_date": fallback_date,
+                    "days_until": (projected - today).days,
+                    "source": "estimated",  # ~quarterly projection from last reported
+                }
             return {
                 "symbol": symbol.upper(),
                 "date": fallback_date,
@@ -390,6 +453,40 @@ def _fetch_fear_greed_context() -> Dict[str, Any]:
 # ── LLM narrative generation ────────────────────────────────────────
 
 
+def _directional_levels(price: float, ta_result: AnalysisResult) -> Dict[str, str]:
+    """Build LONG/SHORT level pairs from the analyzer's stop-distance.
+
+    The analyzer's ``stop_loss`` / ``take_profit`` numbers are TA-verdict-
+    aware: for HOLD they're a symmetric reference band around price, for
+    BUY/SELL they're directional. The LLM may recommend a different
+    direction than the TA verdict (e.g. research-narrative says SHORT
+    while TA says HOLD), so we derive the absolute stop/target distances
+    here and present BOTH sets so the LLM picks the matching one.
+    """
+    sl = getattr(ta_result, "stop_loss", None) or price
+    tp = getattr(ta_result, "take_profit", None) or price
+    # Distance is always the absolute deviation from current price.
+    stop_dist = max(abs(price - sl), 0.001)
+    tp_dist = max(abs(tp - price), 0.001)
+
+    long_stop = price - stop_dist
+    long_tp = price + tp_dist
+    short_stop = price + stop_dist  # cover if price rises
+    short_tp = price - tp_dist      # profit if price falls
+
+    pct = lambda x: ((x - price) / price * 100) if price else 0
+    return {
+        "long_stop": f"{long_stop:,.2f}",
+        "long_stop_pct": pct(long_stop),
+        "long_tp": f"{long_tp:,.2f}",
+        "long_tp_pct": pct(long_tp),
+        "short_stop": f"{short_stop:,.2f}",
+        "short_stop_pct": pct(short_stop),
+        "short_tp": f"{short_tp:,.2f}",
+        "short_tp_pct": pct(short_tp),
+    }
+
+
 _RESEARCH_PROMPT = """You are an equity research analyst writing a multi-dimensional report
 on {symbol} ({display_name}). The deterministic scoring layer has already
 computed three dimensions:
@@ -411,6 +508,26 @@ TECHNICAL ({t_weight:.0%} weight) — score {t_score}/100, label {t_label}
   rationale: {t_rationale}
   TA verdict: {ta_verdict} at {ta_conf}% confidence
   current price: ${price}
+
+RISK & SIZING (computed by deterministic risk engine — USE THESE NUMBERS,
+do not invent tighter stops):
+  risk_level: {risk_level} (low / moderate / high / extreme)
+  suggested entry zone: ${entry_low} – ${entry_high}
+  computed stop_loss (TA-verdict aware): ${stop_loss}  ({stop_pct:+.1f}% from current)
+  computed take_profit (TA-verdict aware): ${take_profit}  ({tp_pct:+.1f}% from current)
+  suggested position size: {pos_pct:.1f}% of capital
+  time horizon: {time_horizon}
+
+DIRECTIONAL TRADE LEVELS (use the set matching your trade recommendation;
+based on horizon-scaled risk-tier, NOT the TA verdict):
+  If recommending LONG:
+    - entry near current price ${price}
+    - stop-loss BELOW at ${long_stop}  ({long_stop_pct:+.1f}% from current)
+    - take-profit ABOVE at ${long_tp}  ({long_tp_pct:+.1f}% from current)
+  If recommending SHORT:
+    - entry near current price ${price}
+    - stop-loss (cover if price RISES) at ${short_stop}  ({short_stop_pct:+.1f}% from current)
+    - take-profit (profit if price FALLS) at ${short_tp}  ({short_tp_pct:+.1f}% from current)
 
 SENTIMENT ({s_weight:.0%} weight) — score {s_score}/100, label {s_label}
   rationale: {s_rationale}
@@ -450,7 +567,7 @@ Produce a JSON object with exactly these keys (no markdown, no extra text):
   "action_plan": {{
     "growth_investor": "BUY / HOLD / AVOID + one-sentence rationale",
     "value_investor": "BUY / HOLD / AVOID + one-sentence rationale",
-    "trader": "specific entry / exit levels for short-term trade",
+    "trader": "specific entry / exit levels for the short-term trade. USE the computed stop_loss and take_profit numbers in the RISK & SIZING block above — do NOT invent tighter stops. For SHORT trades, use clear language: 'cover if price RISES to $X (stop)' and 'profit at $Y if price falls' — avoid the word 'downside' as a profit target since it is ambiguous on a short. Be explicit about direction and which side of the entry is profit vs loss.",
     "already_holding": "what to do with existing position"
   }},
   "bottom_line": "1-2 sentence final takeaway including any specific price levels"
@@ -507,6 +624,27 @@ def _generate_narrative(
         ta_verdict=ta_result.verdict,
         ta_conf=ta_result.confidence,
         price=f"{report.current_price:,.2f}",
+        risk_level=getattr(ta_result, "risk_level", "n/a"),
+        entry_low=f"{getattr(ta_result, 'entry_zone', (0, 0))[0]:,.2f}",
+        entry_high=f"{getattr(ta_result, 'entry_zone', (0, 0))[1]:,.2f}",
+        stop_loss=f"{getattr(ta_result, 'stop_loss', 0):,.2f}",
+        take_profit=f"{getattr(ta_result, 'take_profit', 0):,.2f}",
+        stop_pct=(
+            (getattr(ta_result, "stop_loss", 0) - report.current_price)
+            / report.current_price * 100
+            if report.current_price else 0
+        ),
+        tp_pct=(
+            (getattr(ta_result, "take_profit", 0) - report.current_price)
+            / report.current_price * 100
+            if report.current_price else 0
+        ),
+        pos_pct=getattr(ta_result, "suggested_position_size", 0) * 100,
+        time_horizon=getattr(ta_result, "time_horizon", "n/a"),
+        # Direction-aware levels — derived from |stop_distance| so SHORT
+        # recommendations get a wider stop ABOVE current and target BELOW,
+        # and LONGs get the mirror, regardless of the TA-verdict's symmetry.
+        **_directional_levels(report.current_price, ta_result),
         s_weight=report.sentiment.weight,
         s_score=report.sentiment.score,
         s_label=report.sentiment.label,

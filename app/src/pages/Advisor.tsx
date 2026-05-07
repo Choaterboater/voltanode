@@ -535,12 +535,38 @@ export default function Advisor() {
     return () => clearTimeout(handle);
   }, [symbol]);
 
+  /**
+   * Single fire path used by every analyze trigger (manual button, quick-select
+   * chip, nav state from Watchlist, time-range click, typeahead pick). When
+   * Research mode is on we ALWAYS kick off the deeper report in parallel —
+   * earlier this was only wired in two of five paths, so picking a stock from
+   * the Watchlist or clicking a quick-select chip silently skipped the
+   * research call.
+   */
+  const runAnalyze = async (
+    sym: string,
+    type: 'crypto' | 'stock',
+    days: number,
+    adv: boolean,
+  ) => {
+    await analyze(sym, type, days, adv);
+    if (researchMode) {
+      fetchResearch(sym, type, days, adv).catch(() => {});
+    }
+  };
+
   useEffect(() => {
     if (navState?.symbol) {
-      analyze(navState.symbol, navState.assetType || 'crypto', rangeToDays(timeRange));
+      runAnalyze(
+        navState.symbol,
+        navState.assetType || 'crypto',
+        rangeToDays(timeRange),
+        advanced,
+      ).catch(() => {});
       // Clear state so refresh doesn't re-trigger
       window.history.replaceState({}, document.title);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleAnalyze = async () => {
@@ -549,11 +575,7 @@ export default function Advisor() {
       return;
     }
     try {
-      await analyze(symbol.trim(), assetType, rangeToDays(timeRange), advanced);
-      // If Research mode is on, kick off the deeper report in parallel.
-      if (researchMode) {
-        fetchResearch(symbol.trim(), assetType, rangeToDays(timeRange), advanced).catch(() => {});
-      }
+      await runAnalyze(symbol.trim(), assetType, rangeToDays(timeRange), advanced);
     } catch {
       toast.error('Analysis failed. Check the symbol and try again.');
     }
@@ -568,7 +590,12 @@ export default function Advisor() {
     if (isCrypto) setAssetType('crypto');
     // Small delay so state updates before analyze
     setTimeout(() => {
-      analyze(ticker, isStock ? 'stock' : 'crypto', rangeToDays(timeRange));
+      runAnalyze(
+        ticker,
+        isStock ? 'stock' : 'crypto',
+        rangeToDays(timeRange),
+        advanced,
+      ).catch(() => {});
     }, 50);
   };
 
@@ -624,7 +651,12 @@ export default function Advisor() {
                   const newRange = r.key;
                   setTimeRange(newRange);
                   if (symbol.trim() && !loading) {
-                    analyze(symbol.trim(), assetType, rangeToDays(newRange));
+                    runAnalyze(
+                      symbol.trim(),
+                      assetType,
+                      rangeToDays(newRange),
+                      advanced,
+                    ).catch(() => {});
                   }
                 }}
                 className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
@@ -663,11 +695,15 @@ export default function Advisor() {
                         setAssetType(hit.asset_type);
                         setLookupOpen(false);
                         setLookupHits([]);
-                        // Auto-run analysis when a typeahead hit is picked
-                        analyze(hit.symbol, hit.asset_type, rangeToDays(timeRange), advanced);
-                        if (researchMode) {
-                          fetchResearch(hit.symbol, hit.asset_type, rangeToDays(timeRange), advanced).catch(() => {});
-                        }
+                        // Auto-run analysis when a typeahead hit is picked.
+                        // Goes through runAnalyze so research-mode is honored
+                        // consistently with all other entry points.
+                        runAnalyze(
+                          hit.symbol,
+                          hit.asset_type,
+                          rangeToDays(timeRange),
+                          advanced,
+                        ).catch(() => {});
                       }}
                       className="flex cursor-pointer items-center justify-between gap-3 border-b border-border-subtle/40 px-3 py-2 text-sm hover:bg-accent-cyan/10 last:border-b-0"
                     >
@@ -699,7 +735,21 @@ export default function Advisor() {
               <input
                 type="checkbox"
                 checked={researchMode}
-                onChange={(e) => setResearchMode(e.target.checked)}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setResearchMode(on);
+                  // If toggling ON and we already have an analyze result for
+                  // this symbol, kick off research right away — saves the user
+                  // a re-click of the analyze button.
+                  if (on && result && symbol.trim() && !researchLoading) {
+                    fetchResearch(
+                      symbol.trim(),
+                      assetType,
+                      rangeToDays(timeRange),
+                      advanced,
+                    ).catch(() => {});
+                  }
+                }}
                 className="h-3.5 w-3.5 rounded border-border-subtle bg-bg-input accent-accent-cyan"
               />
               <span className="text-xs text-text-muted">
@@ -870,7 +920,10 @@ export default function Advisor() {
                     <h3 className="text-sm font-semibold text-text-primary">Technical Indicators</h3>
                     <span className="ml-auto text-xs text-text-muted">{result.indicators.length} signals</span>
                   </div>
-                  <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                  {/* Grow naturally so the indicator card matches the height
+                      of the Price-Targets + Risk-Sizing column on the right
+                      instead of cropping at a fixed 400px. */}
+                  <div className="space-y-2">
                     {result.indicators.map((ind, i) => (
                       <IndicatorCard key={`${ind.name}-${i}`} reading={ind} />
                     ))}
@@ -886,12 +939,17 @@ export default function Advisor() {
                     transition={{ delay: 0.25 }}
                     className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
                   >
-                    <div className="mb-3 flex items-center gap-2">
-                      <Target className="h-4 w-4 text-accent-cyan" />
-                      <h3 className="text-sm font-semibold text-text-primary">Price Targets</h3>
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Target className="h-4 w-4 text-accent-cyan" />
+                        <h3 className="text-sm font-semibold text-text-primary">Price Targets</h3>
+                      </div>
+                      <span className="text-[10px] uppercase tracking-wider text-text-muted">
+                        {result.price_targets.length} levels
+                      </span>
                     </div>
                     <div className="space-y-2">
-                      {result.price_targets.slice(0, 6).map((t, i) => (
+                      {result.price_targets.map((t, i) => (
                         <PriceTargetCard key={`${t.label}-${i}`} target={t} currentPrice={result.current_price} />
                       ))}
                     </div>

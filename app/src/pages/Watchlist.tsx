@@ -1,101 +1,101 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router';
 import {
-  TrendingUp,
-  TrendingDown,
-  Minus,
   Sparkles,
   Search,
   Plus,
   X,
   ArrowRight,
+  Trash2,
+  Flame,
+  Eye,
+  Zap,
 } from 'lucide-react';
 import Layout from '@/components/Layout';
 import Badge from '@/components/Badge';
+import { useWatchlist, type WatchlistItem } from '@/hooks/useWatchlist';
 
-interface WatchItem {
-  symbol: string;
-  name: string;
-  category: 'crypto' | 'stock';
-  price: number;
-  change24h: number;
-  recommendation: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell';
-  reason: string;
-}
-
-const defaultCrypto: WatchItem[] = [
-  { symbol: 'BTC/USD', name: 'Bitcoin', category: 'crypto', price: 97420, change24h: 2.4, recommendation: 'buy', reason: 'Breaking above key resistance with strong volume' },
-  { symbol: 'ETH/USD', name: 'Ethereum', category: 'crypto', price: 3650, change24h: 1.8, recommendation: 'buy', reason: 'ETF inflows accelerating; network activity high' },
-  { symbol: 'SOL/USD', name: 'Solana', category: 'crypto', price: 198, change24h: 5.2, recommendation: 'strong_buy', reason: 'DeFi TVL at ATH; developer activity surging' },
-  { symbol: 'ADA/USD', name: 'Cardano', category: 'crypto', price: 1.12, change24h: -0.8, recommendation: 'hold', reason: 'Consolidating after upgrade; wait for breakout' },
-  { symbol: 'LINK/USD', name: 'Chainlink', category: 'crypto', price: 21.40, change24h: 3.1, recommendation: 'buy', reason: 'Cross-chain interoperability demand growing' },
-  { symbol: 'AVAX/USD', name: 'Avalanche', category: 'crypto', price: 42.80, change24h: -1.2, recommendation: 'hold', reason: 'Subnet adoption steady but competition rising' },
-  { symbol: 'DOT/USD', name: 'Polkadot', category: 'crypto', price: 7.50, change24h: 0.5, recommendation: 'hold', reason: 'Parachain ecosystem maturing; flat price action' },
-  { symbol: 'POL/USD', name: 'Polygon', category: 'crypto', price: 0.52, change24h: 4.5, recommendation: 'buy', reason: 'POL migration complete; ZK rollup narrative' },
-  { symbol: 'DOGE/USD', name: 'Dogecoin', category: 'crypto', price: 0.18, change24h: -2.1, recommendation: 'sell', reason: 'Meme fatigue; declining social sentiment' },
-  { symbol: 'XRP/USD', name: 'XRP', category: 'crypto', price: 2.35, change24h: 1.2, recommendation: 'hold', reason: 'Legal clarity priced in; watch for ETF news' },
-];
-
-const defaultStocks: WatchItem[] = [
-  { symbol: 'AAPL', name: 'Apple', category: 'stock', price: 228.50, change24h: 0.9, recommendation: 'buy', reason: 'iPhone cycle + services growth; strong cash flow' },
-  { symbol: 'NVDA', name: 'NVIDIA', category: 'stock', price: 142.20, change24h: 3.5, recommendation: 'strong_buy', reason: 'AI datacenter demand insatiable; Blackwell ramping' },
-  { symbol: 'TSLA', name: 'Tesla', category: 'stock', price: 345.80, change24h: -1.4, recommendation: 'hold', reason: 'Robotaxi optimism vs. delivery uncertainty' },
-  { symbol: 'MSFT', name: 'Microsoft', category: 'stock', price: 432.10, change24h: 1.1, recommendation: 'buy', reason: 'Azure + Copilot monetization accelerating' },
-  { symbol: 'AMZN', name: 'Amazon', category: 'stock', price: 198.40, change24h: 0.7, recommendation: 'buy', reason: 'AWS margins expanding; retail efficiency gains' },
-  { symbol: 'META', name: 'Meta', category: 'stock', price: 595.20, change24h: 2.2, recommendation: 'buy', reason: 'Reels monetization + AI glasses narrative' },
-  { symbol: 'AMD', name: 'AMD', category: 'stock', price: 138.90, change24h: -0.5, recommendation: 'hold', reason: 'MI300 gaining share but valuation stretched' },
-  { symbol: 'GOOGL', name: 'Alphabet', category: 'stock', price: 178.30, change24h: 0.4, recommendation: 'buy', reason: 'Search moat intact; Gemini improving rapidly' },
-  { symbol: 'NFLX', name: 'Netflix', category: 'stock', price: 785.60, change24h: 1.8, recommendation: 'buy', reason: 'Ad tier scaling; password-sharing crackdown working' },
-  { symbol: 'CRM', name: 'Salesforce', category: 'stock', price: 288.40, change24h: -0.9, recommendation: 'hold', reason: 'Agentforce promising but execution risk remains' },
-];
-
-function trendIcon(change: number) {
-  if (change > 1) return <TrendingUp className="h-4 w-4 text-success-green" />;
-  if (change < -1) return <TrendingDown className="h-4 w-4 text-danger-red" />;
-  return <Minus className="h-4 w-4 text-text-muted" />;
-}
+const SOURCE_BADGES: Record<
+  string,
+  { label: string; className: string; icon: React.ComponentType<{ className?: string }> }
+> = {
+  squeeze: {
+    label: 'Squeeze',
+    className: 'bg-accent-cyan/15 text-accent-cyan border-accent-cyan/40',
+    icon: Flame,
+  },
+  scanner: {
+    label: 'Scanner',
+    className: 'bg-success-green/15 text-success-green border-success-green/40',
+    icon: Zap,
+  },
+  advisor: {
+    label: 'Advisor',
+    className: 'bg-warning-amber/15 text-warning-amber border-warning-amber/40',
+    icon: Sparkles,
+  },
+  manual: {
+    label: 'Manual',
+    className: 'bg-bg-elevated text-text-muted border-border-subtle',
+    icon: Eye,
+  },
+};
 
 export default function Watchlist() {
-  const [tab, setTab] = useState<'crypto' | 'stock'>('crypto');
+  const navigate = useNavigate();
+  const { items, loading, refresh, add, remove } = useWatchlist();
+  const [tab, setTab] = useState<'all' | 'crypto' | 'stock'>('all');
   const [query, setQuery] = useState('');
-  const [customItems, setCustomItems] = useState<WatchItem[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [newSymbol, setNewSymbol] = useState('');
-  const navigate = useNavigate();
+  const [newAssetType, setNewAssetType] = useState<'stock' | 'crypto'>('stock');
 
-  const baseList = tab === 'crypto' ? defaultCrypto : defaultStocks;
-  const allItems = [...baseList, ...customItems.filter((i) => i.category === tab)];
+  const filtered = useMemo(() => {
+    let list = items;
+    if (tab !== 'all') list = list.filter((it) => it.asset_type === tab);
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(
+        (it) =>
+          it.symbol.toLowerCase().includes(q) ||
+          (it.note ?? '').toLowerCase().includes(q),
+      );
+    }
+    return list;
+  }, [items, tab, query]);
 
-  const filtered = query.trim()
-    ? allItems.filter(
-        (i) =>
-          i.symbol.toLowerCase().includes(query.toLowerCase()) ||
-          i.name.toLowerCase().includes(query.toLowerCase())
-      )
-    : allItems;
-
-  const handleAnalyze = (symbol: string, assetType: 'crypto' | 'stock') => {
-    navigate('/advisor', { state: { symbol, assetType } });
+  const handleAnalyze = (symbol: string, asset_type: 'stock' | 'crypto') => {
+    navigate('/advisor', { state: { symbol, assetType: asset_type } });
   };
 
-  const handleAddCustom = () => {
+  const handleAddCustom = async () => {
     const sym = newSymbol.trim().toUpperCase();
     if (!sym) return;
-    const isCrypto = sym.includes('/') || sym.includes('-') || sym.endsWith('USD') || sym.endsWith('USDT');
-    const item: WatchItem = {
-      symbol: sym,
-      name: sym,
-      category: isCrypto ? 'crypto' : 'stock',
-      price: 0,
-      change24h: 0,
-      recommendation: 'hold',
-      reason: 'Custom watchlist item — run Advisor for full analysis',
-    };
-    setCustomItems((prev) => [...prev, item]);
-    setNewSymbol('');
-    setShowAdd(false);
+    try {
+      await add(sym, newAssetType, { source: 'manual' });
+      setNewSymbol('');
+      setShowAdd(false);
+      refresh().catch(() => {});
+    } catch {
+      /* errors surfaced via the hook */
+    }
   };
+
+  const handleRemove = async (it: WatchlistItem) => {
+    await remove(it.symbol, it.asset_type);
+    refresh().catch(() => {});
+  };
+
+  const counts = useMemo(() => {
+    let crypto = 0;
+    let stock = 0;
+    for (const it of items) {
+      if (it.asset_type === 'crypto') crypto++;
+      else if (it.asset_type === 'stock') stock++;
+    }
+    return { all: items.length, crypto, stock };
+  }, [items]);
 
   return (
     <Layout title="Watchlist">
@@ -104,15 +104,15 @@ export default function Watchlist() {
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          className="text-center"
         >
-          <h2 className="text-xl font-bold text-text-primary">Assets to Watch</h2>
+          <h2 className="text-xl font-bold text-text-primary">Watchlist</h2>
           <p className="mt-1 text-sm text-text-muted">
-            Curated recommendations with trend signals. Click <strong>Analyze</strong> for a deep dive.
+            Symbols you've flagged across the app — manual adds plus picks
+            promoted from the Squeeze and Scanner pages.
           </p>
         </motion.div>
 
-        {/* Tabs + Search */}
+        {/* Tabs + Search + Add */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -121,26 +121,22 @@ export default function Watchlist() {
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-1 rounded-md bg-bg-input border border-border-subtle p-0.5">
-              <button
-                onClick={() => setTab('crypto')}
-                className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
-                  tab === 'crypto'
-                    ? 'bg-bg-elevated text-accent-cyan'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-              >
-                Crypto
-              </button>
-              <button
-                onClick={() => setTab('stock')}
-                className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
-                  tab === 'stock'
-                    ? 'bg-bg-elevated text-accent-cyan'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-              >
-                Stocks
-              </button>
+              {(['all', 'stock', 'crypto'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                    tab === t
+                      ? 'bg-bg-elevated text-accent-cyan'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  {t === 'all' ? 'All' : t === 'stock' ? 'Stocks' : 'Crypto'}
+                  <span className="ml-1.5 text-[10px] text-text-muted">
+                    {t === 'all' ? counts.all : t === 'stock' ? counts.stock : counts.crypto}
+                  </span>
+                </button>
+              ))}
             </div>
 
             <div className="flex items-center gap-2">
@@ -167,13 +163,21 @@ export default function Watchlist() {
           {/* Add custom */}
           {showAdd && (
             <div className="mt-3 flex items-center gap-2">
+              <select
+                value={newAssetType}
+                onChange={(e) => setNewAssetType(e.target.value as 'stock' | 'crypto')}
+                className="rounded-md border border-border-subtle bg-bg-input py-1.5 px-2 text-xs text-text-primary focus:border-accent-cyan focus:outline-none"
+              >
+                <option value="stock">Stock</option>
+                <option value="crypto">Crypto</option>
+              </select>
               <input
                 type="text"
-                placeholder="Symbol (e.g. BTC/USD or AAPL)"
+                placeholder="Ticker (e.g. RXT or BTC)"
                 value={newSymbol}
-                onChange={(e) => setNewSymbol(e.target.value)}
+                onChange={(e) => setNewSymbol(e.target.value.toUpperCase())}
                 onKeyDown={(e) => e.key === 'Enter' && handleAddCustom()}
-                className="flex-1 rounded-md border border-border-subtle bg-bg-input py-1.5 px-3 text-xs text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+                className="flex-1 rounded-md border border-border-subtle bg-bg-input py-1.5 px-3 text-xs font-mono text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
               />
               <button
                 onClick={handleAddCustom}
@@ -182,7 +186,10 @@ export default function Watchlist() {
                 Add
               </button>
               <button
-                onClick={() => { setShowAdd(false); setNewSymbol(''); }}
+                onClick={() => {
+                  setShowAdd(false);
+                  setNewSymbol('');
+                }}
                 className="rounded-md border border-border-subtle bg-bg-input px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-elevated transition-colors"
               >
                 <X className="h-3.5 w-3.5" />
@@ -191,62 +198,91 @@ export default function Watchlist() {
           )}
         </motion.div>
 
+        {/* Empty / loading states */}
+        {loading && items.length === 0 && (
+          <div className="flex h-48 flex-col items-center justify-center rounded-[10px] border border-border-subtle bg-bg-surface text-text-muted text-sm">
+            Loading watchlist…
+          </div>
+        )}
+
+        {!loading && items.length === 0 && (
+          <div className="flex h-48 flex-col items-center justify-center rounded-[10px] border border-border-subtle bg-bg-surface gap-2">
+            <Eye className="h-7 w-7 text-text-muted" />
+            <p className="text-sm text-text-primary">Your watchlist is empty</p>
+            <p className="text-xs text-text-muted text-center max-w-xs">
+              Add symbols manually with the <strong>Add</strong> button, or promote
+              picks from the <strong>Squeeze</strong> screener.
+            </p>
+          </div>
+        )}
+
         {/* Grid */}
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {filtered.map((item, idx) => (
-            <motion.div
-              key={item.symbol}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.03 }}
-              className="rounded-[10px] border border-border-subtle bg-bg-surface p-4"
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-semibold text-text-primary">{item.symbol}</h3>
-                    <Badge variant="neutral">Watchlist</Badge>
-                  </div>
-                  <p className="text-xs text-text-muted">{item.name}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-semibold text-text-primary">
-                    ${item.price > 1 ? item.price.toLocaleString() : item.price.toFixed(4)}
-                  </p>
-                  <p
-                    className={`flex items-center justify-end gap-1 text-xs ${
-                      item.change24h >= 0 ? 'text-success-green' : 'text-danger-red'
-                    }`}
-                  >
-                    {trendIcon(item.change24h)}
-                    {item.change24h >= 0 ? '+' : ''}
-                    {item.change24h.toFixed(2)}%
-                  </p>
-                </div>
-              </div>
-
-              <p className="mt-2 text-xs text-text-secondary leading-relaxed">
-                Click Analyze for a real-time AI recommendation based on 16+ technical indicators.
-              </p>
-
-              <div className="mt-3 flex items-center justify-end">
-                <button
-                  onClick={() => handleAnalyze(item.symbol, item.category)}
-                  className="inline-flex items-center gap-1 rounded-md bg-accent-cyan/10 px-3 py-1.5 text-xs font-medium text-accent-cyan hover:bg-accent-cyan/20 transition-colors"
+        {filtered.length > 0 && (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {filtered.map((it, idx) => {
+              const meta = SOURCE_BADGES[it.source] || SOURCE_BADGES.manual;
+              const Icon = meta.icon;
+              return (
+                <motion.div
+                  key={`${it.symbol}-${it.asset_type}`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.03 }}
+                  className="rounded-[10px] border border-border-subtle bg-bg-surface p-4"
                 >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Analyze
-                  <ArrowRight className="h-3 w-3" />
-                </button>
-              </div>
-            </motion.div>
-          ))}
-        </div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-mono text-sm font-semibold text-accent-cyan">
+                          {it.symbol}
+                        </h3>
+                        <Badge variant={it.asset_type === 'crypto' ? 'cyan' : 'info'}>
+                          {it.asset_type}
+                        </Badge>
+                        <span
+                          className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${meta.className}`}
+                        >
+                          <Icon className="h-2.5 w-2.5" />
+                          {meta.label}
+                        </span>
+                      </div>
+                      {it.note && (
+                        <p className="mt-1 text-xs text-text-muted leading-snug truncate">
+                          {it.note}
+                        </p>
+                      )}
+                      <p className="mt-1 text-[10px] text-text-muted">
+                        Added {new Date(it.added_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleRemove(it)}
+                      title="Remove from watchlist"
+                      className="rounded-md p-1.5 text-text-muted hover:bg-danger-red/10 hover:text-danger-red transition-colors"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
 
-        {filtered.length === 0 && (
-          <div className="flex h-48 flex-col items-center justify-center rounded-[10px] border border-border-subtle bg-bg-surface">
-            <Search className="h-8 w-8 text-text-muted" />
-            <p className="mt-2 text-sm text-text-muted">No assets match your filter</p>
+                  <div className="mt-3 flex items-center justify-end">
+                    <button
+                      onClick={() => handleAnalyze(it.symbol, it.asset_type)}
+                      className="inline-flex items-center gap-1 rounded-md bg-accent-cyan/10 px-3 py-1.5 text-xs font-medium text-accent-cyan hover:bg-accent-cyan/20 transition-colors"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      Analyze
+                      <ArrowRight className="h-3 w-3" />
+                    </button>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
+
+        {items.length > 0 && filtered.length === 0 && (
+          <div className="flex h-32 flex-col items-center justify-center rounded-[10px] border border-border-subtle bg-bg-surface text-sm text-text-muted">
+            No items match your filter.
           </div>
         )}
       </div>

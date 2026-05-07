@@ -208,6 +208,96 @@ async def get_positions(account_id: str) -> List[PositionResponse]:
         raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
 
 
+@router.post("/{account_id}/flatten")
+async def flatten_positions(
+    account_id: str,
+    symbols: str | None = None,
+    confirm: bool = False,
+) -> Dict[str, Any]:
+    """Close one or more open positions via market sell.
+
+    Pass ``symbols=RXT,AAPL`` (comma-separated) to flatten specific names, or
+    omit ``symbols`` AND set ``confirm=true`` to flatten ALL open positions.
+    Without either, the request errors so a typo can't accidentally close the
+    whole book. Returns a per-symbol success / failure breakdown.
+
+    Use this to clean up over-sized positions caused by duplicate same-side
+    entries (now prevented by the ``BaseStrategy`` position-aware gate). Bots
+    will re-enter cleanly on the next valid signal — single-lot this time.
+    """
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+
+    from datetime import datetime, timezone
+    import uuid as _uuid
+    from bot.orders import Order, OrderSide, OrderType, OrderStatus
+
+    try:
+        portfolio = engine.get_portfolio(account_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+
+    all_positions = portfolio.get_all_positions()
+    open_positions = [p for p in all_positions if getattr(p, "status", "") == "open" and p.size > 0]
+
+    target_set: set[str] = set()
+    if symbols:
+        target_set = {s.strip().upper() for s in symbols.split(",") if s.strip()}
+    elif not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Refusing to flatten ALL positions without ?confirm=true. "
+                   "Pass ?symbols=RXT,AAPL for a targeted flatten or ?confirm=true to close everything.",
+        )
+    if target_set:
+        candidates = [p for p in open_positions if p.symbol.upper() in target_set]
+    else:
+        candidates = list(open_positions)
+
+    closed: List[Dict[str, Any]] = []
+    failed: List[Dict[str, Any]] = []
+    for pos in candidates:
+        try:
+            order = Order(
+                id=str(_uuid.uuid4()),
+                symbol=pos.symbol,
+                side=OrderSide.SELL,
+                order_type=OrderType.MARKET,
+                quantity=float(pos.size),
+                price=None,
+                stop_price=None,
+                created_at=datetime.now(timezone.utc),
+                strategy_id="manual_flatten",
+                account_id=account_id,
+            )
+            # In live mode the engine routes to broker on execute_order;
+            # in paper mode it fills locally.
+            try:
+                fill = engine.execute_order(order)
+            except TypeError:
+                # Paper engine signature is (order, current_price)
+                fill = engine.execute_order(order, getattr(pos, "current_price", 0.0) or 0.0)
+            filled_qty = getattr(fill, "filled_qty", 0.0) if fill else 0.0
+            status = order.status.value if hasattr(order.status, "value") else str(order.status)
+            closed.append({
+                "symbol": pos.symbol,
+                "qty": filled_qty,
+                "status": status,
+                "order_id": order.id,
+            })
+        except Exception as exc:
+            failed.append({"symbol": pos.symbol, "error": str(exc)[:200]})
+            logger.warning("flatten %s failed: %s", pos.symbol, exc)
+
+    return {
+        "account_id": account_id,
+        "requested": sorted(target_set) if target_set else "ALL",
+        "closed": closed,
+        "failed": failed,
+        "remaining_positions": len(open_positions) - len(closed),
+    }
+
+
 @router.get("/{account_id}/snapshots")
 async def get_snapshots(account_id: str) -> Dict[str, Any]:
     """Get portfolio snapshots (simplified)."""

@@ -12,6 +12,7 @@ const BotLab = lazy(() => import('./pages/BotLab'))
 const NewsSentiment = lazy(() => import('./pages/NewsSentiment'))
 const About = lazy(() => import('./pages/About'))
 const Advisor = lazy(() => import('./pages/Advisor'))
+const Squeeze = lazy(() => import('./pages/Squeeze'))
 const SettingsPage = lazy(() => import('./pages/Settings'))
 const Watchlist = lazy(() => import('./pages/Watchlist'))
 
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/watchlist" element={<Watchlist />} />
           <Route path="/advisor" element={<Advisor />} />
+          <Route path="/squeeze" element={<Squeeze />} />
           <Route path="/paper" element={<PaperTrading />} />
           <Route path="/strategies" element={<Strategies />} />
           <Route path="/backtest" element={<Backtest />} />
