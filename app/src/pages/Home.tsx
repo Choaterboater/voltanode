@@ -354,15 +354,35 @@ export default function Home() {
       key: 'pnl',
       header: 'P&L',
       render: (row: Trade) => (
-        <span
-          className={`font-mono text-sm tabular-nums ${
-            row.pnl >= 0 ? 'text-success-green' : 'text-danger-red'
-          }`}
-        >
-          {row.pnl >= 0 ? '+' : ''}
-          {formatCurrency(row.pnl)}
-        </span>
+        row.pnl === 0 ? (
+          <span className="font-mono text-xs text-text-muted">open</span>
+        ) : (
+          <span
+            className={`font-mono text-sm tabular-nums ${
+              row.pnl >= 0 ? 'text-success-green' : 'text-danger-red'
+            }`}
+          >
+            {row.pnl >= 0 ? '+' : ''}
+            {formatCurrency(row.pnl)}
+          </span>
+        )
       ),
+    },
+    {
+      key: 'strategy',
+      header: 'Bot',
+      render: (row: Trade) => {
+        // Show the strategy_type prefix (e.g. "simple_trend") for readability
+        // — full id with timestamp is long. Falls back to "Manual" for
+        // operator-initiated orders (flatten, etc.).
+        const sid = String(row.strategy ?? '');
+        const short = sid.split('_').slice(0, -1).join('_') || sid || 'Manual';
+        return (
+          <span className="font-mono text-[11px] text-text-secondary truncate max-w-[140px] inline-block" title={sid}>
+            {short}
+          </span>
+        );
+      },
     },
   ];
 
@@ -460,38 +480,47 @@ export default function Home() {
           <MetricCard
             label="Win Rate (30D)"
             value={perfMetrics.winRate === null ? '—' : formatPercent(perfMetrics.winRate)}
-            delta={perfMetrics.totalTrades === 0 ? 'no closed trades' : `${perfMetrics.totalTrades} closed`}
+            delta={perfMetrics.totalTrades === 0 ? 'awaiting closes' : `${perfMetrics.totalTrades} closed`}
             deltaTone="neutral"
             icon={<Target className="h-5 w-5" />}
             delay={0.24}
           >
-            <div className="flex items-center gap-3">
-              <DonutChart percentage={perfMetrics.winRate ?? 0} />
-              <span className="text-xs text-text-muted">Win Rate</span>
-            </div>
+            {perfMetrics.winRate === null ? (
+              <div className="flex items-center gap-3 text-xs text-text-muted">
+                <div className="h-12 w-12 rounded-full border-2 border-dashed border-border-subtle" />
+                <span>No closed trades<br/>yet — donut fills in once<br/>SELL fills land.</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <DonutChart percentage={perfMetrics.winRate} />
+                <span className="text-xs text-text-muted">Win Rate</span>
+              </div>
+            )}
           </MetricCard>
         </div>
 
         {/* Section 2: Portfolio Overview */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-5 xl:gap-5">
-          {/* Left: Equity Curve Chart */}
+          {/* Left: Equity Curve Chart — col-span-2 (was 3) so the right
+              column gets more breathing room for the Allocation +
+              Performance widgets. Height also dropped a bit. */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.4, delay: 0.3 }}
-            className="rounded-[10px] border border-border-subtle bg-bg-surface p-5 lg:col-span-3"
+            className="rounded-[10px] border border-border-subtle bg-bg-surface p-5 lg:col-span-2"
           >
             <div className="mb-4">
               <h2 className="text-base font-semibold text-text-primary">Portfolio Equity</h2>
               <p className="text-xs text-text-muted">Paper account performance over time</p>
             </div>
             {equityCurve.length === 0 ? (
-              <div className="flex h-[320px] xl:h-[380px] flex-col items-center justify-center gap-2 text-center text-text-muted">
+              <div className="flex h-[240px] xl:h-[280px] flex-col items-center justify-center gap-2 text-center text-text-muted">
                 <p className="text-sm">No equity history yet</p>
                 <p className="text-xs">Snapshots accumulate once the engine has been running for a few minutes.</p>
               </div>
             ) : (
-            <div className="h-[320px] xl:h-[380px]">
+            <div className="h-[240px] xl:h-[280px]">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={equityCurve} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                   <defs>
@@ -540,7 +569,7 @@ export default function Home() {
           </motion.div>
 
           {/* Right: Allocation + Key Stats */}
-          <div className="flex flex-col gap-4 lg:col-span-2">
+          <div className="flex flex-col gap-4 lg:col-span-3">
             {/* Asset Allocation */}
             <motion.div
               initial={{ opacity: 0 }}
@@ -663,10 +692,31 @@ export default function Home() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {strategies.slice(0, 4).map((bot, index) => {
+              {/* Order: is_active first, then by total_trades desc — surfaces
+                  bots that are actually doing something instead of the
+                  arbitrary registration order. */}
+              {[...strategies]
+                .sort((a, b) => {
+                  if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+                  const at = Number(((a.metrics as Record<string, number>) || {}).total_trades ?? 0);
+                  const bt = Number(((b.metrics as Record<string, number>) || {}).total_trades ?? 0);
+                  return bt - at;
+                })
+                .slice(0, 4)
+                .map((bot, index) => {
                 const metrics = bot.metrics as Record<string, number> | null;
                 const pnl = Number(metrics?.total_pnl ?? 0);
-                const pair = String((bot.config as Record<string, unknown>)?.symbol ?? '—');
+                const cfg = (bot.config as Record<string, unknown>) || {};
+                // Multi-symbol bots store symbols in ``config.symbols`` (array);
+                // single-symbol legacy bots use ``config.symbol``. Show first 3
+                // + "+N more" so the card width stays clean.
+                const symList = Array.isArray(cfg.symbols)
+                  ? (cfg.symbols as string[])
+                  : (cfg.symbol ? [String(cfg.symbol)] : []);
+                const pairDisplay =
+                  symList.length === 0 ? '—'
+                  : symList.length <= 3 ? symList.join(', ')
+                  : `${symList.slice(0, 3).join(', ')} +${symList.length - 3}`;
                 const status: 'running' | 'paused' = bot.is_active ? 'running' : 'paused';
                 return (
                   <motion.div
@@ -680,10 +730,15 @@ export default function Home() {
                     }}
                     className="rounded-[10px] border border-border-subtle bg-bg-surface p-5 transition-all hover:-translate-y-0.5 hover:border-accent-cyan/20"
                   >
-                    <div className="flex items-start justify-between">
-                      <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
                         <Badge variant="cyan">{bot.strategy_type}</Badge>
-                        <p className="mt-2 font-mono text-sm text-text-primary">{pair}</p>
+                        <p
+                          className="mt-2 font-mono text-xs text-text-primary truncate"
+                          title={symList.join(', ')}
+                        >
+                          {pairDisplay}
+                        </p>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <StatusDot status={status} />

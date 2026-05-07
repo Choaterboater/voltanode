@@ -125,16 +125,21 @@ function mapTickers(prices: ApiPrice[]): MarketTicker[] {
 }
 
 function mapTrades(trades: ApiTrade[]): Trade[] {
-  return trades.map((t) => ({
-    id: t.id,
-    time: new Date(t.timestamp).toLocaleTimeString('en-US', { hour12: false }),
-    symbol: t.symbol.replace('-', '/'),
-    side: t.side === 'BUY' ? 'long' : 'short',
-    price: t.price,
-    size: t.quantity,
-    pnl: t.realized_pnl ?? 0,
-    strategy: t.strategy_id ?? 'Manual',
-  }));
+  return trades.map((t) => {
+    // Backend ``OrderSide`` enum serializes lowercase ('buy'/'sell'); the
+    // older comparison against 'BUY' bucketed everything as 'short'.
+    const sideRaw = String(t.side ?? '').toLowerCase();
+    return {
+      id: t.id,
+      time: new Date(t.timestamp).toLocaleTimeString('en-US', { hour12: false }),
+      symbol: t.symbol.replace('-', '/'),
+      side: sideRaw === 'buy' ? 'long' : 'short',
+      price: t.price,
+      size: t.quantity,
+      pnl: t.realized_pnl ?? 0,
+      strategy: t.strategy_id ?? 'Manual',
+    };
+  });
 }
 
 export function useDashboardData() {
