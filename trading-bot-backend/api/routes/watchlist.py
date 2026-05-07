@@ -80,6 +80,94 @@ async def list_watchlist(asset_type: Optional[str] = None) -> List[Dict[str, Any
     return items
 
 
+@router.get("/enriched")
+async def list_watchlist_enriched(
+    asset_type: Optional[str] = None,
+    concurrency: int = 4,
+) -> Dict[str, Any]:
+    """Return watchlist with live market data appended per row.
+
+    Fetches recent OHLCV for each symbol in parallel, then attaches:
+      * ``current_price``
+      * ``day_pct_change`` (latest close vs prior close)
+      * ``week_pct_change`` (latest close vs 5 trading days ago)
+      * ``sparkline`` — last 20 daily closes for the inline chart
+      * ``relative_volume`` — current bar volume vs trailing-20 mean
+
+    Same shape the Squeeze page renders, so the Watchlist UI can reuse
+    the same Sparkline + sortable-table pattern.
+    """
+    import asyncio
+    from data.cache import DataCache
+    from data.fetcher import MarketData
+    from bot.config import BotConfig
+
+    base = await list_watchlist(asset_type=asset_type)
+    if not base:
+        return {"items": [], "errors": []}
+
+    market_data = MarketData(cache=DataCache(cache_dir="./data/cache"), config=BotConfig())
+    sem = asyncio.Semaphore(max(1, min(20, concurrency)))
+
+    async def _enrich_one(item: Dict[str, Any]) -> Dict[str, Any]:
+        sym = str(item.get("symbol", "")).strip().upper()
+        atype = str(item.get("asset_type", "stock")).lower()
+        out: Dict[str, Any] = dict(item)
+        out["current_price"] = None
+        out["day_pct_change"] = None
+        out["week_pct_change"] = None
+        out["sparkline"] = None
+        out["relative_volume"] = None
+        out["fetch_error"] = None
+        async with sem:
+            try:
+                if atype == "crypto":
+                    df = await market_data.get_crypto_ohlcv(
+                        sym, vs_currency="usd", days=30, interval="daily"
+                    )
+                else:
+                    df = await asyncio.to_thread(
+                        market_data.get_stock_ohlcv, sym, "3mo", "1d"
+                    )
+                if df is None or df.empty:
+                    out["fetch_error"] = "no_data"
+                    return out
+                df = df.copy()
+                df.columns = [str(c).lower() for c in df.columns]
+                if len(df) >= 1:
+                    out["current_price"] = float(df["close"].iloc[-1])
+                if len(df) >= 2 and df["close"].iloc[-2] > 0:
+                    out["day_pct_change"] = float(
+                        (df["close"].iloc[-1] - df["close"].iloc[-2]) / df["close"].iloc[-2]
+                    )
+                if len(df) >= 6 and df["close"].iloc[-6] > 0:
+                    out["week_pct_change"] = float(
+                        (df["close"].iloc[-1] - df["close"].iloc[-6]) / df["close"].iloc[-6]
+                    )
+                if len(df) >= 20:
+                    out["sparkline"] = [
+                        float(x) for x in df["close"].tail(20).tolist()
+                        if x is not None and x == x
+                    ]
+                if "volume" in df.columns and len(df) >= 21:
+                    cur_v = float(df["volume"].iloc[-1])
+                    avg_v = float(df["volume"].iloc[-21:-1].mean())
+                    if avg_v > 0:
+                        out["relative_volume"] = cur_v / avg_v
+            except Exception as exc:
+                out["fetch_error"] = str(exc)[:140]
+                logger.debug("watchlist enriched: %s failed: %s", sym, exc)
+        return out
+
+    enriched = await asyncio.gather(*(_enrich_one(it) for it in base))
+    errors = [
+        {"symbol": e.get("symbol"), "error": e["fetch_error"]}
+        for e in enriched
+        if e.get("fetch_error")
+    ]
+    return {"items": enriched, "errors": errors}
+
+
 @router.post("/")
 async def add_to_watchlist(req: WatchlistAddRequest) -> Dict[str, Any]:
     """Add a ticker to the watchlist. Idempotent — re-adding refreshes the

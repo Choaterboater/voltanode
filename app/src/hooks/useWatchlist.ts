@@ -10,6 +10,15 @@ export interface WatchlistItem {
   added_at: string;
 }
 
+export interface EnrichedWatchlistItem extends WatchlistItem {
+  current_price: number | null;
+  day_pct_change: number | null;
+  week_pct_change: number | null;
+  sparkline: number[] | null;
+  relative_volume: number | null;
+  fetch_error: string | null;
+}
+
 // Module-level event bus so cross-page mutations refresh automatically
 // (e.g. when the Squeeze page adds an item, the Watchlist page sees it).
 const _listeners = new Set<() => void>();
@@ -111,5 +120,22 @@ export function useWatchlist(autoload = true) {
     };
   }, [autoload, refresh]);
 
-  return { items, loading, error, refresh, add, remove, contains };
+  /**
+   * Fetch watchlist items with live price + day_pct + sparkline attached.
+   * Used by the Watchlist page table view.
+   */
+  const fetchEnriched = useCallback(
+    async (filterAssetType?: 'stock' | 'crypto'): Promise<EnrichedWatchlistItem[]> => {
+      const url = filterAssetType
+        ? `${API_BASE}/watchlist/enriched?asset_type=${filterAssetType}`
+        : `${API_BASE}/watchlist/enriched`;
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      return (d.items ?? []) as EnrichedWatchlistItem[];
+    },
+    [],
+  );
+
+  return { items, loading, error, refresh, add, remove, contains, fetchEnriched };
 }
