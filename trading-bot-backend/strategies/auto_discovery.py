@@ -74,6 +74,15 @@ class AutoDiscoveryStrategy(BaseStrategy):
         # Direction filter: "long_only" (default), "short_only", or "both". Most
         # paper/live brokers don't support shorting crypto so long_only is safe.
         "direction_mode": "long_only",
+        # Watchlist auto-include — merge symbols from data/watchlist.json
+        # whose ``source`` is in ``watchlist_source_allowlist`` into the
+        # universe each tick. Lets external apps (e.g. an alerts pipeline
+        # POSTing to /watchlist/) get their picks auto-traded without
+        # requiring config edits. Manual entries are excluded by default
+        # so a typo can't fire a real order.
+        "include_watchlist": False,
+        "watchlist_source_allowlist": ["squeeze", "scanner", "tradingbot"],
+        "watchlist_refresh_seconds": 60,
     }
 
     def __init__(self, *args, **kwargs):
@@ -88,10 +97,73 @@ class AutoDiscoveryStrategy(BaseStrategy):
                 else list(DEFAULT_CRYPTO_UNIVERSE)
             )
 
+        # Watchlist-merge cache — populated lazily in configured_symbols().
+        self._watchlist_cache: list = []
+        self._watchlist_cache_at: float = 0.0
+
         # Per-symbol last-emitted side and bar latches — same shape as SimpleTrend.
         self._last_side: Dict[str, str] = {}        # symbol → "entered" | "exited" | "neutral"
         self._last_signal_bar: Dict[str, Any] = {}  # symbol → bar timestamp
         self._last_fire_ts: Dict[str, pd.Timestamp] = {}  # symbol → last fire time
+
+    def configured_symbols(self) -> list:
+        """Return the symbols this bot is scoped to, optionally merged with
+        watchlist entries whose ``source`` matches the allowlist.
+
+        Refreshes the watchlist read every ``watchlist_refresh_seconds`` to
+        avoid hitting disk on every tick (the engine's tick loop calls this
+        per iteration).
+        """
+        base_symbols = super().configured_symbols()
+        if not self.config.get("include_watchlist", False):
+            return base_symbols
+
+        import time
+        import json
+        from pathlib import Path
+
+        ttl = float(self.config.get("watchlist_refresh_seconds", 60))
+        now = time.time()
+        if now - self._watchlist_cache_at > ttl:
+            self._watchlist_cache_at = now
+            try:
+                path = Path("data") / "watchlist.json"
+                if path.exists():
+                    raw = json.loads(path.read_text())
+                    if not isinstance(raw, list):
+                        raw = []
+                    asset_class = str(self.config.get("asset_class", "crypto")).lower()
+                    allowed = {
+                        s.strip().lower()
+                        for s in self.config.get("watchlist_source_allowlist") or []
+                        if s
+                    }
+                    cache: list = []
+                    for it in raw:
+                        if not isinstance(it, dict):
+                            continue
+                        if str(it.get("asset_type", "")).lower() != asset_class:
+                            continue
+                        if allowed and str(it.get("source", "")).lower() not in allowed:
+                            continue
+                        sym = str(it.get("symbol", "")).strip().upper()
+                        if sym:
+                            cache.append(sym)
+                    self._watchlist_cache = cache
+                else:
+                    self._watchlist_cache = []
+            except Exception:
+                self._watchlist_cache = []
+
+        # Merge, dedupe, preserve order: configured symbols first, then
+        # watchlist additions.
+        seen: set = set()
+        merged: list = []
+        for s in list(base_symbols) + list(self._watchlist_cache):
+            if s not in seen:
+                seen.add(s)
+                merged.append(s)
+        return merged
 
     def _hold(self, symbol: str, trigger: str, **meta: Any) -> Signal:
         """Helper: HOLD signal with metadata."""
