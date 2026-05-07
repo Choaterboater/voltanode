@@ -256,7 +256,14 @@ async def flatten_positions(
 
     closed: List[Dict[str, Any]] = []
     failed: List[Dict[str, Any]] = []
-    for pos in candidates:
+    # Throttle so a multi-symbol flatten doesn't blow past the
+    # max_orders_per_minute safety cap (default 300/min). 0.3s spacing =
+    # 200 orders/min — well under the cap, leaving headroom for normal
+    # tick-loop strategy orders running concurrently.
+    import asyncio as _asyncio
+    for i, pos in enumerate(candidates):
+        if i > 0:
+            await _asyncio.sleep(0.35)
         try:
             order = Order(
                 id=str(_uuid.uuid4()),

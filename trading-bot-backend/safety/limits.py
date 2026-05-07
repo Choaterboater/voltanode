@@ -120,14 +120,24 @@ class SafetyValidator:
         # 3. Position size check
         # Portfolio doesn't have total_equity as property; compute from balances
         total_equity = sum(portfolio.get_all_balances().values()) or 1.0
-        # For price, we can't ask portfolio directly — use order price or fallback
-        price = order.price or 1.0
-        order_notional = order.quantity * price
-        position_size_pct = (order_notional / total_equity) * 100.0 if total_equity > 0 else 0.0
-        if position_size_pct > cfg.max_position_size_pct:
-            raise SafetyValidationError(
-                f"Position size {position_size_pct:.2f}% exceeds limit {cfg.max_position_size_pct}%."
-            )
+        # For price, prefer the order price; if missing (market order), look
+        # up the live price from the existing position's mark — falling back
+        # to 1.0 makes sub-dollar tokens (SHIB at $0.0000064) look like
+        # 39,000% position-size violations. Last resort: skip the check.
+        price = order.price
+        if not price or price <= 0:
+            try:
+                pos = portfolio.get_position(order.symbol)
+                price = float(getattr(pos, "current_price", 0) or getattr(pos, "entry_price", 0) or 0)
+            except Exception:
+                price = 0
+        order_notional = order.quantity * price if price > 0 else 0
+        if order_notional > 0:
+            position_size_pct = (order_notional / total_equity) * 100.0 if total_equity > 0 else 0.0
+            if position_size_pct > cfg.max_position_size_pct:
+                raise SafetyValidationError(
+                    f"Position size {position_size_pct:.2f}% exceeds limit {cfg.max_position_size_pct}%."
+                )
 
         # 4. Exposure check
         # SELL orders close (or reduce) a long position — they DECREASE

@@ -920,14 +920,18 @@ class LiveTradingEngine(PaperTradingEngine):
         # 4. Safety validation. If the rate-limit validator raises, mark
         # the order REJECTED so the on_tick polling loop stops retrying
         # forever (each retry consumes more rate budget, creating a
-        # deadlock).
+        # deadlock). Manual user actions (e.g. ``/portfolio/flatten``)
+        # tagged with ``strategy_id == "manual_flatten"`` bypass safety —
+        # they're an operator-initiated cleanup and shouldn't be blocked
+        # by the per-minute rate budget that strategy traffic shares.
         try:
-            self.safety_validator.validate_order(
-                order,
-                portfolio,
-                self.config,
-                self.daily_tracker.daily_pnl,
-            )
+            if (order.strategy_id or "") != "manual_flatten":
+                self.safety_validator.validate_order(
+                    order,
+                    portfolio,
+                    self.config,
+                    self.daily_tracker.daily_pnl,
+                )
         except SafetyValidationError as sv_exc:
             order.status = OrderStatus.REJECTED
             self.submit_order(order, order.account_id)
