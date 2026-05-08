@@ -376,8 +376,21 @@ async def attach_stops(
             new_stop = anchor * (1 + stop_pct)
             new_tp = p.entry_price * (1 - tp_pct)
 
-        p.stop_loss = round(new_stop, 4)
-        p.take_profit = round(new_tp, 4)
+        # Magnitude-aware rounding so sub-cent tokens (SHIB at 6.35e-06)
+        # don't lose all precision and end up with stop=0. Plain
+        # ``round(x, 4)`` truncated those to 0.0.
+        def _round_price(x: float) -> float:
+            ax = abs(x)
+            if ax < 1e-4:
+                return round(x, 10)
+            if ax < 0.01:
+                return round(x, 8)
+            if ax < 1:
+                return round(x, 6)
+            return round(x, 4)
+
+        p.stop_loss = _round_price(new_stop)
+        p.take_profit = _round_price(new_tp)
         updated.append({
             "symbol": p.symbol,
             "side": side_val,

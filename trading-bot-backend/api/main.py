@@ -358,12 +358,20 @@ def create_app() -> FastAPI:
                     if has_stop or has_tp or pos.entry_price <= 0:
                         continue
                     is_long = getattr(pos.side, "value", str(pos.side)).lower() == "long"
+                    # Magnitude-aware rounding — sub-cent tokens (SHIB)
+                    # need more decimals to avoid round-to-zero.
+                    def _rp(x: float) -> float:
+                        ax = abs(x)
+                        if ax < 1e-4: return round(x, 10)
+                        if ax < 0.01: return round(x, 8)
+                        if ax < 1:    return round(x, 6)
+                        return round(x, 4)
                     if is_long:
-                        pos.stop_loss = round(pos.entry_price * (1 - 0.08), 4)
-                        pos.take_profit = round(pos.entry_price * (1 + 0.30), 4)
+                        pos.stop_loss = _rp(pos.entry_price * (1 - 0.08))
+                        pos.take_profit = _rp(pos.entry_price * (1 + 0.30))
                     else:
-                        pos.stop_loss = round(pos.entry_price * (1 + 0.08), 4)
-                        pos.take_profit = round(pos.entry_price * (1 - 0.30), 4)
+                        pos.stop_loss = _rp(pos.entry_price * (1 + 0.08))
+                        pos.take_profit = _rp(pos.entry_price * (1 - 0.30))
                     attached += 1
                 if attached:
                     logger.info(f"Auto-attached default stops to {attached} restored position(s)")
