@@ -83,6 +83,20 @@ def _live_broker_to_response(account_id: str, eng: Any) -> PortfolioResponse | N
     # prices every tick (~5-15s) into _current_prices. Use those when newer.
     live_prices = getattr(eng, "_current_prices", {}) or {}
 
+    # Build a lookup of engine-side positions for stop_loss / take_profit
+    # graft. The broker doesn't echo our stops back, so /portfolio/default
+    # would show them as null even after attach-stops set real values
+    # (the engine's Position object carries them in memory).
+    engine_pos_by_sym: Dict[str, Any] = {}
+    try:
+        engine_portfolio = engine.get_portfolio(account_id)
+        for ep in engine_portfolio.get_all_positions():
+            if getattr(ep, "status", "") != "open":
+                continue
+            engine_pos_by_sym[ep.symbol.upper()] = ep
+    except Exception:
+        engine_pos_by_sym = {}
+
     positions: List[PositionResponse] = []
     for p in raw_positions:
         symbol = p.get("symbol", "")
@@ -107,6 +121,17 @@ def _live_broker_to_response(account_id: str, eng: Any) -> PortfolioResponse | N
             unrealized_pnl = sign * (current - entry) * abs(size)
         else:
             unrealized_pnl = float(p.get("unrealized_pl", p.get("unrealized_pnl", 0)) or 0)
+
+        # Graft stop_loss / take_profit from the engine's tracked Position
+        # if it has matching symbol. Try both the broker symbol and the
+        # canonical bot symbol (e.g. "BTCUSD" → also try "BTC").
+        engine_pos = (
+            engine_pos_by_sym.get(sym_upper)
+            or engine_pos_by_sym.get(canonical)
+        )
+        sl = getattr(engine_pos, "stop_loss", None) if engine_pos else None
+        tp = getattr(engine_pos, "take_profit", None) if engine_pos else None
+
         positions.append(
             PositionResponse(
                 symbol=symbol,
@@ -116,8 +141,8 @@ def _live_broker_to_response(account_id: str, eng: Any) -> PortfolioResponse | N
                 current_price=current,
                 unrealized_pnl=unrealized_pnl,
                 market_value=market_value,
-                stop_loss=None,
-                take_profit=None,
+                stop_loss=sl,
+                take_profit=tp,
             )
         )
 
