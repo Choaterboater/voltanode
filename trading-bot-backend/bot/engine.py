@@ -565,6 +565,50 @@ class PaperTradingEngine:
                     continue
                 pending.append((account_id, strategy, signal, order))
 
+        # Veto step 0 — post-close cooldown: drop BUY signals on any
+        # symbol where a SELL fill closed a position within the last
+        # ``post_close_cooldown_minutes`` window. Without this, a winning
+        # take-profit exit can immediately re-fire BUY on the same symbol
+        # at a higher price (the RXT round-trip: TP at $5.30 → +$17, then
+        # auto_discovery re-bought at $5.42 7min later → -$0.93). The
+        # cooldown gives the price action time to confirm before the bot
+        # gets back in.
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        cooldown_min = float(
+            getattr(self.config, "post_close_cooldown_minutes", None)
+            or (self.config.get("post_close_cooldown_minutes") if isinstance(self.config, dict) else 60)
+            or 60
+        )
+        cooldown_cut = _dt.now(_tz.utc) - _td(minutes=cooldown_min)
+        recent_close_symbols: set = set()
+        # Walk back through fills (most recent first) — bail once we're
+        # past the cooldown window so this stays O(window).
+        for f in reversed(self._fills[-200:]):
+            ts = f.timestamp
+            if hasattr(ts, "tzinfo") and ts.tzinfo is None:
+                ts = ts.replace(tzinfo=_tz.utc)
+            if ts < cooldown_cut:
+                break
+            side_v = getattr(f.side, "value", str(f.side)).lower()
+            if side_v == "sell":
+                recent_close_symbols.add(f.symbol)
+        cooldown_dropped: List[tuple] = []
+        if recent_close_symbols:
+            kept_pending: List[tuple] = []
+            for ent in pending:
+                _, _, _, ord_ = ent
+                side_v = getattr(ord_.side, "value", str(ord_.side)).lower()
+                if side_v == "buy" and ord_.symbol in recent_close_symbols:
+                    cooldown_dropped.append(ent)
+                else:
+                    kept_pending.append(ent)
+            if cooldown_dropped:
+                summary = ", ".join(f"{o.symbol}" for _, _, _, o in cooldown_dropped)
+                logging.getLogger("volta.engine").info(
+                    f"Post-close cooldown ({cooldown_min:.0f}min): suppressed {len(cooldown_dropped)} BUY(s) — {summary}"
+                )
+            pending = kept_pending
+
         # Veto step 1 — opposing-side veto: if both BUY and SELL appear for
         # the same symbol, suppress all of them (wash trade).
         from collections import defaultdict as _dd
