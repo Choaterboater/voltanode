@@ -345,6 +345,28 @@ def create_app() -> FastAPI:
                         synced += 1
                 if synced:
                     logger.info(f"Synced {synced} broker position(s) into engine portfolio")
+                # Auto-attach default stops/TPs so restored positions get
+                # downside protection without an operator having to call
+                # /attach-stops manually. Skips anything that already has
+                # a stop set; uses 8% stop / 30% TP from entry.
+                attached = 0
+                for pos in portfolio_obj.get_all_positions():
+                    if getattr(pos, "status", "") != "open" or pos.size <= 0:
+                        continue
+                    has_stop = bool(getattr(pos, "stop_loss", 0) or 0)
+                    has_tp = bool(getattr(pos, "take_profit", 0) or 0)
+                    if has_stop or has_tp or pos.entry_price <= 0:
+                        continue
+                    is_long = getattr(pos.side, "value", str(pos.side)).lower() == "long"
+                    if is_long:
+                        pos.stop_loss = round(pos.entry_price * (1 - 0.08), 4)
+                        pos.take_profit = round(pos.entry_price * (1 + 0.30), 4)
+                    else:
+                        pos.stop_loss = round(pos.entry_price * (1 + 0.08), 4)
+                        pos.take_profit = round(pos.entry_price * (1 - 0.30), 4)
+                    attached += 1
+                if attached:
+                    logger.info(f"Auto-attached default stops to {attached} restored position(s)")
                 # Prime _current_prices so the portfolio endpoint can show
                 # real P&L immediately. Otherwise stocks show $0 unrealized
                 # until the tick loop happens to pull each one.
