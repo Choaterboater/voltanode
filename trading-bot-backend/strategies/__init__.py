@@ -15,6 +15,8 @@ from strategies.ensemble_ml import EnsembleMLStrategy
 from strategies.news_sentiment import NewsSentimentStrategy
 from strategies.multi_coin import MultiCoinMomentumStrategy
 from strategies.simple_trend import SimpleTrendStrategy
+from strategies.auto_discovery import AutoDiscoveryStrategy
+from strategies.squeeze import SqueezeStrategy
 
 
 # Strategy registry
@@ -29,6 +31,8 @@ STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
     "news_sentiment": NewsSentimentStrategy,
     "multi_coin": MultiCoinMomentumStrategy,
     "simple_trend": SimpleTrendStrategy,
+    "auto_discovery": AutoDiscoveryStrategy,
+    "squeeze": SqueezeStrategy,
 }
 
 
@@ -112,6 +116,8 @@ __all__ = [
     "MACDStrategy",
     "EnsembleMLStrategy",
     "NewsSentimentStrategy",
+    "AutoDiscoveryStrategy",
+    "SqueezeStrategy",
     "StrategyFactory",
     "list_strategies",
     "STRATEGY_REGISTRY",

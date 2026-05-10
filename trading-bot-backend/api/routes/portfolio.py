@@ -78,15 +78,60 @@ def _live_broker_to_response(account_id: str, eng: Any) -> PortfolioResponse | N
         logger.warning(f"Live broker fetch failed, falling back to simulated portfolio: {exc}")
         return None
 
+    # Overlay engine's tick-loop prices over broker-reported current_price.
+    # Alpaca paper position pricing lags noticeably; the engine fetches fresh
+    # prices every tick (~5-15s) into _current_prices. Use those when newer.
+    live_prices = getattr(eng, "_current_prices", {}) or {}
+
+    # Build a lookup of engine-side positions for stop_loss / take_profit
+    # graft. The broker doesn't echo our stops back, so /portfolio/default
+    # would show them as null even after attach-stops set real values
+    # (the engine's Position object carries them in memory).
+    engine_pos_by_sym: Dict[str, Any] = {}
+    try:
+        engine_portfolio = engine.get_portfolio(account_id)
+        for ep in engine_portfolio.get_all_positions():
+            if getattr(ep, "status", "") != "open":
+                continue
+            engine_pos_by_sym[ep.symbol.upper()] = ep
+    except Exception:
+        engine_pos_by_sym = {}
+
     positions: List[PositionResponse] = []
     for p in raw_positions:
         symbol = p.get("symbol", "")
         size = float(p.get("qty", p.get("size", 0)) or 0)
         entry = float(p.get("avg_entry_price", p.get("entry_price", 0)) or 0)
-        current = float(p.get("current_price", p.get("market_price", entry)) or entry)
+        broker_current = float(p.get("current_price", p.get("market_price", entry)) or entry)
+        # Engine map keys are typically the bot's symbol — try a few variants.
+        sym_upper = symbol.upper()
+        canonical = sym_upper.replace("USD", "").replace("/", "").replace("-", "")
+        live = (
+            live_prices.get(symbol)
+            or live_prices.get(sym_upper)
+            or live_prices.get(canonical)
+            or live_prices.get(sym_upper + "USD")
+        )
+        current = float(live) if live else broker_current
         side = (p.get("side") or ("long" if size >= 0 else "short")).lower()
-        market_value = float(p.get("market_value", abs(size) * current) or 0)
-        unrealized_pnl = float(p.get("unrealized_pl", p.get("unrealized_pnl", 0)) or 0)
+        # Recompute mark-to-market with the fresher price.
+        market_value = abs(size) * current
+        if current and entry:
+            sign = 1 if side == "long" else -1
+            unrealized_pnl = sign * (current - entry) * abs(size)
+        else:
+            unrealized_pnl = float(p.get("unrealized_pl", p.get("unrealized_pnl", 0)) or 0)
+
+        # Graft stop_loss / take_profit from the engine's tracked Position
+        # if it has matching symbol. Try both the broker symbol and the
+        # canonical bot symbol (e.g. "BTCUSD" → also try "BTC").
+        engine_pos = (
+            engine_pos_by_sym.get(sym_upper)
+            or engine_pos_by_sym.get(canonical)
+        )
+        sl = getattr(engine_pos, "stop_loss", None) if engine_pos else None
+        tp = getattr(engine_pos, "take_profit", None) if engine_pos else None
+
         positions.append(
             PositionResponse(
                 symbol=symbol,
@@ -96,8 +141,8 @@ def _live_broker_to_response(account_id: str, eng: Any) -> PortfolioResponse | N
                 current_price=current,
                 unrealized_pnl=unrealized_pnl,
                 market_value=market_value,
-                stop_loss=None,
-                take_profit=None,
+                stop_loss=sl,
+                take_profit=tp,
             )
         )
 
@@ -186,6 +231,213 @@ async def get_positions(account_id: str) -> List[PositionResponse]:
         ]
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+
+
+@router.post("/{account_id}/flatten")
+async def flatten_positions(
+    account_id: str,
+    symbols: str | None = None,
+    confirm: bool = False,
+    trim_pct: float = 1.0,
+) -> Dict[str, Any]:
+    """Close (or trim) one or more open positions via market sell.
+
+    Pass ``symbols=RXT,AAPL`` (comma-separated) to target specific names, or
+    omit ``symbols`` AND set ``confirm=true`` to act on ALL open positions.
+
+    Args:
+        trim_pct: Fraction of each position to close. ``1.0`` (default) =
+            full flatten. ``0.5`` = trim half, leave half running. Useful for
+            taking partial profits on a winner without giving up upside.
+
+    Returns a per-symbol success / failure breakdown.
+    """
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+
+    from datetime import datetime, timezone
+    import uuid as _uuid
+    from bot.orders import Order, OrderSide, OrderType, OrderStatus
+
+    try:
+        portfolio = engine.get_portfolio(account_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+
+    all_positions = portfolio.get_all_positions()
+    open_positions = [p for p in all_positions if getattr(p, "status", "") == "open" and p.size > 0]
+
+    target_set: set[str] = set()
+    if symbols:
+        target_set = {s.strip().upper() for s in symbols.split(",") if s.strip()}
+    elif not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Refusing to flatten ALL positions without ?confirm=true. "
+                   "Pass ?symbols=RXT,AAPL for a targeted flatten or ?confirm=true to close everything.",
+        )
+    if target_set:
+        candidates = [p for p in open_positions if p.symbol.upper() in target_set]
+    else:
+        candidates = list(open_positions)
+
+    closed: List[Dict[str, Any]] = []
+    failed: List[Dict[str, Any]] = []
+    # Throttle so a multi-symbol flatten doesn't blow past the
+    # max_orders_per_minute safety cap (default 300/min). 0.3s spacing =
+    # 200 orders/min — well under the cap, leaving headroom for normal
+    # tick-loop strategy orders running concurrently.
+    import asyncio as _asyncio
+    # Clamp trim_pct so a typo doesn't oversell.
+    trim_frac = max(0.01, min(1.0, float(trim_pct)))
+
+    for i, pos in enumerate(candidates):
+        if i > 0:
+            await _asyncio.sleep(0.35)
+        try:
+            qty = float(pos.size) * trim_frac
+            if qty <= 0:
+                continue
+            order = Order(
+                id=str(_uuid.uuid4()),
+                symbol=pos.symbol,
+                side=OrderSide.SELL,
+                order_type=OrderType.MARKET,
+                quantity=qty,
+                price=None,
+                stop_price=None,
+                created_at=datetime.now(timezone.utc),
+                strategy_id="manual_flatten",
+                account_id=account_id,
+            )
+            # In live mode the engine routes to broker on execute_order;
+            # in paper mode it fills locally.
+            try:
+                fill = engine.execute_order(order)
+            except TypeError:
+                # Paper engine signature is (order, current_price)
+                fill = engine.execute_order(order, getattr(pos, "current_price", 0.0) or 0.0)
+            filled_qty = getattr(fill, "filled_qty", 0.0) if fill else 0.0
+            status = order.status.value if hasattr(order.status, "value") else str(order.status)
+            closed.append({
+                "symbol": pos.symbol,
+                "qty": filled_qty,
+                "status": status,
+                "order_id": order.id,
+            })
+        except Exception as exc:
+            failed.append({"symbol": pos.symbol, "error": str(exc)[:200]})
+            logger.warning("flatten %s failed: %s", pos.symbol, exc)
+
+    return {
+        "account_id": account_id,
+        "requested": sorted(target_set) if target_set else "ALL",
+        "closed": closed,
+        "failed": failed,
+        "remaining_positions": len(open_positions) - len(closed),
+    }
+
+
+@router.post("/{account_id}/attach-stops")
+async def attach_stops(
+    account_id: str,
+    stop_pct: float = 0.08,
+    tp_pct: float = 0.30,
+    trailing: bool = False,
+    overwrite: bool = False,
+) -> Dict[str, Any]:
+    """Bulk-attach stop-loss + take-profit to open positions that lack them.
+
+    Positions restored from broker sync at startup come back without the
+    strategy's original stop/TP metadata (broker doesn't echo it). Without
+    a stop, a winner like RXT (+28%) can round-trip back to entry on a
+    reversal.
+
+    Args:
+        stop_pct: Stop distance as a fraction below entry (long) or above
+                  entry (short). 0.08 = 8% stop.
+        tp_pct: Take-profit distance. 0.30 = 30% target.
+        trailing: When true, anchors the stop to ``current_price`` instead
+                  of ``entry_price`` so winners lock in gains rather than
+                  giving up unrealized profit. TP still based on entry.
+        overwrite: When false (default), skip positions that already have
+                   a non-zero stop_loss or take_profit set. Set true to
+                   forcibly reset all stops to the new params.
+    """
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+    try:
+        portfolio = engine.get_portfolio(account_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+
+    updated: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    for p in portfolio.get_all_positions():
+        if getattr(p, "status", "") != "open" or p.size <= 0:
+            continue
+        # Determine direction once — Position.side is a PositionSide enum
+        side_val = getattr(p.side, "value", str(p.side)).lower()
+        is_long = side_val == "long"
+        existing_stop = float(getattr(p, "stop_loss", 0) or 0)
+        existing_tp = float(getattr(p, "take_profit", 0) or 0)
+        if not overwrite and (existing_stop > 0 or existing_tp > 0):
+            skipped.append({
+                "symbol": p.symbol,
+                "reason": "already_has_stops",
+                "stop_loss": existing_stop,
+                "take_profit": existing_tp,
+            })
+            continue
+
+        anchor = float(getattr(p, "current_price", 0) or p.entry_price) if trailing else p.entry_price
+        if anchor <= 0:
+            skipped.append({"symbol": p.symbol, "reason": "no_anchor_price"})
+            continue
+        if is_long:
+            new_stop = anchor * (1 - stop_pct)
+            new_tp = p.entry_price * (1 + tp_pct)  # TP always anchored to entry
+        else:
+            new_stop = anchor * (1 + stop_pct)
+            new_tp = p.entry_price * (1 - tp_pct)
+
+        # Magnitude-aware rounding so sub-cent tokens (SHIB at 6.35e-06)
+        # don't lose all precision and end up with stop=0. Plain
+        # ``round(x, 4)`` truncated those to 0.0.
+        def _round_price(x: float) -> float:
+            ax = abs(x)
+            if ax < 1e-4:
+                return round(x, 10)
+            if ax < 0.01:
+                return round(x, 8)
+            if ax < 1:
+                return round(x, 6)
+            return round(x, 4)
+
+        p.stop_loss = _round_price(new_stop)
+        p.take_profit = _round_price(new_tp)
+        updated.append({
+            "symbol": p.symbol,
+            "side": side_val,
+            "entry": p.entry_price,
+            "current": getattr(p, "current_price", 0),
+            "stop_loss": p.stop_loss,
+            "take_profit": p.take_profit,
+        })
+
+    return {
+        "account_id": account_id,
+        "params": {
+            "stop_pct": stop_pct,
+            "tp_pct": tp_pct,
+            "trailing": trailing,
+            "overwrite": overwrite,
+        },
+        "updated_count": len(updated),
+        "skipped_count": len(skipped),
+        "updated": updated,
+        "skipped": skipped[:20],
+    }
 
 
 @router.get("/{account_id}/snapshots")

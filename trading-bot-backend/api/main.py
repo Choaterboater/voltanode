@@ -29,7 +29,7 @@ from data.fetcher import MarketData
 from strategies.base import BaseStrategy
 
 # Import routers
-from api.routes import portfolio, strategies, trades, backtest, market, advisor, settings, orders, news, signals, screener
+from api.routes import portfolio, strategies, trades, backtest, market, advisor, settings, orders, news, signals, screener, watchlist
 
 logger = logging.getLogger("volta.api")
 
@@ -293,6 +293,14 @@ def create_app() -> FastAPI:
         engine = LiveTradingEngine(config=config, broker=broker)
         engine.market_data = market_data
 
+        # Enable file-backed fill persistence so trade history survives
+        # restarts. Loads any existing fills.jsonl on init.
+        try:
+            fills_path = Path(config.app.data_dir) / "fills.jsonl"
+            engine.set_fills_persistence(fills_path)
+        except Exception as exc:
+            logger.warning(f"Could not enable fill persistence: {exc}")
+
         # Set engine on routers
         portfolio.set_engine(engine)
         strategies.set_engine(engine)
@@ -311,6 +319,90 @@ def create_app() -> FastAPI:
         # Start engine so the tick loop actually drives strategies.
         # Without this, _running stays False and on_tick is never called.
         engine.start()
+
+        # Sync broker positions into the engine's local portfolio mirror so
+        # subsequent SELL fills can compute realized P&L against a real entry
+        # price. Without this, anything held when the engine started has
+        # entry_price=0 / no record, and partial closes show $0 P&L.
+        try:
+            if getattr(engine, "broker", None) and engine.broker.is_connected() and engine.broker.name != "mock":
+                from bot.portfolio import PositionSide as _PS
+                portfolio_obj = engine.get_portfolio("default")
+                broker_positions = engine.broker.get_positions()
+                synced = 0
+                for p in broker_positions or []:
+                    sym = (p.get("symbol") or "").upper()
+                    if not sym:
+                        continue
+                    qty = abs(float(p.get("qty", p.get("size", 0)) or 0))
+                    entry = float(p.get("avg_entry_price", p.get("entry_price", 0)) or 0)
+                    if qty <= 0 or entry <= 0:
+                        continue
+                    side = (p.get("side") or "long").lower()
+                    pside = _PS.SHORT if side == "short" else _PS.LONG
+                    if portfolio_obj.get_position(sym) is None:
+                        portfolio_obj.open_position(sym, pside, qty, entry)
+                        synced += 1
+                if synced:
+                    logger.info(f"Synced {synced} broker position(s) into engine portfolio")
+                # Auto-attach default stops/TPs so restored positions get
+                # downside protection without an operator having to call
+                # /attach-stops manually. Skips anything that already has
+                # a stop set; uses 8% stop / 30% TP from entry.
+                attached = 0
+                for pos in portfolio_obj.get_all_positions():
+                    if getattr(pos, "status", "") != "open" or pos.size <= 0:
+                        continue
+                    has_stop = bool(getattr(pos, "stop_loss", 0) or 0)
+                    has_tp = bool(getattr(pos, "take_profit", 0) or 0)
+                    if has_stop or has_tp or pos.entry_price <= 0:
+                        continue
+                    is_long = getattr(pos.side, "value", str(pos.side)).lower() == "long"
+                    # Magnitude-aware rounding — sub-cent tokens (SHIB)
+                    # need more decimals to avoid round-to-zero.
+                    def _rp(x: float) -> float:
+                        ax = abs(x)
+                        if ax < 1e-4: return round(x, 10)
+                        if ax < 0.01: return round(x, 8)
+                        if ax < 1:    return round(x, 6)
+                        return round(x, 4)
+                    if is_long:
+                        pos.stop_loss = _rp(pos.entry_price * (1 - 0.08))
+                        pos.take_profit = _rp(pos.entry_price * (1 + 0.30))
+                    else:
+                        pos.stop_loss = _rp(pos.entry_price * (1 + 0.08))
+                        pos.take_profit = _rp(pos.entry_price * (1 - 0.30))
+                    attached += 1
+                if attached:
+                    logger.info(f"Auto-attached default stops to {attached} restored position(s)")
+                # Prime _current_prices so the portfolio endpoint can show
+                # real P&L immediately. Otherwise stocks show $0 unrealized
+                # until the tick loop happens to pull each one.
+                from bot.config import AssetClass as _AC
+                primed = 0
+                for p in broker_positions or []:
+                    sym = (p.get("symbol") or "").upper()
+                    if not sym:
+                        continue
+                    # Strip USD suffix for crypto, otherwise treat as stock.
+                    if sym.endswith("USD") and len(sym) > 3:
+                        bot_sym = sym[:-3]
+                        ac = _AC.CRYPTO
+                    else:
+                        bot_sym = sym
+                        ac = _AC.STOCK
+                    try:
+                        price = await market_data.get_price(bot_sym, ac)
+                        if price and price > 0:
+                            engine._current_prices[bot_sym] = price
+                            engine._current_prices[sym] = price
+                            primed += 1
+                    except Exception:
+                        continue
+                if primed:
+                    logger.info(f"Primed {primed} live price(s) for held positions")
+        except Exception as exc:
+            logger.warning(f"Broker position sync failed: {exc}")
 
         # Restore persisted bots so they survive restarts.
         try:
@@ -370,6 +462,7 @@ def create_app() -> FastAPI:
     app.include_router(news.router, prefix="/news", tags=["News"])
     app.include_router(signals.router, prefix="/signals", tags=["Signals"])
     app.include_router(screener.router, prefix="/screener", tags=["Screeners"])
+    app.include_router(watchlist.router, prefix="/watchlist", tags=["Watchlist"])
 
     # Initialize news module — prefer encrypted Alpaca keys from config.yaml
     # (the same set the user entered in Settings); fall back to env vars.

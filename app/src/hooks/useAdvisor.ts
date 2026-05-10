@@ -115,7 +115,25 @@ export interface ResearchReport {
   bottom_line: string;
   llm_model: string;
   fundamentals_raw: Record<string, unknown>;
-  generated_at: string;
+}
+
+export interface SymbolLookupHit {
+  symbol: string;
+  name: string;
+  asset_type: 'stock' | 'crypto';
+  exchange: string;
+}
+
+export async function lookupSymbol(query: string, limit = 8): Promise<SymbolLookupHit[]> {
+  if (!query || query.trim().length < 1) return [];
+  try {
+    const r = await fetch(`/api/advisor/lookup?q=${encodeURIComponent(query)}&limit=${limit}`);
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data.hits || []) as SymbolLookupHit[];
+  } catch {
+    return [];
+  }
 }
 
 export function useAdvisor() {

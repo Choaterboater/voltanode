@@ -26,7 +26,7 @@ import {
 } from 'recharts';
 import Layout from '@/components/Layout';
 import Badge from '@/components/Badge';
-import { useAdvisor, type IndicatorReading, type PriceTarget, type LLMCommentary } from '@/hooks/useAdvisor';
+import { useAdvisor, lookupSymbol, type IndicatorReading, type PriceTarget, type LLMCommentary, type SymbolLookupHit } from '@/hooks/useAdvisor';
 import { Brain } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -519,12 +519,54 @@ export default function Advisor() {
   const [researchMode, setResearchMode] = useState<boolean>(false);
   const { result, research, loading, researchLoading, error, analyze, fetchResearch } = useAdvisor();
 
+  // Typeahead state — populated by /api/advisor/lookup as the user types
+  const [lookupHits, setLookupHits] = useState<SymbolLookupHit[]>([]);
+  const [lookupOpen, setLookupOpen] = useState(false);
+  useEffect(() => {
+    const q = symbol.trim();
+    if (q.length < 1) {
+      setLookupHits([]);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      const hits = await lookupSymbol(q, 8);
+      setLookupHits(hits);
+    }, 200);
+    return () => clearTimeout(handle);
+  }, [symbol]);
+
+  /**
+   * Single fire path used by every analyze trigger (manual button, quick-select
+   * chip, nav state from Watchlist, time-range click, typeahead pick). When
+   * Research mode is on we ALWAYS kick off the deeper report in parallel —
+   * earlier this was only wired in two of five paths, so picking a stock from
+   * the Watchlist or clicking a quick-select chip silently skipped the
+   * research call.
+   */
+  const runAnalyze = async (
+    sym: string,
+    type: 'crypto' | 'stock',
+    days: number,
+    adv: boolean,
+  ) => {
+    await analyze(sym, type, days, adv);
+    if (researchMode) {
+      fetchResearch(sym, type, days, adv).catch(() => {});
+    }
+  };
+
   useEffect(() => {
     if (navState?.symbol) {
-      analyze(navState.symbol, navState.assetType || 'crypto', rangeToDays(timeRange));
+      runAnalyze(
+        navState.symbol,
+        navState.assetType || 'crypto',
+        rangeToDays(timeRange),
+        advanced,
+      ).catch(() => {});
       // Clear state so refresh doesn't re-trigger
       window.history.replaceState({}, document.title);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleAnalyze = async () => {
@@ -533,11 +575,7 @@ export default function Advisor() {
       return;
     }
     try {
-      await analyze(symbol.trim(), assetType, rangeToDays(timeRange), advanced);
-      // If Research mode is on, kick off the deeper report in parallel.
-      if (researchMode) {
-        fetchResearch(symbol.trim(), assetType, rangeToDays(timeRange), advanced).catch(() => {});
-      }
+      await runAnalyze(symbol.trim(), assetType, rangeToDays(timeRange), advanced);
     } catch {
       toast.error('Analysis failed. Check the symbol and try again.');
     }
@@ -552,7 +590,12 @@ export default function Advisor() {
     if (isCrypto) setAssetType('crypto');
     // Small delay so state updates before analyze
     setTimeout(() => {
-      analyze(ticker, isStock ? 'stock' : 'crypto', rangeToDays(timeRange));
+      runAnalyze(
+        ticker,
+        isStock ? 'stock' : 'crypto',
+        rangeToDays(timeRange),
+        advanced,
+      ).catch(() => {});
     }, 50);
   };
 
@@ -608,7 +651,12 @@ export default function Advisor() {
                   const newRange = r.key;
                   setTimeRange(newRange);
                   if (symbol.trim() && !loading) {
-                    analyze(symbol.trim(), assetType, rangeToDays(newRange));
+                    runAnalyze(
+                      symbol.trim(),
+                      assetType,
+                      rangeToDays(newRange),
+                      advanced,
+                    ).catch(() => {});
                   }
                 }}
                 className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
@@ -622,18 +670,54 @@ export default function Advisor() {
             ))}
           </div>
 
-          {/* Search input */}
+          {/* Search input with typeahead by ticker OR company name */}
           <div className="mt-4 flex items-center gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-text-muted" />
               <input
                 type="text"
-                placeholder={assetType === 'crypto' ? 'Enter ticker: BTC, ETH, AAPL, TSLA, NVDA...' : 'Enter ticker: AAPL, TSLA, NVDA...'}
+                placeholder="Search by ticker or name: AAPL, Apple, NVDA, Bitcoin..."
                 value={symbol}
-                onChange={(e) => setSymbol(e.target.value)}
+                onChange={(e) => { setSymbol(e.target.value); setLookupOpen(true); }}
+                onFocus={() => setLookupOpen(true)}
+                onBlur={() => setTimeout(() => setLookupOpen(false), 150)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAnalyze()}
                 className="w-full rounded-md border border-border-subtle bg-bg-input py-2.5 pl-9 pr-3 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
               />
+              {lookupOpen && lookupHits.length > 0 && (
+                <ul className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-md border border-border-subtle bg-bg-surface shadow-lg">
+                  {lookupHits.map((hit) => (
+                    <li
+                      key={`${hit.asset_type}-${hit.symbol}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setSymbol(hit.symbol);
+                        setAssetType(hit.asset_type);
+                        setLookupOpen(false);
+                        setLookupHits([]);
+                        // Auto-run analysis when a typeahead hit is picked.
+                        // Goes through runAnalyze so research-mode is honored
+                        // consistently with all other entry points.
+                        runAnalyze(
+                          hit.symbol,
+                          hit.asset_type,
+                          rangeToDays(timeRange),
+                          advanced,
+                        ).catch(() => {});
+                      }}
+                      className="flex cursor-pointer items-center justify-between gap-3 border-b border-border-subtle/40 px-3 py-2 text-sm hover:bg-accent-cyan/10 last:border-b-0"
+                    >
+                      <div className="flex flex-1 items-center gap-2 min-w-0">
+                        <span className="font-mono font-semibold text-accent-cyan shrink-0">{hit.symbol.toUpperCase()}</span>
+                        <span className="truncate text-text-secondary">{hit.name}</span>
+                      </div>
+                      <span className="shrink-0 rounded bg-bg-input px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-text-muted">
+                        {hit.asset_type}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
             <button
               onClick={handleAnalyze}
@@ -651,7 +735,21 @@ export default function Advisor() {
               <input
                 type="checkbox"
                 checked={researchMode}
-                onChange={(e) => setResearchMode(e.target.checked)}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setResearchMode(on);
+                  // If toggling ON and we already have an analyze result for
+                  // this symbol, kick off research right away — saves the user
+                  // a re-click of the analyze button.
+                  if (on && result && symbol.trim() && !researchLoading) {
+                    fetchResearch(
+                      symbol.trim(),
+                      assetType,
+                      rangeToDays(timeRange),
+                      advanced,
+                    ).catch(() => {});
+                  }
+                }}
                 className="h-3.5 w-3.5 rounded border-border-subtle bg-bg-input accent-accent-cyan"
               />
               <span className="text-xs text-text-muted">
@@ -822,7 +920,10 @@ export default function Advisor() {
                     <h3 className="text-sm font-semibold text-text-primary">Technical Indicators</h3>
                     <span className="ml-auto text-xs text-text-muted">{result.indicators.length} signals</span>
                   </div>
-                  <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                  {/* Grow naturally so the indicator card matches the height
+                      of the Price-Targets + Risk-Sizing column on the right
+                      instead of cropping at a fixed 400px. */}
+                  <div className="space-y-2">
                     {result.indicators.map((ind, i) => (
                       <IndicatorCard key={`${ind.name}-${i}`} reading={ind} />
                     ))}
@@ -838,12 +939,17 @@ export default function Advisor() {
                     transition={{ delay: 0.25 }}
                     className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
                   >
-                    <div className="mb-3 flex items-center gap-2">
-                      <Target className="h-4 w-4 text-accent-cyan" />
-                      <h3 className="text-sm font-semibold text-text-primary">Price Targets</h3>
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Target className="h-4 w-4 text-accent-cyan" />
+                        <h3 className="text-sm font-semibold text-text-primary">Price Targets</h3>
+                      </div>
+                      <span className="text-[10px] uppercase tracking-wider text-text-muted">
+                        {result.price_targets.length} levels
+                      </span>
                     </div>
                     <div className="space-y-2">
-                      {result.price_targets.slice(0, 6).map((t, i) => (
+                      {result.price_targets.map((t, i) => (
                         <PriceTargetCard key={`${t.label}-${i}`} target={t} currentPrice={result.current_price} />
                       ))}
                     </div>

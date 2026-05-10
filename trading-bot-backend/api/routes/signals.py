@@ -7,7 +7,7 @@ via the engine's signal_context.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 
@@ -66,10 +66,44 @@ async def get_earnings_for_symbol(symbol: str) -> Dict[str, Any]:
 
 @router.get("/insider/{symbol}")
 async def get_insider_summary(symbol: str) -> Dict[str, Any]:
-    """Aggregate insider Form 4 activity for a ticker (last 180 days)."""
+    """Aggregate insider Form 4 activity for a ticker (last 180 days).
+
+    Looks up the ticker's current market price first so the aggregator
+    can filter out derivative-settlement filings (e.g. swap unwinds where
+    the reported "transactionPrice" is a synthetic level unrelated to the
+    real market). Without this, fund filers like Pentwater Capital can
+    inflate aggregate insider totals into the billions for normal mid-caps.
+    """
     if not finnhub_signals.is_configured():
         raise HTTPException(status_code=503, detail="FINNHUB_API_KEY not set")
-    return finnhub_signals.insider_summary(symbol)
+
+    # Best-effort current-price lookup. The yfinance Ticker.info call can be
+    # slow (~5-15s); wrap in a strict timeout so a slow Yahoo doesn't tip
+    # this endpoint over its own client timeout. Failure => fall back to
+    # the noisy-median filter which still drops the worst outliers.
+    import asyncio as _asyncio
+
+    def _fetch_ref_price() -> Optional[float]:
+        try:
+            import yfinance as yf
+            info = yf.Ticker(symbol).info or {}
+            v = (
+                info.get("regularMarketPrice")
+                or info.get("currentPrice")
+                or info.get("previousClose")
+            )
+            return float(v) if v is not None else None
+        except Exception:
+            return None
+
+    ref_price: Optional[float] = None
+    try:
+        ref_price = await _asyncio.wait_for(
+            _asyncio.to_thread(_fetch_ref_price), timeout=8.0
+        )
+    except _asyncio.TimeoutError:
+        ref_price = None
+    return finnhub_signals.insider_summary(symbol, reference_price=ref_price)
 
 
 @router.get("/")

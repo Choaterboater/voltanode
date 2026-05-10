@@ -99,7 +99,19 @@ class SymbolAnalyzer:
                     data.attrs["analyst_target_median"] = float(atm)
             except Exception:
                 pass
-        targets = self.predictor.predict_targets(data, current_price)
+        # Pull fundamentals for stocks so the predictor can layer on
+        # squeeze-specific targets (trigger / cover-wall / theoretical max).
+        # Best-effort — predictor handles None gracefully.
+        fund = None
+        if asset_type == "stock":
+            try:
+                from data.fundamentals import fetch_fundamentals
+                fund = await fetch_fundamentals(symbol)
+            except Exception:
+                fund = None
+        targets = self.predictor.predict_targets(
+            data, current_price, lookback_days=lookback_days, fundamentals=fund,
+        )
 
         # ── 6. Risk & sizing ──
         risk_level, position_size, entry_zone, stop_loss, take_profit, time_horizon = self._risk_analysis(
@@ -506,17 +518,51 @@ class SymbolAnalyzer:
         # Stop loss and take profit
         is_buy = verdict in ("BUY", "STRONG_BUY")
         is_sell = verdict in ("SELL", "STRONG_SELL")
-        
-        if is_buy:
-            stop_loss = current_price - 2 * atr
-            take_profit = current_price + 3 * atr
-        elif is_sell:
-            stop_loss = current_price + 2 * atr
-            take_profit = current_price - 3 * atr
+
+        # Bound the ATR-based stop so post-crash names don't produce unusable
+        # stops like -82%. Cap distance by risk level. ALSO scale by the
+        # user's selected time horizon — a 1-year hold needs a wider stop
+        # than a 1-month swing, since longer horizons must absorb more
+        # noise. This is what makes Risk & Position Sizing actually change
+        # when you switch the 1mo / 3mo / 1yr buttons.
+        lookback_days = getattr(data, 'attrs', {}).get('lookback_days', 90)
+        if lookback_days <= 30:
+            horizon_mult = 0.7    # tight stop for short-horizon swing
+        elif lookback_days <= 90:
+            horizon_mult = 1.0    # baseline (3-month default)
+        elif lookback_days <= 200:
+            horizon_mult = 1.4    # half-year — more breathing room
         else:
-            # HOLD — set symmetric bands for reference
-            stop_loss = current_price - 2 * atr
-            take_profit = current_price + 3 * atr
+            horizon_mult = 1.8    # 1y+ position trade — widest stop
+        max_stop_pct_by_risk = {
+            "low": 0.06 * horizon_mult,
+            "moderate": 0.10 * horizon_mult,
+            "high": 0.15 * horizon_mult,
+            "extreme": 0.20 * horizon_mult,
+        }
+        max_stop_distance = current_price * max_stop_pct_by_risk[risk_level]
+        atr_stop_distance = 2 * atr * horizon_mult
+
+        # Floor the ATR distance at 1% of price so very low-vol names still
+        # have a meaningful stop, and ceiling at the risk-adjusted max.
+        stop_distance = max(
+            current_price * 0.01,
+            min(atr_stop_distance, max_stop_distance),
+        )
+        # Use a 1.5:1 reward:risk ratio off the actual stop distance so the
+        # take-profit doesn't blow up the same way the stop did.
+        take_distance = stop_distance * 1.5
+
+        if is_buy:
+            stop_loss = current_price - stop_distance
+            take_profit = current_price + take_distance
+        elif is_sell:
+            stop_loss = current_price + stop_distance
+            take_profit = current_price - take_distance
+        else:
+            # HOLD — set symmetric reference bands.
+            stop_loss = current_price - stop_distance
+            take_profit = current_price + take_distance
 
         # Entry zone: near current price ± ATR
         if is_buy:

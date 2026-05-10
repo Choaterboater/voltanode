@@ -129,11 +129,83 @@ def earnings_for_symbol(symbol: str, days_ahead: int = 90) -> Optional[EarningsE
     return None
 
 
-def insider_transactions(symbol: str, limit: int = 20) -> List[InsiderTransaction]:
-    """Recent insider Form 4 transactions for a ticker."""
+# Tokens that strongly suggest the filer is an entity / institutional holder
+# rather than an individual corporate insider. Conservative — keeps anything
+# that looks like a person name. Case-insensitive substring match.
+_INSTITUTIONAL_TOKENS = (
+    " lp",
+    " l.p.",
+    " llc",
+    " l.l.c.",
+    " inc.",
+    " inc ",
+    " ltd",
+    " corp.",
+    " corp ",
+    " corporation",
+    " holdings",
+    " partners",
+    " partnership",
+    " capital",
+    " management",
+    " advisors",
+    " advisers",
+    " fund",
+    " trust company",
+    " investments",
+    " investment",
+    " group ltd",
+    " group lp",
+    " group llc",
+    " sponsor",
+    " hedge",
+    " bank",
+    " bancorp",
+    " plc",
+    " limited",
+    " s.a.",
+    " sa ",
+)
+
+
+def _looks_institutional(name: str) -> bool:
+    """Heuristic: True if the filer name looks like a fund/LP/corporation
+    rather than a person.
+
+    We add a leading space to the lower-cased name so substring tests like
+    ' lp' don't accidentally match "Phillip" or "philip". A trailing space
+    is also useful for words that should match only at word boundaries.
+    """
+    if not name:
+        return False
+    needle = " " + name.lower().strip() + " "
+    return any(tok in needle for tok in _INSTITUTIONAL_TOKENS)
+
+
+def insider_transactions(
+    symbol: str,
+    limit: int = 20,
+    reference_price: Optional[float] = None,
+) -> List[InsiderTransaction]:
+    """Recent insider Form 4 transactions for a ticker.
+
+    Args:
+        symbol: Ticker.
+        limit: Max transactions to return.
+        reference_price: Current market price. When provided, rows whose
+            ``transactionPrice`` deviates by >2× are dropped — kills
+            derivative-settlement filings that report synthetic prices
+            (e.g. swap unwinds) and would otherwise inflate aggregate
+            values into the billions for normal mid-caps.
+            When omitted, falls back to a median-based filter that's
+            less robust but still drops the worst outliers.
+    """
     if not is_configured():
         return []
-    cache_key = f"insider:{symbol.upper()}"
+    # Cache key includes ref price so a subsequent call with a different
+    # reference doesn't return a stale-filtered list.
+    ref_key = f"{reference_price:.2f}" if reference_price else "auto"
+    cache_key = f"insider:{symbol.upper()}:{ref_key}"
     cached = _cached(cache_key)
     if cached is not None:
         return cached[:limit]
@@ -158,11 +230,63 @@ def insider_transactions(symbol: str, limit: int = 20) -> List[InsiderTransactio
         return []
 
     rows = body.get("data") or []
+
+    # Choose a reference price for sanity-filtering. Prefer the explicit
+    # market price passed by the caller (most accurate); fall back to
+    # median of all reported transactionPrices, which is rough — biased
+    # by huge derivative-settlement filings, but still kills outliers
+    # 3+ orders of magnitude off.
+    sanity_ref: Optional[float] = reference_price
+    if sanity_ref is None:
+        raw_prices: List[float] = []
+        for row in rows:
+            try:
+                p = float(row.get("transactionPrice", 0) or 0)
+                if p > 0:
+                    raw_prices.append(p)
+            except (TypeError, ValueError):
+                continue
+        if raw_prices:
+            sp = sorted(raw_prices)
+            sanity_ref = sp[len(sp) // 2]
+
+    # Asymmetric bounds. The dangerous outliers are derivative-settlement
+    # filings reported at synthetic prices ABOVE the market (Pentwater
+    # reporting CAR sales at $700 when the stock is $160 — these inflate
+    # totals into the billions). Trades reported BELOW current market are
+    # almost always legitimate older transactions (the stock has run up
+    # since), so we leave the lower bound very loose to avoid filtering
+    # real history (e.g. RXT sold at $1 → now trades at $3.87 — keep).
+    upper_mult = 2.5 if reference_price else 5.0
+    lower_mult = 0.05 if reference_price else 0.05
+
     out: List[InsiderTransaction] = []
+    skipped_price_outliers = 0
+    skipped_institutional = 0
     for row in rows:
         try:
             shares = float(row.get("share", 0) or 0)
             price = float(row.get("transactionPrice", 0) or 0)
+            name_raw = str(row.get("name", "") or "")
+
+            # Name-based institutional filter. Form 4 mostly carries
+            # corporate-insider trades (officers, directors), but the same
+            # endpoint occasionally surfaces filings from large institutional
+            # holders unwinding derivative positions — those report
+            # synthetic prices that pollute aggregate totals (the CAR /
+            # Pentwater Capital $42B inflation). Skip names that look like
+            # entities, not individuals.
+            if _looks_institutional(name_raw):
+                skipped_institutional += 1
+                continue
+
+            # Sanity bound vs. reference. Catches any remaining
+            # synthetic-price filings that slip past the name filter.
+            if sanity_ref and price > 0:
+                ratio = price / sanity_ref
+                if ratio > upper_mult or ratio < lower_mult:
+                    skipped_price_outliers += 1
+                    continue
             value = shares * price if shares and price else None
             out.append(InsiderTransaction(
                 symbol=symbol.upper(),
@@ -175,14 +299,32 @@ def insider_transactions(symbol: str, limit: int = 20) -> List[InsiderTransactio
             ))
         except Exception:
             continue
+    if skipped_price_outliers > 0 or skipped_institutional > 0:
+        logger.info(
+            "insider %s: dropped %d institutional + %d price-outlier rows (ref=%s, source=%s)",
+            symbol,
+            skipped_institutional,
+            skipped_price_outliers,
+            f"${sanity_ref:.2f}" if sanity_ref else "n/a",
+            "explicit" if reference_price else "median-fallback",
+        )
     out.sort(key=lambda t: t.transaction_date, reverse=True)
     _set_cache(cache_key, out)
     return out[:limit]
 
 
-def insider_summary(symbol: str) -> Dict[str, Any]:
-    """Aggregate of insider activity over the last 180 days for a ticker."""
-    txns = insider_transactions(symbol, limit=100)
+def insider_summary(
+    symbol: str,
+    reference_price: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Aggregate of insider activity over the last 180 days for a ticker.
+
+    Pass ``reference_price`` (current market price) when known so the
+    aggregator can drop derivative-settlement filings whose reported prices
+    don't correspond to the real market — protects the totals from being
+    inflated by Pentwater-Capital-style swap unwinds.
+    """
+    txns = insider_transactions(symbol, limit=100, reference_price=reference_price)
     buys = [t for t in txns if t.transaction_code.upper() == "P"]
     sells = [t for t in txns if t.transaction_code.upper() == "S"]
     buy_value = sum((t.value_usd or 0) for t in buys)

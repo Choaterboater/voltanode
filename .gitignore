@@ -38,7 +38,12 @@ data/cache/
 
 # Runtime state — created at startup, regenerated as needed
 trading-bot-backend/data/registered_strategies.json
+trading-bot-backend/data/registered_strategies.json.bak*
 trading-bot-backend/data/cache/
 trading-bot-backend/data/news.db
+trading-bot-backend/data/watchlist.json
+trading-bot-backend/data/fills.jsonl
 trading-bot-backend/.env
 trading-bot-backend/data/equity_history/
+trading-bot-backend/backend-startup.log
+trading-bot-backend/backend-startup.err

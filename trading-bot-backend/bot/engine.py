@@ -85,6 +85,9 @@ class PaperTradingEngine:
         self._trades: List[Trade] = []
         self._running: bool = False
         self._current_prices: Dict[str, float] = {}
+        # Optional file-backed fill persistence so trade history survives
+        # restarts. Set via set_fills_persistence(path).
+        self._fills_path: Optional[Any] = None
 
         # Initialize default account
         default_balance = config.backtest.default_initial_balance if config.backtest else {"USDT": 10000.0}
@@ -174,6 +177,101 @@ class PaperTradingEngine:
         self._orders[account_id][order.id] = order
         return order.id
 
+    def set_fills_persistence(self, path: Any) -> None:
+        """Enable JSONL file-backed persistence of fills + load any existing file.
+
+        Each fill is appended to the file as one JSON line; on construction
+        the file is read so trade history survives restarts.
+        """
+        import json as _json
+        from pathlib import Path as _Path
+        p = _Path(path)
+        self._fills_path = p
+        if p.exists():
+            try:
+                loaded = 0
+                with p.open("r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            d = _json.loads(line)
+                            from datetime import datetime as _dt
+                            fr = FillResult(
+                                order_id=d.get("order_id", ""),
+                                symbol=d.get("symbol", ""),
+                                filled_qty=float(d.get("filled_qty", 0)),
+                                filled_price=float(d.get("filled_price", 0)),
+                                fee=float(d.get("fee", 0)),
+                                slippage=float(d.get("slippage", 0)),
+                                timestamp=_dt.fromisoformat(d["timestamp"]) if d.get("timestamp") else _dt.now(timezone.utc),
+                                side=OrderSide(d.get("side", "buy")),
+                                realized_pnl=d.get("realized_pnl"),
+                                broker_order_id=d.get("broker_order_id", ""),
+                            )
+                            self._fills.append(fr)
+                            # Backfill the Trade record too, so /trades/ and the
+                            # Analytics page reflect historical fills (otherwise
+                            # only this-session fills get a Trade row, leaving
+                            # the page nearly empty across restarts).
+                            self._trades.append(
+                                Trade(
+                                    id=str(uuid.uuid4()),
+                                    order_id=fr.order_id,
+                                    strategy_id=d.get("strategy_id", "") or "",
+                                    symbol=fr.symbol,
+                                    side=fr.side.value if hasattr(fr.side, "value") else str(fr.side),
+                                    quantity=fr.filled_qty,
+                                    price=fr.filled_price,
+                                    fee=fr.fee,
+                                    realized_pnl=fr.realized_pnl,
+                                    timestamp=fr.timestamp,
+                                )
+                            )
+                            loaded += 1
+                        except Exception:
+                            continue
+                if loaded:
+                    import logging as _log
+                    _log.getLogger("volta.engine").info(
+                        f"Loaded {loaded} fill(s) from {p.name} "
+                        f"(backfilled into trade history)"
+                    )
+            except Exception as exc:
+                import logging as _log
+                _log.getLogger("volta.engine").warning(f"Could not load fills from {p}: {exc}")
+
+    def _persist_fill(self, fill: FillResult, strategy_id: str = "") -> None:
+        """Append a fill to the JSONL file if persistence is enabled.
+
+        ``strategy_id`` is persisted so the next-startup backfill can
+        attribute historical trades to the right bot in Analytics.
+        """
+        if self._fills_path is None:
+            return
+        try:
+            import json as _json
+            self._fills_path.parent.mkdir(parents=True, exist_ok=True)
+            ts = fill.timestamp.isoformat() if hasattr(fill.timestamp, "isoformat") else str(fill.timestamp)
+            row = {
+                "order_id": fill.order_id,
+                "symbol": fill.symbol,
+                "filled_qty": fill.filled_qty,
+                "filled_price": fill.filled_price,
+                "fee": fill.fee,
+                "slippage": fill.slippage,
+                "timestamp": ts,
+                "side": fill.side.value,
+                "realized_pnl": fill.realized_pnl,
+                "broker_order_id": fill.broker_order_id,
+                "strategy_id": strategy_id,
+            }
+            with self._fills_path.open("a") as f:
+                f.write(_json.dumps(row) + "\n")
+        except Exception:
+            pass
+
     def _is_debounced(self, order: Order) -> bool:
         """Per-(strategy, symbol, side) cooldown to prevent tick-spam when an
         order will fail downstream every tick (SELL with no position, market-
@@ -187,6 +285,13 @@ class PaperTradingEngine:
         """
         if not order.strategy_id:
             return False
+        # Long-term suppression — held=0 / dust SELLs that we've already
+        # rejected once. 1-hour TTL set in execute_order. If still active,
+        # drop without even storing the order so the monitor doesn't see it.
+        sup_key = (order.strategy_id, order.symbol, order.side.value)
+        sup_until = self._dust_suppressed_until.get(sup_key) if hasattr(self, "_dust_suppressed_until") else None
+        if sup_until is not None and sup_until > datetime.now(timezone.utc):
+            return True
         from datetime import timedelta as _td
         cutoff = datetime.now(timezone.utc) - _td(minutes=5)
         for o in self._orders.get(order.account_id, {}).values():
@@ -289,6 +394,7 @@ class PaperTradingEngine:
             order.status = OrderStatus.FILLED
 
             self._fills.append(fill)
+            self._persist_fill(fill, strategy_id=order.strategy_id or "")
             self._update_portfolio_on_fill(order, fill, portfolio)
             self.on_fill(fill)
         return fill
@@ -424,36 +530,143 @@ class PaperTradingEngine:
                         account_id=account_id,
                         strategy_id="sltp_manager",
                     )
-                    self.submit_order(close_order, account_id)
-                    self.execute_order(close_order, tick.price)
+                    # Gate through debounce — without this, every tick where
+                    # price is past the stop creates a fresh duplicate order.
+                    # The first close goes through, subsequent ones get
+                    # silently dropped instead of polluting _orders with
+                    # rejected duplicates.
+                    if not self._is_debounced(close_order):
+                        self.submit_order(close_order, account_id)
+                        self.execute_order(close_order, tick.price)
 
-        # Notify registered strategies of tick
+        # Notify registered strategies of tick.
+        # Two-pass to support ensemble-agreement veto: collect all signals
+        # first, then if BUY and SELL exist for the same symbol on the same
+        # tick (different bots disagreeing), suppress both — they're a
+        # wash trade that costs spread but produces no net direction.
+        pending: List[tuple] = []  # (account_id, strategy, signal, order)
         for account_id, strategies in self._strategies.items():
             for strategy in strategies:
                 if not getattr(strategy, "is_active", True):
                     continue
-                if hasattr(strategy, "on_tick"):
-                    portfolio = self._portfolios.get(account_id)
-                    signal = strategy.on_tick(
-                        tick,
-                        portfolio,
-                        ohlcv_data=ohlcv_data,
-                        signal_context=signal_context,
-                    )
-                    if signal is not None and hasattr(signal, "to_order"):
-                        order = signal.to_order(account_id)
-                        if order is not None and not self._is_debounced(order):
-                            self.submit_order(order, account_id)
-                            # Auto-execute market orders immediately
-                            if order.order_type.value == "market" and tick.price:
-                                self.execute_order(order, tick.price)
-                                # Store stop-loss / take-profit on the open position
-                                pos = portfolio.get_position(tick.symbol)
-                                if pos and pos.status == "open":
-                                    if signal.stop_loss is not None:
-                                        pos.stop_loss = signal.stop_loss
-                                    if signal.take_profit is not None:
-                                        pos.take_profit = signal.take_profit
+                if not hasattr(strategy, "on_tick"):
+                    continue
+                portfolio = self._portfolios.get(account_id)
+                signal = strategy.on_tick(
+                    tick,
+                    portfolio,
+                    ohlcv_data=ohlcv_data,
+                    signal_context=signal_context,
+                )
+                if signal is None or not hasattr(signal, "to_order"):
+                    continue
+                order = signal.to_order(account_id)
+                if order is None or self._is_debounced(order):
+                    continue
+                pending.append((account_id, strategy, signal, order))
+
+        # Veto step 0 — post-close cooldown: drop BUY signals on any
+        # symbol where a SELL fill closed a position within the last
+        # ``post_close_cooldown_minutes`` window. Without this, a winning
+        # take-profit exit can immediately re-fire BUY on the same symbol
+        # at a higher price (the RXT round-trip: TP at $5.30 → +$17, then
+        # auto_discovery re-bought at $5.42 7min later → -$0.93). The
+        # cooldown gives the price action time to confirm before the bot
+        # gets back in.
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        cooldown_min = float(
+            getattr(self.config, "post_close_cooldown_minutes", None)
+            or (self.config.get("post_close_cooldown_minutes") if isinstance(self.config, dict) else 60)
+            or 60
+        )
+        cooldown_cut = _dt.now(_tz.utc) - _td(minutes=cooldown_min)
+        recent_close_symbols: set = set()
+        # Walk back through fills (most recent first) — bail once we're
+        # past the cooldown window so this stays O(window).
+        for f in reversed(self._fills[-200:]):
+            ts = f.timestamp
+            if hasattr(ts, "tzinfo") and ts.tzinfo is None:
+                ts = ts.replace(tzinfo=_tz.utc)
+            if ts < cooldown_cut:
+                break
+            side_v = getattr(f.side, "value", str(f.side)).lower()
+            if side_v == "sell":
+                recent_close_symbols.add(f.symbol)
+        cooldown_dropped: List[tuple] = []
+        if recent_close_symbols:
+            kept_pending: List[tuple] = []
+            for ent in pending:
+                _, _, _, ord_ = ent
+                side_v = getattr(ord_.side, "value", str(ord_.side)).lower()
+                if side_v == "buy" and ord_.symbol in recent_close_symbols:
+                    cooldown_dropped.append(ent)
+                else:
+                    kept_pending.append(ent)
+            if cooldown_dropped:
+                summary = ", ".join(f"{o.symbol}" for _, _, _, o in cooldown_dropped)
+                logging.getLogger("volta.engine").info(
+                    f"Post-close cooldown ({cooldown_min:.0f}min): suppressed {len(cooldown_dropped)} BUY(s) — {summary}"
+                )
+            pending = kept_pending
+
+        # Veto step 1 — opposing-side veto: if both BUY and SELL appear for
+        # the same symbol, suppress all of them (wash trade).
+        from collections import defaultdict as _dd
+        by_symbol: Dict[str, set] = _dd(set)
+        for _, _, _, ord_ in pending:
+            by_symbol[ord_.symbol].add(ord_.side.value)
+        vetoed_symbols = {sym for sym, sides in by_symbol.items() if len(sides) > 1}
+        if vetoed_symbols:
+            logging.getLogger("volta.engine").info(
+                f"Ensemble veto: opposing signals on {sorted(vetoed_symbols)} — both sides dropped"
+            )
+
+        # Veto step 2 — same-side dedup: when multiple bots fire the SAME
+        # direction on the same symbol on the same tick, only the highest-
+        # confidence signal goes through. Without this, e.g. ``squeeze`` and
+        # ``auto_discovery`` both BUYing RXT in the same tick stacks 2× the
+        # intended position size on a single ticker. Loser strategies are
+        # logged so duplicates are visible.
+        best_per_key: Dict[tuple, tuple] = {}
+        deduped_dropped: List[tuple] = []
+        for account_id, strategy, signal, order in pending:
+            if order.symbol in vetoed_symbols:
+                continue
+            key = (order.symbol, order.side.value, account_id)
+            existing = best_per_key.get(key)
+            if existing is None:
+                best_per_key[key] = (account_id, strategy, signal, order)
+                continue
+            ex_signal = existing[2]
+            ex_conf = float(getattr(ex_signal, "confidence", 0) or 0)
+            new_conf = float(getattr(signal, "confidence", 0) or 0)
+            if new_conf > ex_conf:
+                deduped_dropped.append(existing)
+                best_per_key[key] = (account_id, strategy, signal, order)
+            else:
+                deduped_dropped.append((account_id, strategy, signal, order))
+        if deduped_dropped:
+            dropped_summary = ", ".join(
+                f"{o.symbol}:{o.side.value} from {(s.strategy_id or '?')[:25]}"
+                for _, s, _, o in deduped_dropped
+            )
+            logging.getLogger("volta.engine").info(
+                f"Same-side dedup: dropped {len(deduped_dropped)} duplicate signal(s) — {dropped_summary}"
+            )
+
+        for account_id, strategy, signal, order in best_per_key.values():
+            self.submit_order(order, account_id)
+            if order.order_type.value == "market" and tick.price:
+                self.execute_order(order, tick.price)
+                # Store stop-loss / take-profit on the open position
+                portfolio = self._portfolios.get(account_id)
+                if portfolio is not None:
+                    pos = portfolio.get_position(tick.symbol)
+                    if pos and pos.status == "open":
+                        if signal.stop_loss is not None:
+                            pos.stop_loss = signal.stop_loss
+                        if signal.take_profit is not None:
+                            pos.take_profit = signal.take_profit
 
         # Check pending orders for fills.
         # In live mode the order is already at the broker after the first
@@ -681,6 +894,15 @@ class LiveTradingEngine(PaperTradingEngine):
             if held <= 0:
                 order.status = OrderStatus.REJECTED
                 self.submit_order(order, order.account_id)
+                # No position to sell — same cycle as dust SELLs. Suppress
+                # this (strategy, symbol, side) for 1 hour so the bot stops
+                # firing the same impossible SELL every 5 min.
+                if order.strategy_id:
+                    from datetime import timedelta as _td
+                    key = (order.strategy_id, order.symbol, order.side.value)
+                    self._dust_suppressed_until[key] = (
+                        datetime.now(timezone.utc) + _td(hours=1)
+                    )
                 return FillResult(
                     order_id=order.id,
                     symbol=order.symbol,
@@ -739,13 +961,33 @@ class LiveTradingEngine(PaperTradingEngine):
                     broker_order_id="",
                 )
 
-        # 4. Safety validation
-        self.safety_validator.validate_order(
-            order,
-            portfolio,
-            self.config,
-            self.daily_tracker.daily_pnl,
-        )
+        # 4. Safety validation. If the rate-limit validator raises, mark
+        # the order REJECTED so the on_tick polling loop stops retrying
+        # forever (each retry consumes more rate budget, creating a
+        # deadlock). Manual user actions (e.g. ``/portfolio/flatten``)
+        # tagged with ``strategy_id == "manual_flatten"`` bypass safety —
+        # they're an operator-initiated cleanup and shouldn't be blocked
+        # by the per-minute rate budget that strategy traffic shares.
+        try:
+            if (order.strategy_id or "") != "manual_flatten":
+                self.safety_validator.validate_order(
+                    order,
+                    portfolio,
+                    self.config,
+                    self.daily_tracker.daily_pnl,
+                )
+        except SafetyValidationError as sv_exc:
+            order.status = OrderStatus.REJECTED
+            self.submit_order(order, order.account_id)
+            logging.getLogger("volta.engine").info(
+                f"Safety rejected {order.side.value} {order.symbol}: {sv_exc}"
+            )
+            return FillResult(
+                order_id=order.id, symbol=order.symbol, filled_qty=0.0,
+                filled_price=0.0, fee=0.0, slippage=0.0,
+                timestamp=datetime.now(timezone.utc), side=order.side,
+                realized_pnl=None, broker_order_id="",
+            )
 
         # 5. Execute via broker. On exception (e.g. market closed for stocks
         # on weekends, Alpaca-incompatible symbol), persist the order as
@@ -797,6 +1039,7 @@ class LiveTradingEngine(PaperTradingEngine):
         if fill.filled_qty > 0:
             self.daily_tracker.record(fill)
             self._fills.append(fill)
+            self._persist_fill(fill, strategy_id=order.strategy_id or "")
             self._update_portfolio_on_fill(order, fill, portfolio)
             self.on_fill(fill)
 
@@ -864,6 +1107,7 @@ class LiveTradingEngine(PaperTradingEngine):
                         )
                         self.daily_tracker.record(fill)
                         self._fills.append(fill)
+                        self._persist_fill(fill, strategy_id=local_order.strategy_id or "")
                         portfolio = self.get_portfolio(account_id)
                         self._update_portfolio_on_fill(local_order, fill, portfolio)
                         self.on_fill(fill)

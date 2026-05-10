@@ -264,9 +264,16 @@ export default function BotLab() {
                 const metrics = bot.metrics as Record<string, number> | null;
                 const cfg = bot.config as Record<string, unknown>;
                 const symbolsList = Array.isArray(cfg?.symbols) ? (cfg.symbols as string[]) : null;
-                const symbolLabel = symbolsList && symbolsList.length > 0
-                  ? symbolsList.join(', ')
-                  : String(cfg?.symbol ?? '—');
+                // Truncate long lists so a 30-symbol auto_discovery doesn't
+                // eat the whole row. Show first 5 inline + "+N more" badge,
+                // full list visible on hover via the title attribute.
+                const SYM_PREVIEW = 5;
+                const fullSymbolList: string[] = symbolsList && symbolsList.length > 0
+                  ? symbolsList
+                  : (cfg?.symbol ? [String(cfg.symbol)] : []);
+                const previewSymbols = fullSymbolList.slice(0, SYM_PREVIEW);
+                const overflowCount = Math.max(0, fullSymbolList.length - SYM_PREVIEW);
+                const fullLabel = fullSymbolList.length > 0 ? fullSymbolList.join(', ') : '—';
                 const assetClassLabel = String(cfg?.asset_class ?? 'crypto').toLowerCase();
                 return (
                   <motion.div
@@ -289,7 +296,21 @@ export default function BotLab() {
                           <Badge variant={assetClassLabel === 'stock' ? 'info' : 'cyan'}>
                             {assetClassLabel === 'stock' ? 'Stock' : 'Crypto'}
                           </Badge>
-                          <span className="font-mono text-xs text-accent-cyan">{symbolLabel}</span>
+                          {fullSymbolList.length === 0 ? (
+                            <span className="font-mono text-xs text-text-muted">—</span>
+                          ) : (
+                            <span
+                              className="font-mono text-xs text-accent-cyan"
+                              title={fullLabel}
+                            >
+                              {previewSymbols.join(', ')}
+                              {overflowCount > 0 && (
+                                <span className="ml-1.5 inline-block rounded border border-accent-cyan/30 bg-accent-cyan/10 px-1.5 py-0.5 text-[10px] text-accent-cyan">
+                                  +{overflowCount} more
+                                </span>
+                              )}
+                            </span>
+                          )}
                         </div>
                         <p className="text-xs text-text-muted">{bot.strategy_id}</p>
                       </div>
