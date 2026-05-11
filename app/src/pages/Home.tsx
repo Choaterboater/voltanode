@@ -485,10 +485,17 @@ export default function Home() {
             icon={<Target className="h-5 w-5" />}
             delay={0.24}
           >
-            {perfMetrics.winRate === null ? (
+            {perfMetrics.winRate === null || perfMetrics.totalTrades === 0 ? (
               <div className="flex items-center gap-3 text-xs text-text-muted">
                 <div className="h-12 w-12 rounded-full border-2 border-dashed border-border-subtle" />
                 <span>No closed trades<br/>yet — donut fills in once<br/>SELL fills land.</span>
+              </div>
+            ) : perfMetrics.winRate === 0 ? (
+              <div className="flex items-center gap-3 text-xs text-text-muted">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-danger-red/40">
+                  <span className="font-mono text-xs text-danger-red">0/{perfMetrics.totalTrades}</span>
+                </div>
+                <span>No winners in the<br/>last {perfMetrics.totalTrades} closed trades.</span>
               </div>
             ) : (
               <div className="flex items-center gap-3">
@@ -499,8 +506,10 @@ export default function Home() {
           </MetricCard>
         </div>
 
-        {/* Section 2: Portfolio Overview */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-5 xl:gap-5">
+        {/* Section 2: Portfolio Overview — items-start so the left chart
+            panel doesn't stretch to match the (much taller) right column
+            when the allocation list has many holdings. */}
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-5 xl:gap-5">
           {/* Left: Equity Curve Chart — col-span-2 (was 3) so the right
               column gets more breathing room for the Allocation +
               Performance widgets. Height also dropped a bit. */}
@@ -603,12 +612,12 @@ export default function Home() {
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="flex-1 space-y-2">
+                <div className="grid flex-1 grid-cols-2 gap-x-3 gap-y-1.5 sm:grid-cols-3">
                   {allocList.map((asset) => (
-                    <div key={asset.name} className="flex items-center gap-2">
-                      <div className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: asset.color }} />
-                      <span className="text-xs text-text-secondary w-10">{asset.name}</span>
-                      <span className="text-xs font-mono text-text-primary">{asset.value}%</span>
+                    <div key={asset.name} className="flex items-center gap-1.5">
+                      <div className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: asset.color }} />
+                      <span className="text-xs text-text-secondary truncate">{asset.name}</span>
+                      <span className="ml-auto text-xs font-mono text-text-primary">{asset.value}%</span>
                     </div>
                   ))}
                 </div>
