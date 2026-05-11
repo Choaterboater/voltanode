@@ -44,6 +44,7 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from advisor.scanner import score_symbol
+from advisor.llm_advisor import pretrade_check
 from bot.config import SignalType
 from strategies.base import BaseStrategy, Signal
 
@@ -88,6 +89,10 @@ class SqueezeStrategy(BaseStrategy):
         "rsi_period": 14,
         "breakout_lookback": 20,
         "volume_lookback": 20,
+        # LLM pre-trade gate — same semantics as auto_discovery. Squeeze
+        # names are smaller-cap / higher-volatility, so the sanity check
+        # has higher leverage here than on majors.
+        "enable_llm_gate": True,
     }
 
     def __init__(self, *args, **kwargs):
@@ -158,21 +163,60 @@ class SqueezeStrategy(BaseStrategy):
             self._last_signal_bar[symbol] = latest_bar
             self._last_fire_ts[symbol] = now
 
+            confidence = min(1.0, score.score / 100.0)
+            metadata = {
+                "trigger": "squeeze_technical_entry",
+                "score": score.score,
+                "direction": score.direction,
+                "components": {k: v.signal for k, v in score.components.items()},
+                "rsi": score.components["rsi"].value if "rsi" in score.components else None,
+                "rel_volume": score.components["rel_volume"].value if "rel_volume" in score.components else None,
+                "breakout_signal": score.components["breakout"].signal if "breakout" in score.components else None,
+            }
+
+            # LLM pre-trade gate — same opt-in pattern as auto_discovery.
+            if cfg.get("enable_llm_gate", True):
+                try:
+                    verdict = pretrade_check(
+                        symbol=symbol,
+                        side="BUY",
+                        confidence=confidence,
+                        indicators={
+                            "score": score.score,
+                            "rsi": metadata.get("rsi"),
+                            "rel_volume": metadata.get("rel_volume"),
+                            "breakout": metadata.get("breakout_signal"),
+                        },
+                        current_price=current_price,
+                    )
+                    if verdict.get("verdict") == "veto":
+                        self._last_side[symbol] = last_side  # release latch
+                        return Signal(
+                            strategy_id=self.strategy_id,
+                            symbol=symbol,
+                            signal_type=SignalType.HOLD,
+                            confidence=0.0,
+                            timestamp=pd.Timestamp.now(),
+                            metadata={
+                                "trigger": "llm_veto",
+                                "llm_reason": verdict.get("reason", ""),
+                                "llm_model": verdict.get("model", ""),
+                                "original_trigger": "squeeze_technical_entry",
+                                "score": score.score,
+                            },
+                        )
+                    metadata["llm_gate"] = verdict.get("verdict", "proceed")
+                    metadata["llm_cached"] = verdict.get("cached", False)
+                except Exception:
+                    metadata["llm_gate"] = "error_proceed"
+
             sig = Signal(
                 strategy_id=self.strategy_id,
                 symbol=symbol,
                 signal_type=SignalType.BUY,
-                confidence=min(1.0, score.score / 100.0),
+                confidence=confidence,
                 timestamp=pd.Timestamp.now(),
-                metadata={
-                    "trigger": "squeeze_technical_entry",
-                    "score": score.score,
-                    "direction": score.direction,
-                    "components": {k: v.signal for k, v in score.components.items()},
-                    "rsi": score.components["rsi"].value if "rsi" in score.components else None,
-                    "rel_volume": score.components["rel_volume"].value if "rel_volume" in score.components else None,
-                    "breakout_signal": score.components["breakout"].signal if "breakout" in score.components else None,
-                },
+                metadata=metadata,
                 suggested_size=(pos_pct * 1000.0) / current_price if current_price > 0 else 0.0,
                 stop_loss=current_price * (1 - sl_pct),
                 take_profit=current_price * (1 + tp_pct),

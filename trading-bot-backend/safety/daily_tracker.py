@@ -31,7 +31,11 @@ class DailyPnlTracker:
         self.daily_pnl: float = 0.0
         self.trades_today: List[TradeRecord] = []
         self._reset_date: date = datetime.now(timezone.utc).date()
-        self._cost_basis: dict = {}  # symbol -> avg entry price
+        self._cost_basis: dict = {}  # symbol -> avg entry price (today only)
+        # Net qty per symbol for the day. Used to weight cost-basis updates
+        # correctly when buys and sells interleave (buy 100 / sell 50 / buy 50
+        # must not weight the second buy against 100, only against 50).
+        self._net_qty: dict = {}
 
     def record(self, fill: FillResult) -> float:
         """Record a fill and compute its contribution to daily P&L.
@@ -62,21 +66,30 @@ class DailyPnlTracker:
 
         symbol = fill.symbol
         if fill.side == OrderSide.SELL:
+            # PnL on the closed portion only; if no basis yet today (sell of
+            # a pre-existing position) fall back to fill_price → 0 PnL.
             basis = self._cost_basis.get(symbol, fill.filled_price)
             pnl = (fill.filled_price - basis) * fill.filled_qty - fill.fee
-            # Reduce or clear cost basis
-            if symbol in self._cost_basis:
-                # Simple model: clear on first sell — tracks net position pnl
-                pass
+            new_qty = self._net_qty.get(symbol, 0.0) - fill.filled_qty
+            if new_qty <= 1e-12:
+                # Position fully closed today — drop basis so a re-entry
+                # later in the day starts fresh instead of inheriting stale.
+                self._cost_basis.pop(symbol, None)
+                self._net_qty.pop(symbol, None)
+            else:
+                self._net_qty[symbol] = new_qty
             return pnl
         else:
-            # Buy — update running cost basis (weighted average)
+            # Buy — update running cost basis weighted by current net qty
+            # (not naive sum of today's BUYs, which double-counts when a
+            # SELL has already reduced the position).
             old_basis = self._cost_basis.get(symbol, 0.0)
-            old_qty = sum(t.fill.filled_qty for t in self.trades_today if t.fill.symbol == symbol and t.fill.side == OrderSide.BUY)
+            old_qty = max(0.0, self._net_qty.get(symbol, 0.0))
             total_qty = old_qty + fill.filled_qty
             if total_qty > 0:
                 new_basis = (old_basis * old_qty + fill.filled_price * fill.filled_qty) / total_qty
                 self._cost_basis[symbol] = new_basis
+                self._net_qty[symbol] = total_qty
             return 0.0  # No realized P&L on buys
 
     def _check_reset(self) -> None:
@@ -86,6 +99,7 @@ class DailyPnlTracker:
             self.daily_pnl = 0.0
             self.trades_today.clear()
             self._cost_basis.clear()
+            self._net_qty.clear()
             self._reset_date = today
 
     def get_status(self) -> dict:

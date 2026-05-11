@@ -214,6 +214,52 @@ class BaseStrategy(ABC):
                             "original_trigger": (signal.metadata or {}).get("trigger"),
                         },
                     )
+            # Position-aware SELL gate: clamp suggested_size to held qty;
+            # downgrade to HOLD when nothing is held or qty is dust. Without
+            # this, fixed-dollar SELL sizing can submit qty=0 (rounded down)
+            # or a positive qty on symbols we don't hold (the broker just
+            # rejects, but it logs rate-limit pressure and noise).
+            if signal is not None and signal.signal_type == SignalType.SELL and portfolio is not None:
+                try:
+                    pos = portfolio.get_position(tick.symbol)
+                except Exception:
+                    pos = None
+                held = float(getattr(pos, "size", 0)) if pos is not None else 0.0
+                # Treat anything below 1e-9 as zero — covers float-noise residuals.
+                if held <= 1e-9:
+                    import logging as _log
+                    _log.getLogger("volta.engine").debug(
+                        f"position-aware gate: {self.strategy_id} SELL on {tick.symbol} "
+                        f"suppressed — nothing held"
+                    )
+                    return Signal(
+                        strategy_id=self.strategy_id,
+                        symbol=tick.symbol,
+                        signal_type=SignalType.HOLD,
+                        confidence=0.0,
+                        timestamp=signal.timestamp,
+                        metadata={
+                            "trigger": "no_position_to_sell",
+                            "original_trigger": (signal.metadata or {}).get("trigger"),
+                        },
+                    )
+                if signal.suggested_size is not None and signal.suggested_size > held:
+                    signal.suggested_size = held
+                    (signal.metadata or {})["sell_clamped_from"] = "oversize"
+                # Final dust check — qty=0 (post-clamp rounding) should not
+                # leave the strategy; let the engine treat as HOLD.
+                if signal.suggested_size is not None and signal.suggested_size <= 1e-9:
+                    return Signal(
+                        strategy_id=self.strategy_id,
+                        symbol=tick.symbol,
+                        signal_type=SignalType.HOLD,
+                        confidence=0.0,
+                        timestamp=signal.timestamp,
+                        metadata={
+                            "trigger": "sell_qty_dust",
+                            "original_trigger": (signal.metadata or {}).get("trigger"),
+                        },
+                    )
             return signal
         return None
 
@@ -316,6 +362,30 @@ class BaseStrategy(ABC):
     def _record_signal(self, signal: Signal) -> None:
         """Record a generated signal in history."""
         self._history.append(signal)
+
+    @staticmethod
+    def _bar_key(index_value: Any) -> Any:
+        """Stable per-bar identity for the signal-latch dict.
+
+        Different fetchers can return DataFrames where the last bar is a
+        ``pd.Timestamp`` (with or without tz), a python ``datetime``, a
+        numpy datetime64, or even a positional int. Comparing those raw
+        values cross-type silently fails (the latch never matches), and
+        the strategy re-fires the same signal every tick. Normalize to a
+        tz-aware UTC ``pd.Timestamp`` when possible, else a string. Same
+        bar -> same key regardless of source representation.
+        """
+        if index_value is None:
+            return None
+        try:
+            ts = pd.Timestamp(index_value)
+            if ts.tz is None:
+                ts = ts.tz_localize("UTC")
+            else:
+                ts = ts.tz_convert("UTC")
+            return ts
+        except Exception:
+            return str(index_value)
 
     @staticmethod
     def _ensure_columns(data: pd.DataFrame) -> pd.DataFrame:

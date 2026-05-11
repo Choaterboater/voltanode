@@ -11,8 +11,37 @@ import {
   type ApiTrade,
   type EquityPoint,
 } from '@/lib/api';
-import type { Portfolio, Position, Trade, MarketTicker } from '@/types';
-import { bots, alerts } from '@/data/mockData';
+import type { Portfolio, Position, Trade, MarketTicker, AlertItem } from '@/types';
+
+function deriveAlerts(trades: Trade[], err: string | null): AlertItem[] {
+  // Honest, real-only alerts: recent trade fills + any current backend error.
+  // No mock data — empty list is acceptable when nothing has happened.
+  const items: AlertItem[] = [];
+  if (err) {
+    items.push({
+      id: `err-${Date.now()}`,
+      type: 'system',
+      title: 'Backend error',
+      message: err,
+      timestamp: 'now',
+      icon: 'AlertTriangle',
+      severity: 'error',
+    });
+  }
+  for (const t of trades.slice(0, 5)) {
+    const win = t.pnl > 0;
+    items.push({
+      id: `trade-${t.id}`,
+      type: 'trade',
+      title: `${t.side === 'long' ? 'Buy' : 'Sell'} ${t.symbol}`,
+      message: `${t.side === 'long' ? 'Bought' : 'Sold'} ${t.size} ${t.symbol} @ $${t.price.toFixed(2)} via ${t.strategy}`,
+      timestamp: t.time,
+      icon: win ? 'CheckCircle' : 'Target',
+      severity: win ? 'success' : t.pnl < 0 ? 'warning' : 'info',
+    });
+  }
+  return items;
+}
 
 export interface AllocationSlice { name: string; value: number; color: string }
 export interface PerformanceMetrics {
@@ -218,8 +247,7 @@ export function useDashboardData() {
     loading,
     error,
     refetch: load,
-    bots,
-    alerts,
+    alerts: deriveAlerts(trades, error),
     equityHistory,
     allocation,
     performance: perf,

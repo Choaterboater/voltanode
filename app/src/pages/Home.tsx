@@ -43,7 +43,6 @@ import Badge from '@/components/Badge';
 import StatusDot from '@/components/StatusDot';
 import DataTable from '@/components/DataTable';
 import type { Trade } from '@/types';
-import { alerts } from '@/data/mockData';
 
 const timeRanges = ['1H', '24H', '7D', '30D', 'ALL'];
 
@@ -223,6 +222,7 @@ export default function Home() {
     equityHistory,
     allocation,
     performance: perfMetricsRaw,
+    alerts,
   } = useDashboardData();
   const perfMetrics = perfMetricsRaw ?? {
     winRate: null, sharpeRatio: null, maxDrawdownPercent: null,
@@ -863,6 +863,11 @@ export default function Home() {
               </button>
             </div>
             <div className="space-y-2">
+              {alerts.length === 0 && (
+                <div className="rounded-lg border border-border-subtle bg-bg-surface p-3 text-xs text-text-muted">
+                  No recent activity.
+                </div>
+              )}
               {alerts.map((alert, index) => (
                 <motion.div
                   key={alert.id}

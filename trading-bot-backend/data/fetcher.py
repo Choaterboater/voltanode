@@ -277,6 +277,18 @@ class MarketData:
             self.cache.store_price(symbol, price)
             return price
         except Exception as e:
+            # CG is rate-limit-prone (429) and occasionally degrades. Fall back
+            # to the most recent cached price (within 1 hour) so strategies see
+            # *some* real number instead of skipping every tick. Stale price is
+            # less risky than an unhandled exception that breaks the whole run
+            # loop. Operator sees a WARNING so the degradation isn't silent.
+            stale = self.cache.get_price(symbol, ttl_seconds=3600.0)
+            if stale is not None:
+                logger.warning(
+                    "CG price fetch failed for %s: %s. Serving stale cache.",
+                    symbol, e,
+                )
+                return stale
             raise RuntimeError(f"Failed to fetch crypto price: {e}") from e
 
     async def get_crypto_ohlcv(
@@ -344,6 +356,15 @@ class MarketData:
             return df.tail(days).reset_index(drop=True)
 
         except Exception as e:
+            # Soft fallback: serve any cached OHLCV (even past freshness
+            # threshold) so a CG outage doesn't kill all crypto strategies.
+            stale = self.cache.get_ohlcv(symbol, interval)
+            if stale is not None and not stale.empty:
+                logger.warning(
+                    "CG OHLCV fetch failed for %s: %s. Serving stale cache (%d bars).",
+                    symbol, e, len(stale),
+                )
+                return stale.tail(days).reset_index(drop=True)
             raise RuntimeError(f"Failed to fetch crypto OHLCV: {e}") from e
 
     async def get_crypto_market_chart(

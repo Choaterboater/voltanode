@@ -75,7 +75,7 @@ class SimpleTrendStrategy(BaseStrategy):
         # Per-bar latch — strategy is called every ~5s tick but bars roll
         # over only daily/hourly. Once we've fired on this bar, hold until
         # the bar advances regardless of intra-bar EMA oscillation.
-        latest_bar = data.index[-1] if len(data.index) else None
+        latest_bar = self._bar_key(data.index[-1] if len(data.index) else None)
         if latest_bar is not None and self._last_signal_bar.get(symbol) == latest_bar:
             return Signal(
                 strategy_id=self.strategy_id,

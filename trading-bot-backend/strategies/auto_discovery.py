@@ -27,6 +27,7 @@ from typing import Any, Dict
 import pandas as pd
 
 from advisor.scanner import score_symbol
+from advisor.llm_advisor import pretrade_check
 from bot.config import SignalType
 from strategies.base import BaseStrategy, Signal
 
@@ -74,6 +75,11 @@ class AutoDiscoveryStrategy(BaseStrategy):
         # Direction filter: "long_only" (default), "short_only", or "both". Most
         # paper/live brokers don't support shorting crypto so long_only is safe.
         "direction_mode": "long_only",
+        # LLM pre-trade gate — when True, every entry BUY (or SELL when
+        # short_only) gets a sanity-check from the OpenRouter Haiku chain
+        # before submission. Cached 60s per (symbol, side); fails OPEN so
+        # an LLM outage never blocks trading.
+        "enable_llm_gate": True,
         # Watchlist auto-include — merge symbols from data/watchlist.json
         # whose ``source`` is in ``watchlist_source_allowlist`` into the
         # universe each tick. Lets external apps (e.g. an alerts pipeline
@@ -235,21 +241,62 @@ class AutoDiscoveryStrategy(BaseStrategy):
 
             signal_type = SignalType.BUY if wants_long else SignalType.SELL
             confidence = min(1.0, score.score / 100.0)
+            metadata = {
+                "trigger": "entry_score_crossed",
+                "score": score.score,
+                "direction": score.direction,
+                "components": {k: v.signal for k, v in score.components.items()},
+                "rsi": score.components.get("rsi").value if "rsi" in score.components else None,
+                "rel_volume": score.components.get("rel_volume").value if "rel_volume" in score.components else None,
+                "breakout_signal": score.components.get("breakout").signal if "breakout" in score.components else None,
+            }
+
+            # Optional LLM pre-trade gate. Veto downgrades entry to HOLD,
+            # records the rationale in metadata, and releases the per-side
+            # latch so a future tick can re-attempt once cache expires.
+            if self.config.get("enable_llm_gate", True):
+                try:
+                    verdict = pretrade_check(
+                        symbol=symbol,
+                        side="BUY" if signal_type == SignalType.BUY else "SELL",
+                        confidence=confidence,
+                        indicators={
+                            "score": score.score,
+                            "rsi": metadata.get("rsi"),
+                            "rel_volume": metadata.get("rel_volume"),
+                            "breakout": metadata.get("breakout_signal"),
+                        },
+                        current_price=current_price,
+                    )
+                    if verdict.get("verdict") == "veto":
+                        self._last_side[symbol] = last_side  # release latch
+                        return Signal(
+                            strategy_id=self.strategy_id,
+                            symbol=symbol,
+                            signal_type=SignalType.HOLD,
+                            confidence=0.0,
+                            timestamp=pd.Timestamp.now(),
+                            metadata={
+                                "trigger": "llm_veto",
+                                "llm_reason": verdict.get("reason", ""),
+                                "llm_model": verdict.get("model", ""),
+                                "original_trigger": "entry_score_crossed",
+                                "score": score.score,
+                            },
+                        )
+                    metadata["llm_gate"] = verdict.get("verdict", "proceed")
+                    metadata["llm_cached"] = verdict.get("cached", False)
+                except Exception:
+                    # Never let LLM gate failure block trading; fall through
+                    metadata["llm_gate"] = "error_proceed"
+
             sig = Signal(
                 strategy_id=self.strategy_id,
                 symbol=symbol,
                 signal_type=signal_type,
                 confidence=confidence,
                 timestamp=pd.Timestamp.now(),
-                metadata={
-                    "trigger": "entry_score_crossed",
-                    "score": score.score,
-                    "direction": score.direction,
-                    "components": {k: v.signal for k, v in score.components.items()},
-                    "rsi": score.components.get("rsi").value if "rsi" in score.components else None,
-                    "rel_volume": score.components.get("rel_volume").value if "rel_volume" in score.components else None,
-                    "breakout_signal": score.components.get("breakout").signal if "breakout" in score.components else None,
-                },
+                metadata=metadata,
                 suggested_size=(pos_pct * 1000.0) / current_price if current_price > 0 else 0.0,
                 stop_loss=current_price * (1 - sl_pct) if signal_type == SignalType.BUY else current_price * (1 + sl_pct),
                 take_profit=current_price * (1 + tp_pct) if signal_type == SignalType.BUY else current_price * (1 - tp_pct),

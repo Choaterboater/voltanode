@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -88,6 +89,9 @@ class PaperTradingEngine:
         # Optional file-backed fill persistence so trade history survives
         # restarts. Set via set_fills_persistence(path).
         self._fills_path: Optional[Any] = None
+        # Serialize JSONL appends — async tick loop can fan out concurrent
+        # fills, and unsynchronized writes interleave (corrupt) lines.
+        self._fills_write_lock = threading.Lock()
 
         # Initialize default account
         default_balance = config.backtest.default_initial_balance if config.backtest else {"USDT": 10000.0}
@@ -267,10 +271,13 @@ class PaperTradingEngine:
                 "broker_order_id": fill.broker_order_id,
                 "strategy_id": strategy_id,
             }
-            with self._fills_path.open("a") as f:
-                f.write(_json.dumps(row) + "\n")
-        except Exception:
-            pass
+            line = _json.dumps(row) + "\n"
+            with self._fills_write_lock, self._fills_path.open("a") as f:
+                f.write(line)
+        except Exception as exc:
+            logging.getLogger("volta.engine").warning(
+                "fills.jsonl write failed: %s", exc
+            )
 
     def _is_debounced(self, order: Order) -> bool:
         """Per-(strategy, symbol, side) cooldown to prevent tick-spam when an
@@ -730,7 +737,17 @@ class PaperTradingEngine:
                 if getattr(strategy, "strategy_id", None) != owning_strategy_id:
                     continue
                 if hasattr(strategy, "on_fill"):
-                    strategy.on_fill(fill, portfolio)
+                    # Isolate per-strategy callback failures: portfolio +
+                    # fill log are already mutated, so a raised exception
+                    # here would leave the post-fill safety check unrun and
+                    # the caller observing inconsistent engine state.
+                    try:
+                        strategy.on_fill(fill, portfolio)
+                    except Exception as exc:
+                        logging.getLogger("volta.engine").warning(
+                            "strategy %s on_fill raised: %s",
+                            owning_strategy_id, exc,
+                        )
 
     # ── Queries ──
 
@@ -845,9 +862,15 @@ class LiveTradingEngine(PaperTradingEngine):
         # rejected as dust, drop silently. Avoids the "every 5 min the cooldown
         # expires, the bot retries, dust skip rejects, log spam" cycle.
         if order.strategy_id:
+            now_utc = datetime.now(timezone.utc)
+            # Opportunistic cleanup so the dict stays bounded by active churn
+            # rather than growing unbounded over weeks of operation.
+            expired = [k for k, t in self._dust_suppressed_until.items() if t <= now_utc]
+            for k in expired:
+                self._dust_suppressed_until.pop(k, None)
             key = (order.strategy_id, order.symbol, order.side.value)
             until = self._dust_suppressed_until.get(key)
-            if until is not None and until > datetime.now(timezone.utc):
+            if until is not None and until > now_utc:
                 order.status = OrderStatus.REJECTED
                 return FillResult(
                     order_id=order.id, symbol=order.symbol, filled_qty=0.0,
