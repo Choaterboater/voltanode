@@ -388,6 +388,14 @@ async def configure_safety(request: Request, body: SafetyConfigRequest) -> dict:
     if body.blocked_symbols is not None:
         safety.blocked_symbols = body.blocked_symbols
 
+    # Push the new max_orders_per_minute to the live rate limiter. The
+    # rest of the limits are read through ``self.config`` on each call so
+    # they pick up the mutation automatically — the rate limiter caches
+    # ``max_per_minute`` at construction time, so we have to update it.
+    engine = _get_engine(request)
+    if engine is not None and hasattr(engine, "safety_validator"):
+        engine.safety_validator.rate_limiter.max_per_minute = safety.max_orders_per_minute
+
     return {
         "max_daily_loss_pct": safety.max_daily_loss_pct,
         "max_position_size_pct": safety.max_position_size_pct,

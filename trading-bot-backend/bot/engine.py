@@ -813,7 +813,12 @@ class LiveTradingEngine(PaperTradingEngine):
         self.live_mode = True
         self.kill_switch = KillSwitch()
         self.daily_tracker = DailyPnlTracker()
-        self.safety_validator = SafetyValidator()
+        # Pass config.safety so the validator reflects operator-tuned limits
+        # (e.g. max_exposure_pct, max_orders_per_minute) instead of the
+        # hardcoded SafetyConfig defaults (50% / 10/min). Mutating
+        # config.safety via POST /settings/safety is then immediately
+        # visible to get_status / get_remaining via the shared reference.
+        self.safety_validator = SafetyValidator(config.safety)
 
         if notifier is None:
             # Build notifier from safety config
