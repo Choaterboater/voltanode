@@ -37,7 +37,7 @@ const features = [
 
 export default function About() {
   return (
-    <Layout title="About">
+    <Layout>
       <div className="mx-auto max-w-3xl space-y-8">
         {/* Hero */}
         <motion.div

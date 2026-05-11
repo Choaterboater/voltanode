@@ -268,7 +268,7 @@ export default function Watchlist() {
   };
 
   return (
-    <Layout title="Watchlist">
+    <Layout>
       <div className="px-4 sm:px-6 lg:px-8 py-8 max-w-7xl mx-auto space-y-5">
         {/* Header */}
         <motion.div
@@ -400,15 +400,56 @@ export default function Watchlist() {
             </div>
           )}
           {!loading && items.length === 0 && (
-            <div className="p-10 flex flex-col items-center justify-center gap-2">
-              <Eye className="h-7 w-7 text-text-muted" />
-              <p className="text-sm text-text-primary">
+            <div className="p-10 flex flex-col items-center justify-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent-cyan/10">
+                <Eye className="h-6 w-6 text-accent-cyan" />
+              </div>
+              <p className="text-base font-semibold text-text-primary">
                 Your watchlist is empty
               </p>
-              <p className="text-xs text-text-muted text-center max-w-xs">
-                Add symbols manually with the <strong>Add</strong> button, or
-                promote picks from the <strong>Squeeze</strong> screener.
+              <p className="text-xs text-text-muted text-center max-w-md">
+                Track tickers across the app — the Advisor, Squeeze screener, and
+                Scanner can all promote picks here. Or seed it now with a one-click suggestion.
               </p>
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                {[
+                  { sym: 'BTC', type: 'crypto' as const },
+                  { sym: 'ETH', type: 'crypto' as const },
+                  { sym: 'AAPL', type: 'stock' as const },
+                  { sym: 'NVDA', type: 'stock' as const },
+                  { sym: 'SPY', type: 'stock' as const },
+                ].map(({ sym, type }) => (
+                  <button
+                    key={sym}
+                    onClick={async () => {
+                      try {
+                        await add(sym, type, { source: 'manual' });
+                        await reload();
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full border border-border-subtle bg-bg-elevated px-3 py-1 text-xs font-mono text-text-primary hover:border-accent-cyan hover:text-accent-cyan transition-colors"
+                  >
+                    <Plus className="h-3 w-3" /> {sym}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-3 flex items-center gap-3 text-xs text-text-muted">
+                <button
+                  onClick={() => navigate('/squeeze')}
+                  className="inline-flex items-center gap-1 text-accent-cyan hover:underline"
+                >
+                  <Flame className="h-3 w-3" /> Open Squeeze
+                </button>
+                <span aria-hidden>·</span>
+                <button
+                  onClick={() => navigate('/advisor')}
+                  className="inline-flex items-center gap-1 text-accent-cyan hover:underline"
+                >
+                  <Sparkles className="h-3 w-3" /> Open Advisor
+                </button>
+              </div>
             </div>
           )}
           {filtered.length > 0 && (

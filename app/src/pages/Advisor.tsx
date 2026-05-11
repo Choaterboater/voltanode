@@ -602,7 +602,7 @@ export default function Advisor() {
   const quickSelect = assetType === 'crypto' ? quickSelectCrypto : quickSelectStocks;
 
   return (
-    <Layout title="Advisor">
+    <Layout>
       <div className="mx-auto max-w-5xl space-y-5">
         {/* Hero Header */}
         <motion.div
