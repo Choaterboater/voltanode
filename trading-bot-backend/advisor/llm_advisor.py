@@ -505,3 +505,124 @@ def _clamp_verdict_swing(ta_verdict: str, llm_verdict: str) -> str:
     direction = 1 if llm_idx > ta_idx else -1
     clamped_idx = max(0, min(len(_VERDICT_LADDER) - 1, ta_idx + direction))
     return _VERDICT_LADDER[clamped_idx]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Pre-trade LLM gate (used by auto_discovery / squeeze before a BUY fires)
+# ──────────────────────────────────────────────────────────────────────────
+#
+# Lightweight sanity check that runs in the strategy hot path before an
+# auto-discovered BUY is submitted. Keeps prompts tiny (~200 tokens) and
+# caches verdicts per (symbol, side) for 60s so a flapping signal doesn't
+# burn the LLM budget. Fails OPEN — if the LLM is unreachable or slow we
+# proceed with the original signal rather than block all trades.
+#
+# Cost envelope: with auto_discovery + squeeze covering ~30 symbols and a
+# 60s cache TTL, worst case is ~30 calls/min (~1800/hr). On the OpenRouter
+# free chain that's well inside daily limits.
+
+_PRETRADE_CACHE: Dict[tuple, Dict[str, Any]] = {}
+_PRETRADE_TTL_SECONDS: float = 60.0
+
+
+def _pretrade_prompt(symbol: str, side: str, confidence: float, indicators: Dict[str, Any], current_price: float) -> str:
+    rsi = indicators.get("rsi")
+    breakout = indicators.get("breakout")
+    rel_vol = indicators.get("rel_volume")
+    score = indicators.get("score")
+    return f"""You are a risk reviewer for an automated trading bot. The bot wants to {side} {symbol} based on a technical setup. Decide if there is anything OBVIOUSLY wrong with this trade right now.
+
+SETUP:
+- side: {side}
+- symbol: {symbol}
+- current_price: {current_price}
+- bot_confidence: {confidence:.2f}
+- indicators:
+  - composite_score: {score}
+  - rsi: {rsi}
+  - breakout_position: {breakout}
+  - relative_volume: {rel_vol}
+
+Reply with ONE LINE of valid JSON, no markdown:
+{{"verdict":"proceed"|"veto","reason":"<one short phrase>"}}
+
+Rules:
+- "proceed" by default — only "veto" if the setup is clearly broken (RSI > 85 chasing on a BUY, RSI < 15 on a SELL with no oversold reversion sign, near-zero volume, contradictory readings).
+- Be conservative about vetoing — false positives stop the bot from making money.
+- Do NOT veto based on missing data; treat missing as neutral.
+- "reason" max 12 words."""
+
+
+def _parse_pretrade(raw: str) -> Dict[str, Any]:
+    """Parse the LLM's one-line JSON. Fail-open: any error → proceed."""
+    try:
+        # Strip markdown fences if the model returned them despite instructions.
+        s = raw.strip()
+        if s.startswith("```"):
+            s = s.split("```", 2)[1]
+            if s.lower().startswith("json"):
+                s = s[4:]
+            s = s.strip("` \n")
+        obj = json.loads(s)
+        verdict = str(obj.get("verdict", "")).strip().lower()
+        if verdict not in ("proceed", "veto"):
+            verdict = "proceed"
+        reason = str(obj.get("reason", ""))[:80]
+        return {"verdict": verdict, "reason": reason}
+    except Exception:
+        return {"verdict": "proceed", "reason": "parse_error"}
+
+
+def pretrade_check(
+    symbol: str,
+    side: str,
+    confidence: float,
+    indicators: Dict[str, Any],
+    current_price: float,
+    timeout: float = 3.0,
+    ttl: float = _PRETRADE_TTL_SECONDS,
+) -> Dict[str, Any]:
+    """Synchronous LLM sanity check for a pending trade. Returns dict with
+    keys ``verdict`` (proceed|veto), ``reason``, ``cached``, ``model``.
+
+    Cached for ``ttl`` seconds per (symbol, side). Fails open on any error:
+    if the LLM is unreachable or times out, returns proceed so the bot is
+    never blocked by an LLM outage.
+    """
+    import time
+
+    key = (str(symbol).upper(), str(side).upper())
+    now = time.monotonic()
+    cached = _PRETRADE_CACHE.get(key)
+    if cached and cached["expires_at"] > now:
+        return {**cached["result"], "cached": True}
+
+    provider = (os.environ.get("LLM_PROVIDER") or "openrouter").strip().lower()
+    api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY", "")
+    if not api_key:
+        return {"verdict": "proceed", "reason": "no_llm_key", "cached": False, "model": ""}
+
+    prompt = _pretrade_prompt(symbol, side, confidence, indicators, current_price)
+    raw: Optional[str] = None
+    model_name = ""
+    # Fast chain only — pretrade is hot path, no heavy frontier models.
+    for candidate in _openrouter_model_chain(heavy=False):
+        raw = _call_openai_compat(
+            prompt,
+            candidate,
+            "https://openrouter.ai/api/v1",
+            api_key,
+            timeout=timeout,
+        )
+        if raw:
+            model_name = candidate
+            break
+
+    if not raw:
+        # Don't cache failures — next call gets another shot.
+        return {"verdict": "proceed", "reason": "llm_unreachable", "cached": False, "model": ""}
+
+    result = _parse_pretrade(raw)
+    result["model"] = model_name
+    _PRETRADE_CACHE[key] = {"expires_at": now + ttl, "result": result}
+    return {**result, "cached": False}
