@@ -85,7 +85,7 @@ class MeanReversionStrategy(BaseStrategy):
 
         # Per-bar latch — tick frequency >> bar frequency, so without this
         # the same RSI/BB condition fires on every tick all day.
-        latest_bar = data.index[-1] if len(data.index) else None
+        latest_bar = self._bar_key(data.index[-1] if len(data.index) else None)
         if latest_bar is not None and self._last_signal_bar.get(symbol) == latest_bar:
             return Signal(
                 strategy_id=self.strategy_id,

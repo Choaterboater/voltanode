@@ -273,7 +273,10 @@ def create_app() -> FastAPI:
                     real_broker = get_broker(broker_name)
                     api_key = key_store.decrypt(broker_cfg.api_key_encrypted)
                     api_secret = key_store.decrypt(broker_cfg.api_secret_encrypted)
-                    real_broker.connect(
+                    # Run sync HTTP connect off the event loop so the
+                    # listener can bind without waiting on broker round-trip.
+                    await asyncio.to_thread(
+                        real_broker.connect,
                         api_key, api_secret,
                         testnet=getattr(broker_cfg, "testnet", True),
                         paper=getattr(broker_cfg, "paper", True),
@@ -375,32 +378,48 @@ def create_app() -> FastAPI:
                     attached += 1
                 if attached:
                     logger.info(f"Auto-attached default stops to {attached} restored position(s)")
-                # Prime _current_prices so the portfolio endpoint can show
-                # real P&L immediately. Otherwise stocks show $0 unrealized
-                # until the tick loop happens to pull each one.
+                # Prime _current_prices in the background so startup can
+                # finish binding the listener immediately. Before this fix
+                # the sequential CG fetch loop blocked startup for 60-90s
+                # whenever CoinGecko was rate-limiting. The tick loop will
+                # fill any missing prices on its first pass anyway; this
+                # priming just shortens the window where the portfolio
+                # endpoint reports $0 unrealized PnL.
                 from bot.config import AssetClass as _AC
-                primed = 0
-                for p in broker_positions or []:
-                    sym = (p.get("symbol") or "").upper()
-                    if not sym:
-                        continue
-                    # Strip USD suffix for crypto, otherwise treat as stock.
-                    if sym.endswith("USD") and len(sym) > 3:
-                        bot_sym = sym[:-3]
-                        ac = _AC.CRYPTO
-                    else:
-                        bot_sym = sym
-                        ac = _AC.STOCK
-                    try:
-                        price = await market_data.get_price(bot_sym, ac)
-                        if price and price > 0:
-                            engine._current_prices[bot_sym] = price
-                            engine._current_prices[sym] = price
-                            primed += 1
-                    except Exception:
-                        continue
-                if primed:
-                    logger.info(f"Primed {primed} live price(s) for held positions")
+
+                async def _prime_prices_background(positions: list) -> None:
+                    primed = 0
+                    # Parallel fetches with bounded concurrency — at most 4
+                    # outstanding CG/Yahoo requests so we don't trip 429s
+                    # any worse than we already do.
+                    sem = asyncio.Semaphore(4)
+
+                    async def _one(p: dict) -> None:
+                        nonlocal primed
+                        sym = (p.get("symbol") or "").upper()
+                        if not sym:
+                            return
+                        if sym.endswith("USD") and len(sym) > 3:
+                            bot_sym = sym[:-3]
+                            ac = _AC.CRYPTO
+                        else:
+                            bot_sym = sym
+                            ac = _AC.STOCK
+                        async with sem:
+                            try:
+                                price = await market_data.get_price(bot_sym, ac)
+                                if price and price > 0:
+                                    engine._current_prices[bot_sym] = price
+                                    engine._current_prices[sym] = price
+                                    primed += 1
+                            except Exception:
+                                return
+
+                    await asyncio.gather(*[_one(p) for p in positions])
+                    if primed:
+                        logger.info(f"Primed {primed} live price(s) for held positions")
+
+                asyncio.create_task(_prime_prices_background(list(broker_positions or [])))
         except Exception as exc:
             logger.warning(f"Broker position sync failed: {exc}")
 
@@ -436,11 +455,24 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS — permissive for local dev, strict for production
-    origins = ["http://localhost:3000", "http://localhost:3001", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:3001", "http://127.0.0.1:5173"]
+    # CORS — always include the local dev ports so a fresh checkout works
+    # without configuration; UNION extra origins from config.yaml and the
+    # BOT_API__CORS_ORIGINS env var on top. Set the env var to a comma-
+    # separated list to whitelist additional origins (e.g. a custom vite
+    # port or a deployed frontend domain).
+    origins = [
+        f"http://{host}:{port}"
+        for host in ("localhost", "127.0.0.1")
+        for port in (3000, 3001, 3002, 5173)
+    ]
     if config.api and config.api.cors_origins:
         for o in config.api.cors_origins:
             if o not in origins:
+                origins.append(o)
+    env_origins = os.environ.get("BOT_API__CORS_ORIGINS", "").strip()
+    if env_origins:
+        for o in [s.strip() for s in env_origins.split(",")]:
+            if o and o not in origins:
                 origins.append(o)
     app.add_middleware(
         CORSMiddleware,

@@ -75,7 +75,7 @@ class MomentumStrategy(BaseStrategy):
         # Per-bar latch: skip if we already fired on this bar's index. Bars
         # come in daily here so without this we'd re-fire the same cross
         # every ~5s for the rest of the day.
-        latest_bar = data.index[-1] if len(data.index) else None
+        latest_bar = self._bar_key(data.index[-1] if len(data.index) else None)
         if latest_bar is not None and self._last_signal_bar.get(symbol) == latest_bar:
             return Signal(
                 strategy_id=self.strategy_id,
