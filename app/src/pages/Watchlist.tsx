@@ -162,11 +162,11 @@ export default function Watchlist() {
   const [sortKey, setSortKey] = useState<SortKey>('added_at');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
-  const reload = async () => {
+  const reload = async (opts?: { nocache?: boolean }) => {
     setLoading(true);
     setError(null);
     try {
-      const enriched = await fetchEnriched();
+      const enriched = await fetchEnriched(undefined, opts);
       setItems(enriched);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -329,7 +329,7 @@ export default function Watchlist() {
             </div>
 
             <button
-              onClick={reload}
+              onClick={() => reload({ nocache: true })}
               disabled={loading}
               className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle px-3 py-1.5 text-xs text-text-secondary hover:border-accent-cyan hover:text-accent-cyan transition-colors disabled:opacity-50"
             >

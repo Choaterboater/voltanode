@@ -28,8 +28,28 @@ interface BacktestResult {
   equity_curve: { equity: number; timestamp?: string }[];
 }
 
+// Strategy IDs MUST match the snake_case identifiers returned by
+// /strategies/available — the prior PascalCase values (Momentum, MACD,
+// MeanReversion) silently failed to resolve on the backend.
+// auto_discovery + squeeze are excluded because they depend on
+// runtime data sources (Watchlist, SEC EDGAR, FINRA) that aren't
+// available in a backtest replay.
+const BACKTESTABLE_STRATEGIES: { id: string; label: string }[] = [
+  { id: 'momentum', label: 'Momentum' },
+  { id: 'mean_reversion', label: 'Mean Reversion' },
+  { id: 'macd', label: 'MACD' },
+  { id: 'breakout', label: 'Breakout' },
+  { id: 'simple_trend', label: 'Simple Trend' },
+  { id: 'multi_coin', label: 'Multi-Coin Momentum' },
+  { id: 'grid', label: 'Grid' },
+  { id: 'arbitrage', label: 'Arbitrage' },
+  { id: 'ensemble_ml', label: 'ML Ensemble' },
+  { id: 'news_sentiment', label: 'News Sentiment' },
+];
+
 export default function Backtest() {
-  const [strategyType, setStrategyType] = useState('Momentum');
+  const [strategyId, setStrategyId] = useState('momentum');
+  const [assetClass, setAssetClass] = useState<'crypto' | 'stock'>('crypto');
   const [symbol, setSymbol] = useState('BTC-USD');
   const [timeframe, setTimeframe] = useState('1d');
   const [initialBalance, setInitialBalance] = useState('10000');
@@ -45,13 +65,16 @@ export default function Backtest() {
       setResult(null);
 
       const payload: BacktestPayload = {
-        strategy_id: strategyType,
+        strategy_id: strategyId,
         symbol,
-        asset_class: 'crypto',
+        asset_class: assetClass,
         timeframe,
         start_date: '2024-01-01',
         end_date: '2024-04-01',
-        initial_balance: { USDT: parseFloat(initialBalance) },
+        initial_balance:
+          assetClass === 'crypto'
+            ? { USDT: parseFloat(initialBalance) }
+            : { USD: parseFloat(initialBalance) },
       };
 
       const res = await runBacktest(payload);
@@ -87,18 +110,50 @@ export default function Backtest() {
               <div>
                 <label className="mb-1 block text-xs text-text-muted">Strategy</label>
                 <select
-                  value={strategyType}
-                  onChange={(e) => setStrategyType(e.target.value)}
+                  value={strategyId}
+                  onChange={(e) => setStrategyId(e.target.value)}
                   className="w-full rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan"
                 >
-                  <option value="Momentum">Momentum</option>
-                  <option value="MeanReversion">Mean Reversion</option>
-                  <option value="Grid">Grid</option>
-                  <option value="Breakout">Breakout</option>
-                  <option value="MACD">MACD</option>
-                  <option value="Arbitrage">Arbitrage</option>
-                  <option value="EnsembleML">ML Ensemble</option>
+                  {BACKTESTABLE_STRATEGIES.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
+                    </option>
+                  ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-text-muted">Asset class</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAssetClass('crypto');
+                      setSymbol('BTC-USD');
+                    }}
+                    className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${
+                      assetClass === 'crypto'
+                        ? 'bg-accent-cyan/20 text-accent-cyan'
+                        : 'bg-bg-input text-text-secondary hover:text-text-primary'
+                    }`}
+                  >
+                    Crypto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAssetClass('stock');
+                      setSymbol('AAPL');
+                    }}
+                    className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${
+                      assetClass === 'stock'
+                        ? 'bg-accent-cyan/20 text-accent-cyan'
+                        : 'bg-bg-input text-text-secondary hover:text-text-primary'
+                    }`}
+                  >
+                    Stock
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -107,6 +162,7 @@ export default function Backtest() {
                   type="text"
                   value={symbol}
                   onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                  placeholder={assetClass === 'crypto' ? 'BTC-USD' : 'AAPL'}
                   className="w-full rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan"
                 />
               </div>
@@ -125,7 +181,9 @@ export default function Backtest() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-text-muted">Initial Balance (USDT)</label>
+                <label className="mb-1 block text-xs text-text-muted">
+                  Initial Balance ({assetClass === 'crypto' ? 'USDT' : 'USD'})
+                </label>
                 <input
                   type="number"
                   value={initialBalance}
