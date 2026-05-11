@@ -14,7 +14,14 @@ import {
 } from 'lucide-react';
 import Layout from '@/components/Layout';
 import Badge from '@/components/Badge';
-import { getStrategies, registerStrategy, toggleStrategy, type ApiStrategy } from '@/lib/api';
+import { getStrategies, getTrades, registerStrategy, toggleStrategy, type ApiStrategy } from '@/lib/api';
+
+interface PerStrategyMetrics {
+  trades: number;
+  closed: number;
+  wins: number;
+  pnl: number;
+}
 
 // Backend returns strategy_type in snake_case (e.g. "mean_reversion"),
 // so these lookup tables must use snake_case keys — previously they were
@@ -52,24 +59,47 @@ const strategyDescriptions: Record<string, string> = {
 
 export default function Strategies() {
   const [strategies, setStrategies] = useState<ApiStrategy[]>([]);
+  const [tradesByStrat, setTradesByStrat] = useState<Record<string, PerStrategyMetrics>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [registering, setRegistering] = useState<string | null>(null);
 
   useEffect(() => {
-    loadStrategies();
+    loadAll();
   }, []);
 
-  async function loadStrategies() {
+  // The /strategies/ endpoint returns metrics=null for almost every bot
+  // (the engine doesn't populate ApiStrategy.metrics until a closed-PnL
+  // round-trip lands), so every card showed Trades=0 even when the bot
+  // had fired BUYs. Aggregate /trades/ client-side per strategy_id and
+  // merge in.
+  async function loadAll() {
     try {
       setLoading(true);
-      const res = await getStrategies();
-      setStrategies(res.strategies);
+      const [stratsRes, trades] = await Promise.all([getStrategies(), getTrades()]);
+      setStrategies(stratsRes.strategies);
+      const agg: Record<string, PerStrategyMetrics> = {};
+      for (const t of trades) {
+        const sid = t.strategy_id ?? '';
+        if (!sid) continue;
+        if (!agg[sid]) agg[sid] = { trades: 0, closed: 0, wins: 0, pnl: 0 };
+        agg[sid].trades += 1;
+        if (t.realized_pnl != null) {
+          agg[sid].closed += 1;
+          agg[sid].pnl += t.realized_pnl;
+          if (t.realized_pnl > 0) agg[sid].wins += 1;
+        }
+      }
+      setTradesByStrat(agg);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load strategies');
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadStrategies() {
+    await loadAll();
   }
 
   async function handleToggle(s: ApiStrategy) {
@@ -144,9 +174,18 @@ export default function Strategies() {
                   : cfg.symbol
                   ? [String(cfg.symbol)]
                   : [];
-                const pnl = Number(m?.total_pnl ?? 0);
-                const winRate = m?.win_rate;
-                const totalTrades = m?.total_trades ?? 0;
+                // Prefer backend metrics if present; otherwise fall back to
+                // the client-side aggregation of /trades by strategy_id.
+                const agg = tradesByStrat[s.strategy_id];
+                const totalTrades = m?.total_trades ?? agg?.trades ?? 0;
+                const closedTrades = agg?.closed ?? 0;
+                const pnl = Number(m?.total_pnl ?? agg?.pnl ?? 0);
+                const winRate =
+                  m?.win_rate != null
+                    ? m.win_rate
+                    : closedTrades > 0
+                    ? ((agg!.wins / closedTrades) * 100)
+                    : undefined;
                 return (
                 <motion.div
                   key={s.strategy_id}

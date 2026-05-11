@@ -701,20 +701,32 @@ export default function Home() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {/* Order: is_active first, then by total_trades desc — surfaces
-                  bots that are actually doing something instead of the
-                  arbitrary registration order. */}
-              {[...strategies]
-                .sort((a, b) => {
-                  if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
-                  const at = Number(((a.metrics as Record<string, number>) || {}).total_trades ?? 0);
-                  const bt = Number(((b.metrics as Record<string, number>) || {}).total_trades ?? 0);
-                  return bt - at;
-                })
-                .slice(0, 4)
-                .map((bot, index) => {
+              {/* /strategies/ returns metrics=null for most bots, so build a
+                  fallback aggregate from the trades list (already fetched by
+                  useDashboardData). Counts include open BUYs since
+                  `Trade.pnl` collapses null → 0. */}
+              {(() => {
+                const agg: Record<string, { trades: number; pnl: number }> = {};
+                for (const t of trades) {
+                  const sid = String(t.strategy ?? '');
+                  if (!sid || sid === 'Manual') continue;
+                  if (!agg[sid]) agg[sid] = { trades: 0, pnl: 0 };
+                  agg[sid].trades += 1;
+                  agg[sid].pnl += t.pnl;
+                }
+                return [...strategies]
+                  .sort((a, b) => {
+                    if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+                    const at = Number(((a.metrics as Record<string, number>) || {}).total_trades ?? agg[a.strategy_id]?.trades ?? 0);
+                    const bt = Number(((b.metrics as Record<string, number>) || {}).total_trades ?? agg[b.strategy_id]?.trades ?? 0);
+                    return bt - at;
+                  })
+                  .slice(0, 4)
+                  .map((bot, index) => {
                 const metrics = bot.metrics as Record<string, number> | null;
-                const pnl = Number(metrics?.total_pnl ?? 0);
+                const fallback = agg[bot.strategy_id];
+                const pnl = Number(metrics?.total_pnl ?? fallback?.pnl ?? 0);
+                const tradeCount = metrics?.total_trades ?? fallback?.trades ?? 0;
                 const cfg = (bot.config as Record<string, unknown>) || {};
                 // Multi-symbol bots store symbols in ``config.symbols`` (array);
                 // single-symbol legacy bots use ``config.symbol``. Show first 3
@@ -771,7 +783,7 @@ export default function Home() {
                         {formatCurrency(pnl)}
                       </p>
                       <p className="text-xs text-text-muted">
-                        {metrics?.total_trades ? `${metrics.total_trades} trades` : 'No trades yet'}
+                        {tradeCount > 0 ? `${tradeCount} trade${tradeCount === 1 ? '' : 's'}` : 'No trades yet'}
                       </p>
                     </div>
 
@@ -797,7 +809,8 @@ export default function Home() {
                     </div>
                   </motion.div>
                 );
-              })}
+              });
+              })()}
             </div>
           )}
         </motion.div>
