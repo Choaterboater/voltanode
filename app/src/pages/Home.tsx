@@ -723,7 +723,7 @@ export default function Home() {
                   ? (cfg.symbols as string[])
                   : (cfg.symbol ? [String(cfg.symbol)] : []);
                 const pairDisplay =
-                  symList.length === 0 ? '—'
+                  symList.length === 0 ? 'Dynamic — picks from Watchlist'
                   : symList.length <= 3 ? symList.join(', ')
                   : `${symList.slice(0, 3).join(', ')} +${symList.length - 3}`;
                 const status: 'running' | 'paused' = bot.is_active ? 'running' : 'paused';

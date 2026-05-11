@@ -57,14 +57,18 @@ function computeSummary(trades: ApiTrade[]): TradeSummary {
       worstTrade: 0,
     };
   }
-  const wins = trades.filter((t) => (t.realized_pnl ?? 0) > 0);
-  const losses = trades.filter((t) => (t.realized_pnl ?? 0) < 0);
-  const pnls = trades.map((t) => t.realized_pnl ?? 0);
+  // Only count CLOSED trades (realized_pnl set) toward win/loss/win-rate.
+  // Open BUYs land with realized_pnl=null and previously inflated the
+  // "Breakeven" bucket of the win/loss pie.
+  const closed = trades.filter((t) => t.realized_pnl != null);
+  const wins = closed.filter((t) => (t.realized_pnl ?? 0) > 0);
+  const losses = closed.filter((t) => (t.realized_pnl ?? 0) < 0);
+  const pnls = closed.map((t) => t.realized_pnl ?? 0);
   return {
     totalTrades: trades.length,
     winCount: wins.length,
     lossCount: losses.length,
-    winRate: (wins.length / trades.length) * 100,
+    winRate: closed.length > 0 ? (wins.length / closed.length) * 100 : 0,
     totalPnl: pnls.reduce((a, b) => a + b, 0),
     avgWin: wins.length > 0 ? wins.reduce((s, t) => s + (t.realized_pnl ?? 0), 0) / wins.length : 0,
     avgLoss: losses.length > 0 ? losses.reduce((s, t) => s + (t.realized_pnl ?? 0), 0) / losses.length : 0,
@@ -181,12 +185,18 @@ export default function Analytics() {
   );
   const barData = Object.entries(tradesBySymbol).map(([symbol, pnl]) => ({ symbol, pnl }));
 
-  // Win/Loss pie data
+  // Win/Loss pie data — split into wins / losses / breakeven (closed at $0)
+  // and a separate "Open" bucket for trades still without a realized P&L.
+  const closedCount = summary.winCount + summary.lossCount;
+  const breakevenCount = trades.filter((t) => t.realized_pnl === 0).length;
+  const openCount = trades.filter((t) => t.realized_pnl == null).length;
   const pieData = [
     { name: 'Wins', value: summary.winCount, color: '#10B981' },
     { name: 'Losses', value: summary.lossCount, color: '#EF4444' },
-    { name: 'Breakeven', value: summary.totalTrades - summary.winCount - summary.lossCount, color: '#64748B' },
+    { name: 'Breakeven', value: breakevenCount, color: '#64748B' },
+    { name: 'Open', value: openCount, color: '#0EA5E9' },
   ].filter((d) => d.value > 0);
+  void closedCount;
 
   if (loading) {
     return (

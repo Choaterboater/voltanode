@@ -297,7 +297,12 @@ export default function BotLab() {
                             {assetClassLabel === 'stock' ? 'Stock' : 'Crypto'}
                           </Badge>
                           {fullSymbolList.length === 0 ? (
-                            <span className="font-mono text-xs text-text-muted">—</span>
+                            <span
+                              className="font-mono text-xs text-text-muted italic"
+                              title="No hardcoded symbols — this bot pulls candidates at runtime from the Watchlist / Scanner."
+                            >
+                              Dynamic universe
+                            </span>
                           ) : (
                             <span
                               className="font-mono text-xs text-accent-cyan"
