@@ -105,6 +105,15 @@ export default function Analytics() {
   const summary = computeSummary(trades);
   const formatCurrency = (v: number) =>
     `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Smart price formatter that handles micro-cap crypto prices (SHIB ~6e-6).
+  // Stops displaying ``$0.0000`` for things like SHIB / PEPE.
+  const formatPrice = (v: number): string => {
+    if (v == null || !isFinite(v)) return '—';
+    if (Math.abs(v) >= 1) return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (Math.abs(v) >= 0.01) return `$${v.toFixed(4)}`;
+    if (Math.abs(v) > 0) return `$${v.toExponential(2)}`;
+    return '$0.00';
+  };
 
   const tradeColumns = [
     {
@@ -141,7 +150,7 @@ export default function Analytics() {
       key: 'price',
       header: 'Price',
       render: (row: ApiTrade) => (
-        <span className="font-mono text-sm text-text-primary">{formatCurrency(row.price)}</span>
+        <span className="font-mono text-sm text-text-primary">{formatPrice(row.price)}</span>
       ),
     },
     {

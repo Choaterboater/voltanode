@@ -401,8 +401,13 @@ class PaperTradingEngine:
             order.status = OrderStatus.FILLED
 
             self._fills.append(fill)
-            self._persist_fill(fill, strategy_id=order.strategy_id or "")
+            # _update_portfolio_on_fill is what computes ``fill.realized_pnl``
+            # for SELLs closing a long (and the symmetric short cases).
+            # Persist AFTER that so the JSONL row carries the realized P&L
+            # rather than None — otherwise everything reloads as null across
+            # restarts and the Analytics page loses its closed-trade history.
             self._update_portfolio_on_fill(order, fill, portfolio)
+            self._persist_fill(fill, strategy_id=order.strategy_id or "")
             self.on_fill(fill)
         return fill
 
@@ -1067,8 +1072,12 @@ class LiveTradingEngine(PaperTradingEngine):
         if fill.filled_qty > 0:
             self.daily_tracker.record(fill)
             self._fills.append(fill)
-            self._persist_fill(fill, strategy_id=order.strategy_id or "")
+            # Persist AFTER _update_portfolio_on_fill so ``fill.realized_pnl``
+            # is set before the JSONL row is written. Otherwise the row goes
+            # to disk with realized_pnl=None and the Analytics page loses
+            # all closed-trade P&L across restarts.
             self._update_portfolio_on_fill(order, fill, portfolio)
+            self._persist_fill(fill, strategy_id=order.strategy_id or "")
             self.on_fill(fill)
 
         # 7. Post-fill safety check (daily loss limit)
@@ -1135,9 +1144,12 @@ class LiveTradingEngine(PaperTradingEngine):
                         )
                         self.daily_tracker.record(fill)
                         self._fills.append(fill)
-                        self._persist_fill(fill, strategy_id=local_order.strategy_id or "")
+                        # Persist AFTER _update_portfolio_on_fill so the JSONL
+                        # row carries the computed realized_pnl rather than
+                        # None — see also the same fix in execute_order paths.
                         portfolio = self.get_portfolio(account_id)
                         self._update_portfolio_on_fill(local_order, fill, portfolio)
+                        self._persist_fill(fill, strategy_id=local_order.strategy_id or "")
                         self.on_fill(fill)
 
                     local_order.filled_quantity = filled_qty

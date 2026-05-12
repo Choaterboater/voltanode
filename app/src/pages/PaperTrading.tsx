@@ -84,6 +84,15 @@ export default function PaperTrading() {
 
   const formatCurrency = (v: number) =>
     `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Smart price formatter for micro-cap crypto (SHIB / PEPE-tier prices that
+  // would otherwise display as ``$0.0000``).
+  const formatPrice = (v: number | null | undefined): string => {
+    if (v == null || !isFinite(v)) return '—';
+    if (Math.abs(v) >= 1) return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (Math.abs(v) >= 0.01) return `$${v.toFixed(4)}`;
+    if (Math.abs(v) > 0) return `$${v.toExponential(2)}`;
+    return '$0.00';
+  };
 
   const positions: Position[] =
     portfolio?.positions.map((p) => ({
@@ -382,16 +391,16 @@ export default function PaperTrading() {
                           </td>
                           <td className="py-2 font-mono text-text-primary">{p.size}</td>
                           <td className="py-2 font-mono text-text-secondary">
-                            {formatCurrency(p.entryPrice)}
+                            {formatPrice(p.entryPrice)}
                           </td>
                           <td className="py-2 font-mono text-text-secondary">
-                            {formatCurrency(p.markPrice)}
+                            {formatPrice(p.markPrice)}
                           </td>
                           <td className="py-2 font-mono text-danger-red">
-                            {p.stopLoss ? formatCurrency(p.stopLoss) : '—'}
+                            {p.stopLoss ? formatPrice(p.stopLoss) : '—'}
                           </td>
                           <td className="py-2 font-mono text-success-green">
-                            {p.takeProfit ? formatCurrency(p.takeProfit) : '—'}
+                            {p.takeProfit ? formatPrice(p.takeProfit) : '—'}
                           </td>
                           <td
                             className={`py-2 font-mono ${
