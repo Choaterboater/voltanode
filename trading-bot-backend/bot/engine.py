@@ -679,6 +679,21 @@ class PaperTradingEngine:
                             pos.stop_loss = signal.stop_loss
                         if signal.take_profit is not None:
                             pos.take_profit = signal.take_profit
+                        # Fall back to operator-default stops if the
+                        # strategy didn't provide explicit ones. Without
+                        # this, signals that omit SL/TP land on disk as
+                        # naked positions with no exit plan — a 5% drop
+                        # has no safety net. 8% SL / 30% TP mirrors the
+                        # /portfolio/{id}/attach-stops endpoint defaults.
+                        if pos.stop_loss is None and pos.entry_price > 0:
+                            if pos.side.value == "long":
+                                pos.stop_loss = pos.entry_price * 0.92
+                                if pos.take_profit is None:
+                                    pos.take_profit = pos.entry_price * 1.30
+                            else:
+                                pos.stop_loss = pos.entry_price * 1.08
+                                if pos.take_profit is None:
+                                    pos.take_profit = pos.entry_price * 0.70
 
         # Check pending orders for fills.
         # In live mode the order is already at the broker after the first
