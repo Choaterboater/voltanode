@@ -106,14 +106,19 @@ export default function PaperTrading() {
       .map((p) => ({
       id: p.symbol,
       symbol: p.symbol.replace('-', '/'),
-      side: p.side === 'LONG' ? 'long' : 'short',
+      // Backend serializes ``OrderSide`` as lowercase ('long' / 'short')
+      // but the previous strict-uppercase compare bucketed every position
+      // as 'short' — the table showed long BUYs with red 'short' badges.
+      side: String(p.side ?? '').toLowerCase() === 'long' ? 'long' : 'short',
       size: p.size,
       entryPrice: p.entry_price,
       markPrice: p.current_price,
       pnl: p.unrealized_pnl,
       pnlPercent:
         p.entry_price > 0
-          ? ((p.current_price - p.entry_price) / p.entry_price) * 100 * (p.side === 'SHORT' ? -1 : 1)
+          ? ((p.current_price - p.entry_price) / p.entry_price) *
+            100 *
+            (String(p.side ?? '').toLowerCase() === 'short' ? -1 : 1)
           : 0,
       openedAt: '',
       stopLoss: p.stop_loss,
