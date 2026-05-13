@@ -205,14 +205,40 @@ class Portfolio:
         del self._positions[symbol]
         return position, realized_pnl
 
+    def _resolve_symbol(self, symbol: str) -> str | None:
+        """Map a possibly-unsuffixed symbol to the stored position key.
+
+        Strategies emit crypto signals as bare tickers (``BTC``) but the
+        broker sync stores positions in ``XYZUSD`` form (``BTCUSD``). A
+        direct dict lookup misses, so on_tick price refreshes never reach
+        the position and marks freeze at entry price. Try the bare key
+        first, then common quote-suffixed variants.
+        """
+        if symbol in self._positions:
+            return symbol
+        for suf in ("USD", "USDT"):
+            cand = f"{symbol}{suf}"
+            if cand in self._positions:
+                return cand
+        # Also handle the reverse: someone asks for BTCUSD when only BTC
+        # is stored (less common but symmetric).
+        for suf in ("USD", "USDT"):
+            if symbol.endswith(suf):
+                bare = symbol[: -len(suf)]
+                if bare in self._positions:
+                    return bare
+        return None
+
     def update_position_price(self, symbol: str, current_price: float) -> None:
         """Update the current price of a position."""
-        if symbol in self._positions:
-            self._positions[symbol].update_price(current_price)
+        resolved = self._resolve_symbol(symbol)
+        if resolved is not None:
+            self._positions[resolved].update_price(current_price)
 
     def get_position(self, symbol: str) -> Position | None:
         """Get an open position by symbol."""
-        return self._positions.get(symbol)
+        resolved = self._resolve_symbol(symbol)
+        return self._positions.get(resolved) if resolved else None
 
     def get_all_positions(self) -> List[Position]:
         """Get all open positions."""
