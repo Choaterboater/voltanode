@@ -1,5 +1,5 @@
 @echo off
-REM VoltaNode startup script — opens 3 terminals: backend, frontend, monitor.
+REM VoltaNode startup script — opens 4 terminals: backend, frontend, monitor, collector.
 REM Each runs in its own window so you can Ctrl-C any of them individually.
 REM
 REM Run from D:\VoltaNode\ by double-clicking, or from a normal cmd window.
@@ -25,11 +25,19 @@ timeout /t 3 /nobreak >nul
 REM Bot monitor — polls /orders/ every 30s, emits a line per new fill / status change
 start "VoltaNode Monitor" cmd /k "python -u %ROOT%\.claude\bot_monitor.py"
 
+REM Wait a bit longer so the collector's initial backend probe succeeds
+timeout /t 4 /nobreak >nul
+
+REM Data collector — pulls news sentiment / squeeze / macro / advisor on a schedule.
+REM Writes JSONL files to data/collector/ for historical analysis & backtest replay.
+start "VoltaNode Collector" cmd /k "python -u %ROOT%\scripts\collector.py"
+
 echo.
-echo All three services launched in separate windows.
-echo  - Backend:  http://127.0.0.1:8000
-echo  - Frontend: http://localhost:3000  (or :3001 if :3000 was busy)
-echo  - Monitor:  prints fills + heartbeats; Ctrl-C in its window to stop
+echo All four services launched in separate windows.
+echo  - Backend:   http://127.0.0.1:8000
+echo  - Frontend:  http://localhost:3000  (or :3001 if :3000 was busy)
+echo  - Monitor:   prints fills + heartbeats; Ctrl-C in its window to stop
+echo  - Collector: writes data/collector/*.jsonl on schedule; Ctrl-C to stop
 echo.
 echo Close this window or press any key to dismiss.
 pause >nul

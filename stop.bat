@@ -23,5 +23,8 @@ for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":3001 " ^| findstr LISTENING
 REM Kill the monitor python process by command-line match
 wmic process where "commandline like '%%bot_monitor.py%%'" delete >nul 2>&1
 
+REM Kill the collector python process by command-line match
+wmic process where "commandline like '%%scripts\\collector.py%%'" delete >nul 2>&1
+
 echo Done.
 pause
