@@ -249,9 +249,15 @@ class SentimentEngine:
                         "model": model,
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.1,
-                        "max_tokens": 300,
+                        # max_tokens bumped to 1500 because reasoning models
+                        # (ring-2.6, deepseek-r1, qwen-reasoning) split their
+                        # output into a 'reasoning' field + 'content' field;
+                        # at 300 the reasoning consumes the whole budget and
+                        # content comes back empty. 1500 gives ~500 for
+                        # reasoning + 1000 for the actual JSON sentiment.
+                        "max_tokens": 1500,
                     },
-                    timeout=20,
+                    timeout=30,
                 )
                 http_status = resp.status_code
                 if resp.status_code >= 400:
