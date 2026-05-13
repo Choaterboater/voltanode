@@ -16,6 +16,10 @@ import json
 import logging
 import os
 import re
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -23,6 +27,52 @@ import requests
 from advisor.models import AnalysisResult, IndicatorReading, LLMCommentary
 
 logger = logging.getLogger("volta.advisor.llm")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# LLM call stats — one row per attempt to data/collector/llm_model_stats.jsonl
+# ──────────────────────────────────────────────────────────────────────
+# Lets us see actual rate-limit pain and reorder the chain based on
+# evidence instead of guessing.
+
+_LLM_STATS_PATH = (
+    Path(__file__).resolve().parent.parent.parent
+    / "data" / "collector" / "llm_model_stats.jsonl"
+)
+_LLM_STATS_LOCK = threading.Lock()
+
+
+def record_llm_attempt(
+    model: str,
+    purpose: str,
+    attempt: int,
+    success: bool,
+    latency_ms: float,
+    error: Optional[str] = None,
+    http_status: Optional[int] = None,
+) -> None:
+    """Append one row describing a single LLM model call.
+
+    `purpose` is a short tag: 'sentiment', 'advisor', 'pretrade', 'research'.
+    `attempt` is the 1-based position in the fallback chain.
+    Silent on write failure — never let logging break a trade path.
+    """
+    try:
+        _LLM_STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        row = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "model": model,
+            "purpose": purpose,
+            "attempt": attempt,
+            "success": success,
+            "latency_ms": round(latency_ms, 1),
+            "error": error,
+            "http_status": http_status,
+        }
+        with _LLM_STATS_LOCK, _LLM_STATS_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+    except Exception:
+        pass
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -434,8 +484,16 @@ def generate_commentary(
         # through a list of free OpenRouter models so a single 429 doesn't
         # collapse the Advanced path.
         models = _openrouter_model_chain(heavy=heavy)
-        for candidate in models:
+        for attempt, candidate in enumerate(models, 1):
+            t0 = time.time()
             raw = _call_openai_compat(prompt, candidate, "https://openrouter.ai/api/v1", api_key)
+            record_llm_attempt(
+                model=candidate,
+                purpose="advisor",
+                attempt=attempt,
+                success=bool(raw),
+                latency_ms=(time.time() - t0) * 1000,
+            )
             if raw:
                 model_name = candidate
                 break
@@ -606,13 +664,21 @@ def pretrade_check(
     raw: Optional[str] = None
     model_name = ""
     # Fast chain only — pretrade is hot path, no heavy frontier models.
-    for candidate in _openrouter_model_chain(heavy=False):
+    for attempt, candidate in enumerate(_openrouter_model_chain(heavy=False), 1):
+        t0 = time.time()
         raw = _call_openai_compat(
             prompt,
             candidate,
             "https://openrouter.ai/api/v1",
             api_key,
             timeout=timeout,
+        )
+        record_llm_attempt(
+            model=candidate,
+            purpose="pretrade",
+            attempt=attempt,
+            success=bool(raw),
+            latency_ms=(time.time() - t0) * 1000,
         )
         if raw:
             model_name = candidate

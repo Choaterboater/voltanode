@@ -224,8 +224,8 @@ class SentimentEngine:
         advisor / research paths, so a single 429 doesn't kill the whole
         sentiment pipeline. Returns the first non-empty response.
         """
-        import os, requests
-        from advisor.llm_advisor import _openrouter_model_chain
+        import os, time, requests
+        from advisor.llm_advisor import _openrouter_model_chain, record_llm_attempt
 
         api_key = (
             self.llm_api_key
@@ -236,7 +236,11 @@ class SentimentEngine:
             raise RuntimeError("OPENROUTER_API_KEY not set for news sentiment LLM path")
 
         last_err: Optional[Exception] = None
-        for model in _openrouter_model_chain():
+        for attempt, model in enumerate(_openrouter_model_chain(), 1):
+            t0 = time.time()
+            http_status: Optional[int] = None
+            err_str: Optional[str] = None
+            content: Optional[str] = None
             try:
                 resp = requests.post(
                     "https://openrouter.ai/api/v1/chat/completions",
@@ -249,15 +253,27 @@ class SentimentEngine:
                     },
                     timeout=20,
                 )
+                http_status = resp.status_code
                 if resp.status_code >= 400:
                     last_err = RuntimeError(f"{model}: HTTP {resp.status_code}")
-                    continue
-                content = resp.json()["choices"][0]["message"]["content"]
-                if content:
-                    return content
+                    err_str = f"HTTP {resp.status_code}"
+                else:
+                    content = resp.json()["choices"][0]["message"]["content"]
             except Exception as exc:
                 last_err = exc
-                continue
+                err_str = str(exc)[:140]
+
+            record_llm_attempt(
+                model=model,
+                purpose="sentiment",
+                attempt=attempt,
+                success=bool(content),
+                latency_ms=(time.time() - t0) * 1000,
+                error=err_str,
+                http_status=http_status,
+            )
+            if content:
+                return content
         raise RuntimeError(f"All OpenRouter models in chain failed: {last_err}")
 
     def _call_ollama(self, prompt: str) -> str:
