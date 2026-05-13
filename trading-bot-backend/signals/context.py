@@ -43,7 +43,18 @@ class SignalContext:
     vix: Optional[float] = None
     fed_funds: Optional[float] = None
     treasury_10y: Optional[float] = None
+    treasury_2y: Optional[float] = None
     yield_curve_spread: Optional[float] = None  # 10y - 2y; <0 = inverted
+    # Inflation:
+    cpi: Optional[float] = None
+    ppi_final: Optional[float] = None  # PPI Final Demand — leads CPI 1-3 months
+    core_pce: Optional[float] = None  # Fed's actual target inflation gauge
+    unemployment: Optional[float] = None
+    # Credit spreads — direct read on corporate refi pressure. Widening
+    # IG spreads mean BAA-rated co's refinance at materially higher
+    # cost; HY OAS spike = distress in the riskier debt strata.
+    baa_10y_spread: Optional[float] = None    # Investment-grade spread
+    hy_oas: Optional[float] = None            # High-yield option-adjusted spread
 
     # Per-symbol caches populated lazily
     _earnings_cache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -178,8 +189,22 @@ def build_signal_context() -> SignalContext:
                     ctx.fed_funds = series["DFF"].value
                 if "DGS10" in series:
                     ctx.treasury_10y = series["DGS10"].value
+                if "DGS2" in series:
+                    ctx.treasury_2y = series["DGS2"].value
                 if "T10Y2Y" in series:
                     ctx.yield_curve_spread = series["T10Y2Y"].value
+                if "CPIAUCSL" in series:
+                    ctx.cpi = series["CPIAUCSL"].value
+                if "PPIFIS" in series:
+                    ctx.ppi_final = series["PPIFIS"].value
+                if "PCEPILFE" in series:
+                    ctx.core_pce = series["PCEPILFE"].value
+                if "UNRATE" in series:
+                    ctx.unemployment = series["UNRATE"].value
+                if "BAA10Y" in series:
+                    ctx.baa_10y_spread = series["BAA10Y"].value
+                if "BAMLH0A0HYM2" in series:
+                    ctx.hy_oas = series["BAMLH0A0HYM2"].value
     except Exception as exc:
         logger.debug(f"FRED fetch in context failed: {exc}")
 

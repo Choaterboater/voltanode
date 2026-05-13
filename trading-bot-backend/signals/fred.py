@@ -56,11 +56,40 @@ SERIES: Dict[str, Dict[str, str]] = {
         "hint": "Headline inflation. Watch month-over-month change.",
         "frequency": "monthly",
     },
+    "PPIFIS": {
+        "name": "PPI: Final Demand",
+        "hint": "Producer inflation. Leads CPI by 1-3 months — early warning for consumer prices.",
+        "frequency": "monthly",
+    },
+    "PCEPILFE": {
+        "name": "Core PCE Price Index",
+        "hint": "The Fed's actual target inflation measure. Strips food/energy. More important than CPI for rate-path expectations.",
+        "frequency": "monthly",
+    },
     "UNRATE": {
         "name": "Unemployment Rate",
         "hint": "Labor market. Rising rate often precedes Fed cuts.",
         "frequency": "monthly",
     },
+    # ─── Bond yields & credit spreads — corp-debt refi pressure ───
+    "DGS2": {
+        "name": "2-Year Treasury Yield",
+        "hint": "Short end of curve. Most sensitive to Fed expectations; sets short-term corp borrow costs.",
+        "frequency": "daily",
+    },
+    "BAA10Y": {
+        "name": "BAA - 10Y Spread",
+        "hint": "Investment-grade credit spread (Moody's BAA over 10Y Treasury). Widens when corp credit stress rises — hurts levered names refinancing.",
+        "frequency": "daily",
+    },
+    "BAMLH0A0HYM2": {
+        "name": "HY Option-Adjusted Spread",
+        "hint": "High-yield (junk) bond spread over Treasuries. Best real-time gauge of corporate distress. >5% = stress, >8% = crisis.",
+        "frequency": "daily",
+    },
+    # ISM PMIs are no longer on FRED post-2019 (licensing). For an
+    # equivalent growth-leading-indicator track the Chicago PMI / CFNAI
+    # via FRED or pull ISM directly from forexfactory's free calendar.
 }
 
 
