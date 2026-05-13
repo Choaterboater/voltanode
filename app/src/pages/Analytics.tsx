@@ -140,9 +140,16 @@ export default function Analytics() {
     {
       key: 'side',
       header: 'Side',
-      render: (row: ApiTrade) => (
-        <Badge variant={row.side === 'BUY' ? 'success' : 'danger'}>{row.side}</Badge>
-      ),
+      render: (row: ApiTrade) => {
+        // Backend serializes 'buy' / 'sell' lowercase; the old strict
+        // 'BUY' compare painted every row red.
+        const side = String(row.side ?? '').toLowerCase();
+        return (
+          <Badge variant={side === 'buy' ? 'success' : 'danger'}>
+            {side.toUpperCase()}
+          </Badge>
+        );
+      },
     },
     {
       key: 'qty',
