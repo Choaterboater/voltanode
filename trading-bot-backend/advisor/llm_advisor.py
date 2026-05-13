@@ -326,7 +326,17 @@ def _openrouter_model_chain(heavy: bool = False) -> List[str]:
 
 
 def _call_openai_compat(prompt: str, model: str, base_url: str, api_key: str, timeout: float = 60.0) -> Optional[str]:
-    """OpenAI-compatible Chat Completions endpoint (also works for OpenRouter)."""
+    """OpenAI-compatible Chat Completions endpoint (also works for OpenRouter).
+
+    ``max_tokens`` set to 8000 so reasoning models (Ring 2.6, DeepSeek-R1,
+    Qwen Reasoning) have room to emit their internal chain-of-thought into
+    the 'reasoning' field AND still produce a complete 'content' payload.
+    Non-reasoning models simply emit shorter responses regardless.
+
+    Also falls back to ``message.reasoning`` when ``content`` is empty —
+    some reasoning-model responses route the final answer to the
+    reasoning field when the generation runs long.
+    """
     try:
         r = requests.post(
             f"{base_url.rstrip('/')}/chat/completions",
@@ -335,12 +345,18 @@ def _call_openai_compat(prompt: str, model: str, base_url: str, api_key: str, ti
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.2,
+                "max_tokens": 8000,
             },
             timeout=timeout,
         )
         r.raise_for_status()
-        data = r.json()
-        return data["choices"][0]["message"]["content"]
+        msg = r.json()["choices"][0].get("message", {}) or {}
+        content = (msg.get("content") or "").strip()
+        if not content:
+            # Some reasoning models put the final answer in 'reasoning'
+            # when content gets truncated or omitted. Try that field.
+            content = (msg.get("reasoning") or "").strip()
+        return content or None
     except Exception as exc:
         logger.warning(f"{base_url} call failed: {exc}")
         return None

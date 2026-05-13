@@ -249,13 +249,15 @@ class SentimentEngine:
                         "model": model,
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.1,
-                        # max_tokens bumped to 1500 because reasoning models
+                        # max_tokens at 8000 because reasoning models
                         # (ring-2.6, deepseek-r1, qwen-reasoning) split their
                         # output into a 'reasoning' field + 'content' field;
-                        # at 300 the reasoning consumes the whole budget and
-                        # content comes back empty. 1500 gives ~500 for
-                        # reasoning + 1000 for the actual JSON sentiment.
-                        "max_tokens": 1500,
+                        # complex multi-field sentiment prompts can burn
+                        # 3000-5000 reasoning tokens before emitting JSON.
+                        # 8000 leaves comfortable headroom and is well
+                        # within the 32K+ context windows of every model
+                        # in the chain.
+                        "max_tokens": 8000,
                     },
                     timeout=30,
                 )
@@ -264,7 +266,12 @@ class SentimentEngine:
                     last_err = RuntimeError(f"{model}: HTTP {resp.status_code}")
                     err_str = f"HTTP {resp.status_code}"
                 else:
-                    content = resp.json()["choices"][0]["message"]["content"]
+                    msg = resp.json()["choices"][0].get("message", {}) or {}
+                    content = (msg.get("content") or "").strip() or None
+                    if not content:
+                        # Reasoning models (Ring 2.6 etc.) sometimes route the
+                        # final answer to 'reasoning' when content is empty.
+                        content = (msg.get("reasoning") or "").strip() or None
             except Exception as exc:
                 last_err = exc
                 err_str = str(exc)[:140]
