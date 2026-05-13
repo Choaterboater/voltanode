@@ -33,6 +33,47 @@ export default function NewsSentiment() {
 
   const [trending, setTrending] = useState<TrendingSymbol[]>([]);
   const [trendingLoading, setTrendingLoading] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // Reusable lookup runner so trending cards (and the form) can both
+  // trigger a sentiment fetch for a specific symbol without going through
+  // a form submission event.
+  const runLookup = async (sym: string) => {
+    const s = sym.trim().toUpperCase();
+    if (!s) return;
+    setLookupSymbol(s);
+    setLookupLoading(true);
+    try {
+      const res = await getSymbolSentiment(s);
+      setLookupResult({
+        symbol: res.symbol,
+        scores: res.scores.map((r) => ({
+          articleId: r.article_id,
+          symbol: r.symbol,
+          compoundScore: r.compound_score,
+          positiveScore: r.positive_score,
+          negativeScore: r.negative_score,
+          neutralScore: r.neutral_score,
+          confidence: r.confidence,
+          model: r.model,
+          impactAssessment: r.impact_assessment,
+          keyThemes: r.key_themes,
+          analyzedAt: r.analyzed_at,
+        })),
+        summary: res.summary
+          ? {
+              avgCompound: res.summary.avg_compound,
+              articleCount: res.summary.article_count,
+              sentimentLabel: res.summary.sentiment_label,
+            }
+          : null,
+      });
+    } catch {
+      setLookupResult(null);
+    } finally {
+      setLookupLoading(false);
+    }
+  };
 
   const loadStatus = useCallback(async () => {
     try {
@@ -176,45 +217,77 @@ export default function NewsSentiment() {
         </div>
       }
     >
-      {/* Status cards */}
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <MetricCard
-          label="LLM Provider"
-          value={status?.llmProvider ?? '—'}
-          icon={<Brain className="h-5 w-5" />}
-          delay={0}
-        />
-        <MetricCard
-          label="Hybrid Mode"
-          value={status?.hybridMode ? 'ON' : 'OFF'}
-          icon={<Activity className="h-5 w-5" />}
-          delay={0.05}
-        />
-        <MetricCard
-          label="Alpaca News"
-          value={status?.alpacaConfigured ? 'Configured' : 'Not Set'}
-          icon={<Newspaper className="h-5 w-5" />}
-          delay={0.1}
-        />
-        <MetricCard
-          label="Threshold"
-          value={status?.hybridThreshold ?? 0.6}
-          icon={<Zap className="h-5 w-5" />}
-          delay={0.15}
-        />
+      {/* Compact status strip — config goes in a single thin row instead
+          of 4 big tiles. Trader cares about news, not which LLM is wired. */}
+      <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[10px] border border-border-subtle bg-bg-surface px-4 py-2 text-xs">
+        <span className="flex items-center gap-1.5 text-text-muted">
+          <Brain className="h-3.5 w-3.5" />
+          <span>LLM</span>
+          <span className="font-mono text-text-primary">{status?.llmProvider ?? '—'}</span>
+          {status?.llmConfigured ? (
+            <CheckCircle2 className="h-3 w-3 text-success-green" />
+          ) : (
+            <XCircle className="h-3 w-3 text-danger-red" />
+          )}
+        </span>
+        <span className="flex items-center gap-1.5 text-text-muted">
+          <Newspaper className="h-3.5 w-3.5" />
+          <span>Alpaca news</span>
+          {status?.alpacaConfigured ? (
+            <CheckCircle2 className="h-3 w-3 text-success-green" />
+          ) : (
+            <XCircle className="h-3 w-3 text-danger-red" />
+          )}
+        </span>
+        <span className="flex items-center gap-1.5 text-text-muted">
+          <Activity className="h-3.5 w-3.5" />
+          <span>Hybrid</span>
+          <span className={`font-mono ${status?.hybridMode ? 'text-success-green' : 'text-text-muted'}`}>
+            {status?.hybridMode ? 'ON' : 'OFF'}
+          </span>
+        </span>
+        <span className="flex items-center gap-1.5 text-text-muted">
+          <Zap className="h-3.5 w-3.5" />
+          <span>Threshold</span>
+          <span className="font-mono text-text-primary">{status?.hybridThreshold ?? 0.6}</span>
+        </span>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Sentiment Analyzer */}
+      {/* The page is now ordered: Symbol Lookup (primary) -> Trending
+          (with clickable cards) -> collapsible Sentiment Analyzer. The
+          Sentiment Analyzer is a developer-debugging tool, not what
+          users come here for, so it's hidden by default. */}
+      <div className="space-y-5">
+        {/* Sentiment Analyzer (advanced/debug — collapsed by default) */}
+        {advancedOpen ? null : (
+          <button
+            onClick={() => setAdvancedOpen(true)}
+            className="w-full rounded-[10px] border border-dashed border-border-subtle bg-bg-surface px-4 py-2 text-left text-xs text-text-muted transition-colors hover:border-accent-cyan/30 hover:text-text-secondary"
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <Brain className="h-3.5 w-3.5" />
+              Advanced: score a custom headline
+            </span>
+          </button>
+        )}
+        {advancedOpen && (
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.1 }}
           className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
         >
-          <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-text-primary">
-            <Brain className="h-5 w-5 text-accent-cyan" />
-            Sentiment Analyzer
+          <h2 className="mb-4 flex items-center justify-between text-base font-semibold text-text-primary">
+            <span className="flex items-center gap-2">
+              <Brain className="h-5 w-5 text-accent-cyan" />
+              Sentiment Analyzer
+            </span>
+            <button
+              onClick={() => setAdvancedOpen(false)}
+              className="text-xs font-normal text-text-muted hover:text-text-secondary"
+            >
+              hide
+            </button>
           </h2>
           <form onSubmit={handleAnalyze} className="space-y-3">
             <div>
@@ -308,25 +381,34 @@ export default function NewsSentiment() {
             </div>
           )}
         </motion.div>
+        )}
 
-        {/* Symbol Lookup */}
+        {/* Symbol Lookup — PRIMARY action. Lookup a symbol, see its
+            sentiment + headlines + per-article scores. Trending cards
+            below also feed into this. */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.2 }}
+          transition={{ duration: 0.3, delay: 0.05 }}
           className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
         >
           <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-text-primary">
             <Search className="h-5 w-5 text-accent-cyan" />
             Symbol Sentiment Lookup
           </h2>
-          <form onSubmit={handleLookup} className="mb-4 flex gap-2">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (lookupSymbol.trim()) runLookup(lookupSymbol);
+            }}
+            className="mb-3 flex gap-2"
+          >
             <input
               type="text"
               value={lookupSymbol}
-              onChange={(e) => setLookupSymbol(e.target.value)}
-              placeholder="e.g. AAPL"
-              className="flex-1 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+              onChange={(e) => setLookupSymbol(e.target.value.toUpperCase())}
+              placeholder="Search by ticker — AAPL, NVDA, TSLA, BTCUSD..."
+              className="flex-1 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm font-mono text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
             />
             <button
               type="submit"
@@ -334,8 +416,24 @@ export default function NewsSentiment() {
               className="flex items-center gap-2 rounded-lg bg-accent-cyan px-4 py-2 text-sm font-medium text-text-inverse transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {lookupLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              <span className="hidden sm:inline">Look up</span>
             </button>
           </form>
+          {/* Quick-pick chips so a user can score any of the usual suspects
+              with one click, without having to know to scroll down to the
+              Trending grid first. */}
+          <div className="mb-4 flex flex-wrap gap-1.5">
+            <span className="text-[10px] uppercase tracking-wider text-text-muted">Quick</span>
+            {['AAPL','NVDA','TSLA','MSFT','GOOGL','META','AMD','BTCUSD','ETHUSD'].map((sym) => (
+              <button
+                key={sym}
+                onClick={() => runLookup(sym)}
+                className="rounded-full border border-border-subtle bg-bg-input px-2.5 py-0.5 text-[11px] font-mono text-text-secondary transition-colors hover:border-accent-cyan/40 hover:text-accent-cyan"
+              >
+                {sym}
+              </button>
+            ))}
+          </div>
 
           {lookupResult?.summary && (
             <div className="mb-4 rounded-lg border border-border-subtle bg-bg-base p-4">
@@ -414,15 +512,18 @@ export default function NewsSentiment() {
             </div>
           )}
           {trending.map((t, i) => (
-            <motion.div
+            <motion.button
               key={t.symbol}
+              type="button"
+              onClick={() => runLookup(t.symbol)}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.25, delay: i * 0.05 }}
-              className="rounded-lg border border-border-subtle bg-bg-base p-4 transition-colors hover:border-accent-cyan/20"
+              className="text-left rounded-lg border border-border-subtle bg-bg-base p-4 transition-colors hover:border-accent-cyan/40 hover:bg-bg-elevated cursor-pointer"
+              title={`Click to look up ${t.symbol} sentiment + headlines`}
             >
               <div className="mb-2 flex items-center justify-between">
-                <span className="font-mono text-base font-semibold text-text-primary">{t.symbol}</span>
+                <span className="font-mono text-base font-semibold text-accent-cyan">{t.symbol}</span>
                 <div className="flex items-center gap-2">
                   <Badge variant={sentimentVariant(t.avgCompound)}>{t.sentimentLabel}</Badge>
                   <span className="text-xs text-text-muted">{t.articleCount} articles</span>
@@ -432,16 +533,18 @@ export default function NewsSentiment() {
                 <span className={`font-mono text-lg font-medium ${t.avgCompound > 0 ? 'text-success-green' : t.avgCompound < 0 ? 'text-danger-red' : 'text-text-secondary'}`}>
                   {t.avgCompound > 0 ? '+' : ''}{t.avgCompound.toFixed(3)}
                 </span>
-                <span className="text-xs text-text-muted">avg compound</span>
+                <span className="text-xs text-text-muted">avg sentiment</span>
               </div>
-              {t.latestHeadlines.length > 0 && (
+              {t.latestHeadlines.length > 0 ? (
                 <div className="space-y-1">
                   {t.latestHeadlines.slice(0, 2).map((h, idx) => (
                     <p key={idx} className="truncate text-xs text-text-secondary">• {h}</p>
                   ))}
                 </div>
+              ) : (
+                <p className="text-[11px] italic text-text-muted">Click to load headlines →</p>
               )}
-            </motion.div>
+            </motion.button>
           ))}
         </div>
       </motion.div>
