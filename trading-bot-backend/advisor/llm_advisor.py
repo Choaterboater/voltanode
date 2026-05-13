@@ -278,7 +278,7 @@ def _call_ollama(prompt: str, model: str, timeout: float = 60.0) -> Optional[str
 
 
 _HEAVY_MODELS = [
-    "inclusionai/ling-2.6-1t:free",            # 1T MoE — biggest available
+    "inclusionai/ring-2.6-1t:free",            # 1T MoE — biggest available
     "openai/gpt-oss-120b:free",                # 120B, very reliable
     "nvidia/nemotron-3-super-120b-a12b:free",  # 120B
     "minimax/minimax-m2.5:free",               # large MoE, 196K ctx

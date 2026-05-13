@@ -14,7 +14,7 @@ Usage::
     python scripts/probe_models.py
 
     # Probe a specific subset
-    python scripts/probe_models.py --only inclusionai/ling-2.6-1t:free,...
+    python scripts/probe_models.py --only inclusionai/ring-2.6-1t:free,...
 
     # Cap how many to probe (default 30 to keep runtime reasonable)
     python scripts/probe_models.py --max 50
