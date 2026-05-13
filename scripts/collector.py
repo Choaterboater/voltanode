@@ -116,33 +116,46 @@ def get_watchlist_symbols() -> List[str]:
 # ─── Stream collectors ───
 
 def collect_news(symbols: List[str], stream_label: str) -> None:
-    """Per-symbol sentiment + per-article scores via /news/symbol-sentiment."""
+    """Snapshot per-symbol sentiment via /news/trending (which actively
+    fetches + scores) and filter to the symbols we care about.
+
+    The earlier per-symbol /news/symbol-sentiment endpoint queries a
+    persistent store that isn't being populated, so it always returns
+    0 articles. /news/trending does the real fetch/scoring work, so
+    we pull the full trending snapshot once and slice it.
+    """
     if not symbols:
         log.info(f"{stream_label}: no symbols, skipping")
         return
+    wanted = {s.upper() for s in symbols}
+    try:
+        # /news/trending returns ALL symbols it has scored in the window.
+        trending = _get("/news/trending", params={"hours": 24, "min_articles": 1}, timeout=30)
+    except Exception as e:
+        log.warning(f"{stream_label}: trending fetch failed: {e}")
+        return
+    if not isinstance(trending, list):
+        log.warning(f"{stream_label}: unexpected trending shape: {type(trending)}")
+        return
     written = 0
-    for sym in symbols:
-        try:
-            data = _get("/news/symbol-sentiment", params={"symbol": sym}, timeout=30)
-            summary = data.get("summary")
-            scores = data.get("scores") or []
-            if not summary and not scores:
-                continue
-            append_jsonl("news_sentiment.jsonl", {
-                "stream": stream_label,
-                "symbol": sym,
-                "summary": summary,
-                "n_articles": len(scores),
-                "scores": scores,
-            })
-            written += 1
-        except requests.HTTPError as e:
-            # 4xx is usually "no data for this symbol" — quiet log
-            log.debug(f"{stream_label} {sym}: {e}")
-        except Exception as e:
-            log.warning(f"{stream_label} {sym}: {e}")
-        time.sleep(SLEEP_BETWEEN_NEWS)
-    log.info(f"{stream_label}: wrote {written}/{len(symbols)} symbol-sentiment rows")
+    for row in trending:
+        sym = (row.get("symbol") or "").upper()
+        if sym not in wanted:
+            continue
+        append_jsonl("news_sentiment.jsonl", {
+            "stream": stream_label,
+            "symbol": sym,
+            "summary": {
+                "avg_compound": row.get("avg_compound"),
+                "article_count": row.get("article_count"),
+                "sentiment_label": row.get("sentiment_label"),
+            },
+            "trending": row.get("trending"),
+            "latest_headlines": row.get("latest_headlines") or [],
+            "updated_at": row.get("updated_at"),
+        })
+        written += 1
+    log.info(f"{stream_label}: wrote {written}/{len(symbols)} sentiment rows (trending universe = {len(trending)})")
 
 
 def collect_squeeze() -> None:
