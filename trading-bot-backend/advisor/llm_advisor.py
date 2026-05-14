@@ -286,10 +286,16 @@ _HEAVY_MODELS = [
 ]
 
 _FAST_MODELS = [
+    # Reordered + refreshed 2026-05-14 after a live probe of 364 OR models:
+    # tencent/hy3-preview:free was silently retired from OR's free list,
+    # replaced by faster nvidia + arcee options that returned clean JSON
+    # on a real sentiment prompt.
+    "nvidia/nemotron-3-nano-30b-a3b:free",     # 30B, ~2s — fastest clean JSON
+    "arcee-ai/trinity-large-thinking:free",    # reasoning, ~3.6s
+    "openrouter/owl-alpha",                    # 1M ctx, ~4s
     "meta-llama/llama-3.3-70b-instruct:free",  # 70B, fast & reliable
     "google/gemma-4-31b-it:free",              # 31B, very fast
     "qwen/qwen3-next-80b-a3b-instruct:free",   # 80B Qwen3
-    "tencent/hy3-preview:free",                # Hunyuan 3 preview
     "openai/gpt-oss-120b:free",                # last-resort heavy fallback
 ]
 

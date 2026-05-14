@@ -13,9 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from bot.config import BotConfig, OrderSide
-from bot.orders import ExecutionSimulator, FillResult, Order, OrderStatus, OrderType
+from bot.orders import ExecutionSimulator, FillResult, Order, OrderStatus
 from bot.portfolio import Portfolio, Position, PositionSide
-from bot.risk import RiskAlert, RiskCheckResult, RiskManager
+from bot.risk import RiskAlert, RiskManager
 
 # Live trading imports
 from brokers.base import BrokerAdapter, BrokerConnectionError
