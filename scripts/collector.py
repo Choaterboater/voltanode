@@ -48,6 +48,7 @@ INTERVALS = {
     "squeeze":        int(os.environ.get("VOLTA_COLLECT_SQUEEZE_SEC",         60 * 60)),
     "macro":          int(os.environ.get("VOLTA_COLLECT_MACRO_SEC",           30 * 60)),
     "advisor":        int(os.environ.get("VOLTA_COLLECT_ADVISOR_SEC",       4 * 60 * 60)),
+    "universe":       int(os.environ.get("VOLTA_COLLECT_UNIVERSE_SEC",     12 * 60 * 60)),
 }
 
 # Per-call inter-symbol pause so we don't hammer the LLM provider's rate
@@ -119,10 +120,10 @@ def collect_news(symbols: List[str], stream_label: str) -> None:
     """Snapshot per-symbol sentiment via /news/trending (which actively
     fetches + scores) and filter to the symbols we care about.
 
-    The earlier per-symbol /news/symbol-sentiment endpoint queries a
-    persistent store that isn't being populated, so it always returns
-    0 articles. /news/trending does the real fetch/scoring work, so
-    we pull the full trending snapshot once and slice it.
+    We pull the full trending snapshot once per cycle and slice it down
+    to the symbols we hold/watchlist, rather than hitting per-symbol
+    endpoints. /news/trending does the real fetch/scoring work and the
+    response covers the whole universe in one call.
     """
     if not symbols:
         log.info(f"{stream_label}: no symbols, skipping")
@@ -272,6 +273,38 @@ def collect_advisor(symbols: List[str]) -> None:
     log.info(f"advisor: wrote {written}/{len(subset)} analyses")
 
 
+def refresh_universes() -> None:
+    """Refresh auto_discovery + squeeze bot universes from live scanner.
+
+    Bots get registered with frozen symbol lists at deploy time. Without a
+    periodic refresh they trade stale rosters (the squeeze list in particular
+    turns over weekly). This calls the backend's /strategies/refresh-universes
+    endpoint and logs what changed.
+    """
+    try:
+        r = requests.post(f"{API_BASE}/strategies/refresh-universes", timeout=300)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        log.warning(f"universe: refresh failed: {e}")
+        return
+
+    updated = data.get("updated", [])
+    skipped = data.get("skipped", [])
+    append_jsonl("universe_refresh.jsonl", data)
+    if updated:
+        for u in updated:
+            log.info(
+                f"universe: {u['strategy_type']} {u['strategy_id'][:24]} → "
+                f"+{len(u['added'])}/-{len(u['removed'])} (size={u['new_size']})"
+            )
+    log.info(
+        f"universe: refreshed crypto={data.get('crypto_universe_size')} "
+        f"stock={data.get('stock_universe_size')} squeeze={data.get('squeeze_universe_size')}; "
+        f"{len(updated)} updated, {len(skipped)} skipped"
+    )
+
+
 # ─── Dispatcher ───
 
 def stream_due(stream: str, last_run: float, now: float) -> bool:
@@ -285,7 +318,8 @@ def main() -> int:
         f"wl_news={INTERVALS['watchlist_news']//60} "
         f"squeeze={INTERVALS['squeeze']//60} "
         f"macro={INTERVALS['macro']//60} "
-        f"advisor={INTERVALS['advisor']//60}"
+        f"advisor={INTERVALS['advisor']//60} "
+        f"universe={INTERVALS['universe']//60}"
     )
 
     # Probe API once so users see a clear error if backend is down
@@ -317,6 +351,8 @@ def main() -> int:
                         collect_macro()
                     elif stream == "advisor":
                         collect_advisor(get_held_symbols())
+                    elif stream == "universe":
+                        refresh_universes()
                 except Exception as e:
                     log.exception(f"{stream} stream crashed: {e}")
             if not ran_any:
