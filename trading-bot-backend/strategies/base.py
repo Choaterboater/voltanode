@@ -96,6 +96,19 @@ class BaseStrategy(ABC):
     name: str = "base"
     DEFAULT_CONFIG: Dict[str, Any] = {}
 
+    @classmethod
+    def param_space(cls) -> Dict[str, Dict[str, Any]]:
+        """Tunable parameter ranges for hyperopt. Empty = opts out.
+
+        Spec shape per key:
+            {"type": "int"|"float"|"categorical",
+             "low": ..., "high": ...,    # int/float
+             "step": ...,                # optional, float
+             "log": True,                # optional, float, log-scale sampling
+             "choices": [...]}           # categorical
+        """
+        return {}
+
     def __init__(self, strategy_id: str, config: Dict[str, Any]) -> None:
         """Initialize strategy.
 

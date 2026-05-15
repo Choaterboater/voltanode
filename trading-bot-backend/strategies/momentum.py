@@ -23,6 +23,16 @@ class MomentumStrategy(BaseStrategy):
         "trend_filter_ema": 200,
     }
 
+    @classmethod
+    def param_space(cls) -> Dict[str, Dict[str, Any]]:
+        # fast_ema<slow_ema is enforced in the hyperopt objective.
+        return {
+            "fast_ema":         {"type": "int", "low": 5,   "high": 25},
+            "slow_ema":         {"type": "int", "low": 20,  "high": 60},
+            "signal_ema":       {"type": "int", "low": 5,   "high": 15},
+            "trend_filter_ema": {"type": "int", "low": 100, "high": 300, "step": 10},
+        }
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Per-symbol last bar timestamp we emitted a non-HOLD signal for.
