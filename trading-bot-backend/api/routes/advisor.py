@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from advisor.analyzer import SymbolAnalyzer
 from advisor.models import AnalysisResult, IndicatorReading, PriceTarget
+from advisor.pairlist import apply_chain as apply_pairlist_chain, default_chain as default_pairlist_chain
 from advisor.research import build_research_report
 from advisor.scanner import ScannerScore, rank_scores, score_symbol
 from advisor.squeeze import (
@@ -513,8 +514,15 @@ async def _fetch_score_one(
     sem: asyncio.Semaphore,
     crypto_days: int,
     stock_period: str,
+    pairlist_filters: Optional[List[object]] = None,
 ) -> ScannerScore:
-    """Fetch OHLCV for one symbol and score it. Errors are captured into the score."""
+    """Fetch OHLCV for one symbol and score it. Errors are captured into the score.
+
+    If ``pairlist_filters`` is provided, each filter's ``check(symbol, df)`` is
+    called after OHLCV fetch and before scoring. The first failing filter
+    short-circuits and returns a sentinel score with ``error="filtered:..."``
+    so the caller can see exactly which gate dropped the symbol and why.
+    """
     async with sem:
         try:
             if asset_class == "crypto":
@@ -536,6 +544,21 @@ async def _fetch_score_one(
             # Volume column may be missing on some sources — synth a zero series
             if "volume" not in df.columns:
                 df["volume"] = 0.0
+
+            # Pairlist filters — drop illiquid / too-young / wide-spread /
+            # dead-flat / pumping symbols BEFORE scoring. Tagged error so
+            # the scanner response surfaces the reason in `failed`.
+            if pairlist_filters:
+                for f in pairlist_filters:
+                    verdict = f.check(symbol, df)
+                    if not verdict.passed:
+                        return ScannerScore(
+                            symbol=symbol, score=0.0, direction="neutral",
+                            current_price=float(df["close"].iloc[-1]) if "close" in df.columns else 0.0,
+                            bars=len(df),
+                            error=f"filtered:{type(f).__name__}:{verdict.reason}",
+                        )
+
             return score_symbol(symbol, df)
         except Exception as exc:
             logger.warning("scanner: %s fetch/score failed: %s", symbol, exc)
@@ -558,6 +581,16 @@ async def market_scanner(
     stock_period: str = Query(default="3mo", description="yfinance period string for stocks"),
     include_sp500: bool = Query(default=False, description="(stock only) Merge full S&P 500 list into the universe"),
     include_movers: bool = Query(default=True, description="(stock only) Merge Yahoo day_gainers + most_actives so unknown movers (e.g. RXT) get scored"),
+    # ── Pairlist filters (freqtrade-style quality gates) ───────────────────
+    enable_pairlist: bool = Query(default=True, description="Apply quality gates (volume/age/price/spread/volatility/blacklist) before scoring"),
+    min_quote_volume_usd: float = Query(default=1_000_000.0, ge=0, description="Min 24h dollar-volume to keep a symbol (0 = disabled)"),
+    min_bars: int = Query(default=30, ge=0, le=500, description="Min OHLCV bars of history required"),
+    pl_min_price: float = Query(default=1.0, ge=0, description="Minimum current price (drop penny stocks)"),
+    pl_max_price: float = Query(default=0.0, ge=0, description="Maximum current price (0 = no ceiling)"),
+    max_spread_pct: float = Query(default=0.08, ge=0, le=1.0, description="Max avg (high-low)/close as bid-ask proxy"),
+    min_atr_pct: float = Query(default=0.005, ge=0, le=1.0, description="Min ATR/price — drop dead-flat names"),
+    max_atr_pct: float = Query(default=0.15, ge=0, le=1.0, description="Max ATR/price — drop pump rockets"),
+    blacklist: Optional[str] = Query(default=None, description="Comma-separated symbols to exclude (matches base form too — 'ADA' excludes ADAUSD)"),
 ) -> Dict[str, Any]:
     """Rank tradable assets by composite signal strength (RSI extreme + breakout + relative volume).
 
@@ -598,9 +631,28 @@ async def market_scanner(
 
     sem = asyncio.Semaphore(concurrency)
     started = datetime.now(timezone.utc)
+
+    # Build the pairlist filter chain once, share across the gather()
+    pairlist_filters: Optional[List[object]] = None
+    if enable_pairlist:
+        blacklist_syms = [s.strip() for s in (blacklist or "").split(",") if s.strip()] if blacklist else []
+        pairlist_filters = default_pairlist_chain(
+            blacklist=blacklist_syms,
+            min_quote_volume_usd=min_quote_volume_usd,
+            min_price=pl_min_price,
+            max_price=(pl_max_price if pl_max_price > 0 else None),
+            min_bars=min_bars,
+            max_spread_pct=max_spread_pct,
+            min_atr_pct=min_atr_pct,
+            max_atr_pct=max_atr_pct,
+        )
+
     scores = await asyncio.gather(
         *[
-            _fetch_score_one(sym, asset_class, market_data, sem, crypto_days, stock_period)
+            _fetch_score_one(
+                sym, asset_class, market_data, sem, crypto_days, stock_period,
+                pairlist_filters=pairlist_filters,
+            )
             for sym in universe
         ]
     )
@@ -624,20 +676,36 @@ async def market_scanner(
         if s.error is not None
     ]
 
+    # Break out the "filtered" rejects so the operator can see *why* the
+    # pairlist gates dropped names, separately from real fetch failures.
+    filtered = [
+        {"symbol": s.symbol, "reason": s.error.removeprefix("filtered:")}
+        for s in scores
+        if s.error and s.error.startswith("filtered:")
+    ]
+    fetch_failed = [
+        {"symbol": s.symbol, "error": s.error}
+        for s in scores
+        if s.error and not s.error.startswith("filtered:")
+    ]
+
     return {
         "asset_class": asset_class,
         "scanned_at": started.isoformat(),
         "elapsed_ms": elapsed_ms,
         "universe_size": len(universe),
         "scored": len([s for s in scores if s.error is None]),
-        "failed_count": len(failed),
+        "filtered_count": len(filtered),
+        "failed_count": len(fetch_failed),
         "filters": {
             "min_score": min_score,
             "direction": direction,
             "top": top,
+            "pairlist_enabled": enable_pairlist,
         },
         "results": payload_results,
-        "failed": failed[:20],  # cap for response brevity
+        "filtered": filtered[:20],  # which symbols the pairlist gates dropped
+        "failed": fetch_failed[:20],
     }
 
 

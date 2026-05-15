@@ -212,6 +212,16 @@ async def refresh_universes(
                 stock_period="3mo",
                 include_sp500=False,
                 include_movers=True,
+                # Pairlist filters — same defaults the scanner endpoint uses.
+                enable_pairlist=True,
+                min_quote_volume_usd=1_000_000.0,
+                min_bars=30,
+                pl_min_price=1.0,
+                pl_max_price=0.0,
+                max_spread_pct=0.08,
+                min_atr_pct=0.005,
+                max_atr_pct=0.15,
+                blacklist=None,
             )
             results = (data.get("results") or [])[:top]
             return [row["symbol"] for row in results if row.get("symbol")]
