@@ -13,9 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from bot.config import BotConfig, OrderSide
-from bot.orders import ExecutionSimulator, FillResult, Order, OrderStatus, OrderType
+from bot.orders import ExecutionSimulator, FillResult, Order, OrderStatus
 from bot.portfolio import Portfolio, Position, PositionSide
-from bot.risk import RiskAlert, RiskCheckResult, RiskManager
+from bot.risk import RiskAlert, RiskManager
 
 # Live trading imports
 from brokers.base import BrokerAdapter, BrokerConnectionError
@@ -401,8 +401,13 @@ class PaperTradingEngine:
             order.status = OrderStatus.FILLED
 
             self._fills.append(fill)
-            self._persist_fill(fill, strategy_id=order.strategy_id or "")
+            # _update_portfolio_on_fill is what computes ``fill.realized_pnl``
+            # for SELLs closing a long (and the symmetric short cases).
+            # Persist AFTER that so the JSONL row carries the realized P&L
+            # rather than None — otherwise everything reloads as null across
+            # restarts and the Analytics page loses its closed-trade history.
             self._update_portfolio_on_fill(order, fill, portfolio)
+            self._persist_fill(fill, strategy_id=order.strategy_id or "")
             self.on_fill(fill)
         return fill
 
@@ -674,6 +679,21 @@ class PaperTradingEngine:
                             pos.stop_loss = signal.stop_loss
                         if signal.take_profit is not None:
                             pos.take_profit = signal.take_profit
+                        # Fall back to operator-default stops if the
+                        # strategy didn't provide explicit ones. Without
+                        # this, signals that omit SL/TP land on disk as
+                        # naked positions with no exit plan — a 5% drop
+                        # has no safety net. 8% SL / 30% TP mirrors the
+                        # /portfolio/{id}/attach-stops endpoint defaults.
+                        if pos.stop_loss is None and pos.entry_price > 0:
+                            if pos.side.value == "long":
+                                pos.stop_loss = pos.entry_price * 0.92
+                                if pos.take_profit is None:
+                                    pos.take_profit = pos.entry_price * 1.30
+                            else:
+                                pos.stop_loss = pos.entry_price * 1.08
+                                if pos.take_profit is None:
+                                    pos.take_profit = pos.entry_price * 0.70
 
         # Check pending orders for fills.
         # In live mode the order is already at the broker after the first
@@ -813,7 +833,12 @@ class LiveTradingEngine(PaperTradingEngine):
         self.live_mode = True
         self.kill_switch = KillSwitch()
         self.daily_tracker = DailyPnlTracker()
-        self.safety_validator = SafetyValidator()
+        # Pass config.safety so the validator reflects operator-tuned limits
+        # (e.g. max_exposure_pct, max_orders_per_minute) instead of the
+        # hardcoded SafetyConfig defaults (50% / 10/min). Mutating
+        # config.safety via POST /settings/safety is then immediately
+        # visible to get_status / get_remaining via the shared reference.
+        self.safety_validator = SafetyValidator(config.safety)
 
         if notifier is None:
             # Build notifier from safety config
@@ -1062,8 +1087,12 @@ class LiveTradingEngine(PaperTradingEngine):
         if fill.filled_qty > 0:
             self.daily_tracker.record(fill)
             self._fills.append(fill)
-            self._persist_fill(fill, strategy_id=order.strategy_id or "")
+            # Persist AFTER _update_portfolio_on_fill so ``fill.realized_pnl``
+            # is set before the JSONL row is written. Otherwise the row goes
+            # to disk with realized_pnl=None and the Analytics page loses
+            # all closed-trade P&L across restarts.
             self._update_portfolio_on_fill(order, fill, portfolio)
+            self._persist_fill(fill, strategy_id=order.strategy_id or "")
             self.on_fill(fill)
 
         # 7. Post-fill safety check (daily loss limit)
@@ -1130,9 +1159,12 @@ class LiveTradingEngine(PaperTradingEngine):
                         )
                         self.daily_tracker.record(fill)
                         self._fills.append(fill)
-                        self._persist_fill(fill, strategy_id=local_order.strategy_id or "")
+                        # Persist AFTER _update_portfolio_on_fill so the JSONL
+                        # row carries the computed realized_pnl rather than
+                        # None — see also the same fix in execute_order paths.
                         portfolio = self.get_portfolio(account_id)
                         self._update_portfolio_on_fill(local_order, fill, portfolio)
+                        self._persist_fill(fill, strategy_id=local_order.strategy_id or "")
                         self.on_fill(fill)
 
                     local_order.filled_quantity = filled_qty

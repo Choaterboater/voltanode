@@ -84,24 +84,47 @@ export default function PaperTrading() {
 
   const formatCurrency = (v: number) =>
     `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Smart price formatter for micro-cap crypto (SHIB / PEPE-tier prices that
+  // would otherwise display as ``$0.0000``).
+  const formatPrice = (v: number | null | undefined): string => {
+    if (v == null || !isFinite(v)) return '—';
+    if (Math.abs(v) >= 1) return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (Math.abs(v) >= 0.01) return `$${v.toFixed(4)}`;
+    if (Math.abs(v) > 0) return `$${v.toExponential(2)}`;
+    return '$0.00';
+  };
 
+  // Filter out dust positions — leftover sub-cent remainders from prior
+  // sells (size like 7e-9 of GOOGL) that the broker won't accept any
+  // close order on. They sit at market_value < $0.01 forever and just
+  // clutter the table. The backend ledger still has them; see the
+  // /portfolio/{id}/purge-dust endpoint for actual cleanup.
+  const DUST_MV_THRESHOLD = 0.01;
   const positions: Position[] =
-    portfolio?.positions.map((p) => ({
+    portfolio?.positions
+      .filter((p) => Math.abs(p.market_value ?? p.size * p.current_price) >= DUST_MV_THRESHOLD)
+      .map((p) => ({
       id: p.symbol,
       symbol: p.symbol.replace('-', '/'),
-      side: p.side === 'LONG' ? 'long' : 'short',
+      // Backend serializes ``OrderSide`` as lowercase ('long' / 'short')
+      // but the previous strict-uppercase compare bucketed every position
+      // as 'short' — the table showed long BUYs with red 'short' badges.
+      side: String(p.side ?? '').toLowerCase() === 'long' ? 'long' : 'short',
       size: p.size,
       entryPrice: p.entry_price,
       markPrice: p.current_price,
       pnl: p.unrealized_pnl,
       pnlPercent:
         p.entry_price > 0
-          ? ((p.current_price - p.entry_price) / p.entry_price) * 100 * (p.side === 'SHORT' ? -1 : 1)
+          ? ((p.current_price - p.entry_price) / p.entry_price) *
+            100 *
+            (String(p.side ?? '').toLowerCase() === 'short' ? -1 : 1)
           : 0,
       openedAt: '',
       stopLoss: p.stop_loss,
       takeProfit: p.take_profit,
     })) ?? [];
+  const dustCount = (portfolio?.positions.length ?? 0) - positions.length;
 
   const orderColumns = [
     {
@@ -353,7 +376,17 @@ export default function PaperTrading() {
               transition={{ delay: 0.1 }}
               className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
             >
-              <h3 className="mb-3 text-sm font-semibold text-text-primary">Open Positions</h3>
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-text-primary">Open Positions</h3>
+                {dustCount > 0 && (
+                  <span
+                    className="text-[10px] italic text-text-muted"
+                    title="Positions with market value < $0.01 — leftover from prior sells the broker won't accept a close order on. Backend purge endpoint can clear them on the next restart."
+                  >
+                    {dustCount} dust position{dustCount === 1 ? '' : 's'} hidden
+                  </span>
+                )}
+              </div>
               {positions.length === 0 ? (
                 <p className="text-sm text-text-muted">No open positions.</p>
               ) : (
@@ -382,16 +415,16 @@ export default function PaperTrading() {
                           </td>
                           <td className="py-2 font-mono text-text-primary">{p.size}</td>
                           <td className="py-2 font-mono text-text-secondary">
-                            {formatCurrency(p.entryPrice)}
+                            {formatPrice(p.entryPrice)}
                           </td>
                           <td className="py-2 font-mono text-text-secondary">
-                            {formatCurrency(p.markPrice)}
+                            {formatPrice(p.markPrice)}
                           </td>
                           <td className="py-2 font-mono text-danger-red">
-                            {p.stopLoss ? formatCurrency(p.stopLoss) : '—'}
+                            {p.stopLoss ? formatPrice(p.stopLoss) : '—'}
                           </td>
                           <td className="py-2 font-mono text-success-green">
-                            {p.takeProfit ? formatCurrency(p.takeProfit) : '—'}
+                            {p.takeProfit ? formatPrice(p.takeProfit) : '—'}
                           </td>
                           <td
                             className={`py-2 font-mono ${

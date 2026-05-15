@@ -18,10 +18,18 @@ import Layout from '@/components/Layout';
 import Badge from '@/components/Badge';
 import {
   getStrategies,
+  getTrades,
   registerStrategy,
   toggleStrategy,
   type ApiStrategy,
 } from '@/lib/api';
+
+interface PerStrategyMetrics {
+  trades: number;
+  closed: number;
+  wins: number;
+  pnl: number;
+}
 
 const strategyIcons: Record<string, React.ReactNode> = {
   MomentumStrategy: <TrendingUp className="h-4 w-4" />,
@@ -42,6 +50,7 @@ type AssetClass = 'crypto' | 'stock';
 
 export default function BotLab() {
   const [strategies, setStrategies] = useState<ApiStrategy[]>([]);
+  const [tradesByStrat, setTradesByStrat] = useState<Record<string, PerStrategyMetrics>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedStrategy, setSelectedStrategy] = useState<string>('momentum');
@@ -62,11 +71,27 @@ export default function BotLab() {
     loadBots();
   }, []);
 
+  // /strategies/ returns metrics=null for almost every active bot. Aggregate
+  // /trades/ client-side per strategy_id so the per-bot Trades/Win Rate/P&L
+  // columns reflect actual fills instead of all-zeroes.
   async function loadBots() {
     try {
       setLoading(true);
-      const res = await getStrategies();
-      setStrategies(res.strategies);
+      const [stratsRes, trades] = await Promise.all([getStrategies(), getTrades()]);
+      setStrategies(stratsRes.strategies);
+      const agg: Record<string, PerStrategyMetrics> = {};
+      for (const t of trades) {
+        const sid = t.strategy_id ?? '';
+        if (!sid) continue;
+        if (!agg[sid]) agg[sid] = { trades: 0, closed: 0, wins: 0, pnl: 0 };
+        agg[sid].trades += 1;
+        if (t.realized_pnl != null) {
+          agg[sid].closed += 1;
+          agg[sid].pnl += t.realized_pnl;
+          if (t.realized_pnl > 0) agg[sid].wins += 1;
+        }
+      }
+      setTradesByStrat(agg);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load bots');
     } finally {
@@ -262,6 +287,18 @@ export default function BotLab() {
             <div className="space-y-3">
               {strategies.map((bot, i) => {
                 const metrics = bot.metrics as Record<string, number> | null;
+                const agg = tradesByStrat[bot.strategy_id];
+                // Merge backend metrics with client-side trade aggregation
+                // so cards reflect real fills even when bot.metrics is null.
+                const totalTrades = metrics?.total_trades ?? agg?.trades ?? 0;
+                const closedTrades = agg?.closed ?? 0;
+                const pnlValue = Number(metrics?.total_pnl ?? agg?.pnl ?? 0);
+                const winRate =
+                  metrics?.win_rate != null
+                    ? metrics.win_rate
+                    : closedTrades > 0
+                    ? (agg!.wins / closedTrades) * 100
+                    : null;
                 const cfg = bot.config as Record<string, unknown>;
                 const symbolsList = Array.isArray(cfg?.symbols) ? (cfg.symbols as string[]) : null;
                 // Truncate long lists so a 30-symbol auto_discovery doesn't
@@ -297,7 +334,12 @@ export default function BotLab() {
                             {assetClassLabel === 'stock' ? 'Stock' : 'Crypto'}
                           </Badge>
                           {fullSymbolList.length === 0 ? (
-                            <span className="font-mono text-xs text-text-muted">—</span>
+                            <span
+                              className="font-mono text-xs text-text-muted italic"
+                              title="No hardcoded symbols — this bot pulls candidates at runtime from the Watchlist / Scanner."
+                            >
+                              Dynamic universe
+                            </span>
                           ) : (
                             <span
                               className="font-mono text-xs text-accent-cyan"
@@ -320,23 +362,35 @@ export default function BotLab() {
                       <div className="text-center">
                         <p className="text-xs text-text-muted">Trades</p>
                         <p className="font-mono text-sm text-text-primary">
-                          {metrics?.total_trades ?? 0}
+                          {totalTrades}
+                          {totalTrades > 0 && closedTrades < totalTrades && (
+                            <span
+                              className="ml-1 text-[10px] text-text-muted"
+                              title={`${closedTrades} closed, ${totalTrades - closedTrades} open`}
+                            >
+                              ({closedTrades}c)
+                            </span>
+                          )}
                         </p>
                       </div>
                       <div className="text-center">
                         <p className="text-xs text-text-muted">Win Rate</p>
                         <p className="font-mono text-sm text-text-primary">
-                          {metrics?.win_rate ? `${metrics.win_rate.toFixed(1)}%` : '-'}
+                          {winRate != null ? `${winRate.toFixed(1)}%` : '—'}
                         </p>
                       </div>
                       <div className="text-center">
                         <p className="text-xs text-text-muted">P&L</p>
                         <p
                           className={`font-mono text-sm ${
-                            (metrics?.total_pnl ?? 0) >= 0 ? 'text-success-green' : 'text-danger-red'
+                            pnlValue > 0
+                              ? 'text-success-green'
+                              : pnlValue < 0
+                              ? 'text-danger-red'
+                              : 'text-text-primary'
                           }`}
                         >
-                          {metrics?.total_pnl ? formatCurrency(metrics.total_pnl) : '-'}
+                          {pnlValue === 0 ? '—' : formatCurrency(pnlValue)}
                         </p>
                       </div>
                     </div>

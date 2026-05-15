@@ -69,7 +69,7 @@ export default function MetricCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <p className="text-xs text-text-muted">{label}</p>
-          <p className="mt-1 font-mono text-xl font-medium tabular-nums text-text-primary">
+          <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-text-primary">
             {value}
           </p>
           {delta !== undefined && (

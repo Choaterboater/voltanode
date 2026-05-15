@@ -125,10 +125,15 @@ export function useWatchlist(autoload = true) {
    * Used by the Watchlist page table view.
    */
   const fetchEnriched = useCallback(
-    async (filterAssetType?: 'stock' | 'crypto'): Promise<EnrichedWatchlistItem[]> => {
-      const url = filterAssetType
-        ? `${API_BASE}/watchlist/enriched?asset_type=${filterAssetType}`
-        : `${API_BASE}/watchlist/enriched`;
+    async (
+      filterAssetType?: 'stock' | 'crypto',
+      opts?: { nocache?: boolean },
+    ): Promise<EnrichedWatchlistItem[]> => {
+      const params = new URLSearchParams();
+      if (filterAssetType) params.set('asset_type', filterAssetType);
+      if (opts?.nocache) params.set('nocache', 'true');
+      const qs = params.toString();
+      const url = `${API_BASE}/watchlist/enriched${qs ? `?${qs}` : ''}`;
       const r = await fetch(url);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();

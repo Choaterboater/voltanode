@@ -27,6 +27,7 @@ build/
 
 # Data / Cache
 data/cache/
+data/collector/
 *.csv
 *.db
 *.sqlite

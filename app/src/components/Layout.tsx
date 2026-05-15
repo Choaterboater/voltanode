@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
 import Navbar from './Navbar';
 import Footer from './Footer';
+import RestartBackendButton from './RestartBackendButton';
 
 interface LayoutProps {
   children: ReactNode;
-  title: string;
+  title?: string;
   rightContent?: ReactNode;
 }
 
@@ -13,12 +14,24 @@ export default function Layout({ children, title, rightContent }: LayoutProps) {
     <div className="flex min-h-[100dvh] bg-bg-base">
       <Navbar />
 
-      {/* Main content area */}
-      <div className="flex flex-1 flex-col lg:ml-[260px]">
-        {/* Top bar */}
+      {/* Main content area. `min-w-0` lets flex-1 shrink below the inner
+          main's max-w when viewport - sidebar is narrower than 1600px,
+          which prevents the column from overflowing past the viewport. */}
+      <div className="flex min-w-0 flex-1 flex-col lg:ml-[260px]">
+        {/* Top bar is now always rendered so the persistent Restart-backend
+            button is reachable from any page. Title is still optional — pages
+            with rich in-body heroes (Watchlist, Advisor, Squeeze, About)
+            omit it so we don't render the page name twice. */}
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border-subtle bg-bg-base px-6">
-          <h1 className="text-lg font-semibold text-text-primary">{title}</h1>
-          {rightContent && <div className="flex items-center gap-4">{rightContent}</div>}
+          {title ? (
+            <h1 className="text-lg font-semibold text-text-primary">{title}</h1>
+          ) : (
+            <span />
+          )}
+          <div className="flex items-center gap-4">
+            {rightContent}
+            <RestartBackendButton />
+          </div>
         </header>
 
         {/* Content */}

@@ -196,7 +196,16 @@ class BaseStrategy(ABC):
                     pos = portfolio.get_position(tick.symbol)
                 except Exception:
                     pos = None
-                if pos is not None and getattr(pos, "size", 0) > 0 and getattr(pos, "status", "") == "open":
+                # Treat sub-cent dust as "not held" — leftover fractional
+                # remainders from prior sells (size like 7e-9) used to block
+                # fresh BUYs forever because the broker can't close them and
+                # the gate counted them as a real position. Anything with
+                # market value under $1 (or size below the broker's minimum
+                # order increment for any reasonable price) is dust.
+                _held_size = float(getattr(pos, "size", 0) or 0)
+                _held_mv = float(getattr(pos, "market_value", 0) or 0)
+                _is_dust = _held_size < 1e-6 or (_held_mv != 0 and abs(_held_mv) < 1.0)
+                if pos is not None and _held_size > 0 and not _is_dust and getattr(pos, "status", "") == "open":
                     import logging as _log
                     _log.getLogger("volta.engine").debug(
                         f"position-aware gate: {self.strategy_id} BUY on {tick.symbol} "

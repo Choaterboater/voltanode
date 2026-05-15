@@ -156,3 +156,160 @@ async def get_strategy_metrics(strategy_id: str) -> Dict[str, Any]:
         metrics = _registered_strategies[strategy_id].get_metrics()
         return metrics.to_dict()
     raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
+
+
+# ─── Dynamic universe refresh ─────────────────────────────────────────────
+#
+# Auto-discovery and squeeze bots get registered with a frozen universe at
+# deploy time (DEFAULT_CRYPTO_UNIVERSE / DEFAULT_STOCK_UNIVERSE constants or
+# the squeeze screener's then-top-10). That universe goes stale fast — the
+# squeeze list especially turns over weekly. This endpoint refreshes their
+# config.symbols in place from the live scanner + squeeze output and
+# persists, so the next tick trades the fresh universe.
+#
+# Mean-reversion / macd / momentum / news_sentiment bots are NOT touched —
+# those have intentionally pinned symbols (e.g. "trade BTC with MACD"); only
+# the strategies whose whole point is universe-scanning get refreshed.
+
+@router.post("/refresh-universes")
+async def refresh_universes(
+    crypto_top: int = 20,
+    stock_top: int = 25,
+    squeeze_top: int = 10,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Refresh symbol universes for auto_discovery and squeeze bots.
+
+    Reads the live scanner (per asset class) and the squeeze screener, then
+    updates each registered auto_discovery / squeeze bot's ``config.symbols``
+    to the fresh top-N. Persists to disk.
+
+    Pass ``dry_run=true`` to see what would change without applying.
+
+    Empty scan results are a no-op — we never wipe a bot's universe to [].
+
+    The scanner + squeeze handlers are called directly as Python coroutines
+    here (not via HTTP loopback) so this endpoint doesn't deadlock the
+    single-worker async server while waiting on itself.
+    """
+    # Local imports — pulling these at module import time would force every
+    # request to load the advisor stack on app start.
+    from api.routes.advisor import market_scanner, squeeze_screener
+
+    async def _fetch_scanner(asset_class: str, top: int) -> List[str]:
+        try:
+            # All Query() defaults must be passed explicitly when calling
+            # a FastAPI handler directly (not via HTTP).
+            data = await market_scanner(
+                asset_class=asset_class,
+                top=top,
+                min_score=0.0,
+                limit_universe=50,
+                symbols=None,
+                direction=None,
+                concurrency=5,
+                crypto_days=60,
+                stock_period="3mo",
+                include_sp500=False,
+                include_movers=True,
+                # Pairlist filters — same defaults the scanner endpoint uses.
+                enable_pairlist=True,
+                min_quote_volume_usd=1_000_000.0,
+                min_bars=30,
+                pl_min_price=1.0,
+                pl_max_price=0.0,
+                max_spread_pct=0.08,
+                min_atr_pct=0.005,
+                max_atr_pct=0.15,
+                blacklist=None,
+            )
+            results = (data.get("results") or [])[:top]
+            return [row["symbol"] for row in results if row.get("symbol")]
+        except Exception as exc:
+            logger.warning(f"refresh: scanner({asset_class}) failed: {exc}")
+            return []
+
+    async def _fetch_squeeze(top: int) -> List[str]:
+        try:
+            data = await squeeze_screener(
+                days_back=7,
+                min_score=2.5,
+                tier=None,
+                extra_symbols=None,
+                only_filings=False,
+                min_market_cap=100_000_000,
+                max_market_cap=5_000_000_000,
+                max_float_shares=500_000_000,
+                min_price=1.0,
+                max_price=20.0,
+                min_avg_daily_volume=100_000,
+                sector_blocklist="utilities,reit",
+                fetch_technical=True,
+                concurrency=6,
+                max_results=40,
+            )
+            cands = (data.get("candidates") or [])[:top]
+            return [c["ticker"] for c in cands if c.get("ticker")]
+        except Exception as exc:
+            logger.warning(f"refresh: squeeze failed: {exc}")
+            return []
+
+    # Run the three scans concurrently — they hit different data sources
+    # (CoinGecko / yfinance / SEC) so they parallelize cleanly.
+    import asyncio
+    crypto_universe, stock_universe, squeeze_universe = await asyncio.gather(
+        _fetch_scanner("crypto", crypto_top),
+        _fetch_scanner("stock", stock_top),
+        _fetch_squeeze(squeeze_top),
+    )
+
+    updated: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+
+    for sid, strat in _registered_strategies.items():
+        new_syms: List[str] | None = None
+        if strat.name == "auto_discovery":
+            asset_class = (strat.config or {}).get("asset_class", "crypto")
+            new_syms = crypto_universe if asset_class == "crypto" else stock_universe
+        elif strat.name == "squeeze":
+            new_syms = squeeze_universe
+
+        if new_syms is None:
+            continue  # not a refreshable strategy type
+
+        if not new_syms:
+            skipped.append({"strategy_id": sid, "reason": "empty scan result"})
+            continue
+
+        old_syms = list((strat.config or {}).get("symbols") or [])
+        if sorted(old_syms) == sorted(new_syms):
+            skipped.append({"strategy_id": sid, "reason": "no change"})
+            continue
+
+        added = sorted(set(new_syms) - set(old_syms))
+        removed = sorted(set(old_syms) - set(new_syms))
+
+        if not dry_run:
+            new_cfg = dict(strat.config or {})
+            new_cfg["symbols"] = list(new_syms)
+            strat.config = new_cfg
+
+        updated.append({
+            "strategy_id": sid,
+            "strategy_type": strat.name,
+            "added": added,
+            "removed": removed,
+            "new_size": len(new_syms),
+        })
+
+    if updated and not dry_run:
+        _persist()
+
+    return {
+        "dry_run": dry_run,
+        "crypto_universe_size": len(crypto_universe),
+        "stock_universe_size": len(stock_universe),
+        "squeeze_universe_size": len(squeeze_universe),
+        "updated": updated,
+        "skipped": skipped,
+    }

@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from advisor.fundamentals import FundamentalSnapshot, fetch_fundamentals, score_fundamentals
+from advisor.fundamentals import fetch_fundamentals, score_fundamentals
 from advisor.models import AnalysisResult
 
 logger = logging.getLogger("volta.advisor.research")

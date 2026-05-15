@@ -16,6 +16,10 @@ import json
 import logging
 import os
 import re
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -23,6 +27,52 @@ import requests
 from advisor.models import AnalysisResult, IndicatorReading, LLMCommentary
 
 logger = logging.getLogger("volta.advisor.llm")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# LLM call stats — one row per attempt to data/collector/llm_model_stats.jsonl
+# ──────────────────────────────────────────────────────────────────────
+# Lets us see actual rate-limit pain and reorder the chain based on
+# evidence instead of guessing.
+
+_LLM_STATS_PATH = (
+    Path(__file__).resolve().parent.parent.parent
+    / "data" / "collector" / "llm_model_stats.jsonl"
+)
+_LLM_STATS_LOCK = threading.Lock()
+
+
+def record_llm_attempt(
+    model: str,
+    purpose: str,
+    attempt: int,
+    success: bool,
+    latency_ms: float,
+    error: Optional[str] = None,
+    http_status: Optional[int] = None,
+) -> None:
+    """Append one row describing a single LLM model call.
+
+    `purpose` is a short tag: 'sentiment', 'advisor', 'pretrade', 'research'.
+    `attempt` is the 1-based position in the fallback chain.
+    Silent on write failure — never let logging break a trade path.
+    """
+    try:
+        _LLM_STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        row = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "model": model,
+            "purpose": purpose,
+            "attempt": attempt,
+            "success": success,
+            "latency_ms": round(latency_ms, 1),
+            "error": error,
+            "http_status": http_status,
+        }
+        with _LLM_STATS_LOCK, _LLM_STATS_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+    except Exception:
+        pass
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -228,7 +278,7 @@ def _call_ollama(prompt: str, model: str, timeout: float = 60.0) -> Optional[str
 
 
 _HEAVY_MODELS = [
-    "inclusionai/ling-2.6-1t:free",            # 1T MoE — biggest available
+    "inclusionai/ring-2.6-1t:free",            # 1T MoE — biggest available
     "openai/gpt-oss-120b:free",                # 120B, very reliable
     "nvidia/nemotron-3-super-120b-a12b:free",  # 120B
     "minimax/minimax-m2.5:free",               # large MoE, 196K ctx
@@ -236,10 +286,16 @@ _HEAVY_MODELS = [
 ]
 
 _FAST_MODELS = [
+    # Reordered + refreshed 2026-05-14 after a live probe of 364 OR models:
+    # tencent/hy3-preview:free was silently retired from OR's free list,
+    # replaced by faster nvidia + arcee options that returned clean JSON
+    # on a real sentiment prompt.
+    "nvidia/nemotron-3-nano-30b-a3b:free",     # 30B, ~2s — fastest clean JSON
+    "arcee-ai/trinity-large-thinking:free",    # reasoning, ~3.6s
+    "openrouter/owl-alpha",                    # 1M ctx, ~4s
     "meta-llama/llama-3.3-70b-instruct:free",  # 70B, fast & reliable
     "google/gemma-4-31b-it:free",              # 31B, very fast
     "qwen/qwen3-next-80b-a3b-instruct:free",   # 80B Qwen3
-    "tencent/hy3-preview:free",                # Hunyuan 3 preview
     "openai/gpt-oss-120b:free",                # last-resort heavy fallback
 ]
 
@@ -276,7 +332,17 @@ def _openrouter_model_chain(heavy: bool = False) -> List[str]:
 
 
 def _call_openai_compat(prompt: str, model: str, base_url: str, api_key: str, timeout: float = 60.0) -> Optional[str]:
-    """OpenAI-compatible Chat Completions endpoint (also works for OpenRouter)."""
+    """OpenAI-compatible Chat Completions endpoint (also works for OpenRouter).
+
+    ``max_tokens`` set to 8000 so reasoning models (Ring 2.6, DeepSeek-R1,
+    Qwen Reasoning) have room to emit their internal chain-of-thought into
+    the 'reasoning' field AND still produce a complete 'content' payload.
+    Non-reasoning models simply emit shorter responses regardless.
+
+    Also falls back to ``message.reasoning`` when ``content`` is empty —
+    some reasoning-model responses route the final answer to the
+    reasoning field when the generation runs long.
+    """
     try:
         r = requests.post(
             f"{base_url.rstrip('/')}/chat/completions",
@@ -285,12 +351,18 @@ def _call_openai_compat(prompt: str, model: str, base_url: str, api_key: str, ti
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.2,
+                "max_tokens": 8000,
             },
             timeout=timeout,
         )
         r.raise_for_status()
-        data = r.json()
-        return data["choices"][0]["message"]["content"]
+        msg = r.json()["choices"][0].get("message", {}) or {}
+        content = (msg.get("content") or "").strip()
+        if not content:
+            # Some reasoning models put the final answer in 'reasoning'
+            # when content gets truncated or omitted. Try that field.
+            content = (msg.get("reasoning") or "").strip()
+        return content or None
     except Exception as exc:
         logger.warning(f"{base_url} call failed: {exc}")
         return None
@@ -434,8 +506,16 @@ def generate_commentary(
         # through a list of free OpenRouter models so a single 429 doesn't
         # collapse the Advanced path.
         models = _openrouter_model_chain(heavy=heavy)
-        for candidate in models:
+        for attempt, candidate in enumerate(models, 1):
+            t0 = time.time()
             raw = _call_openai_compat(prompt, candidate, "https://openrouter.ai/api/v1", api_key)
+            record_llm_attempt(
+                model=candidate,
+                purpose="advisor",
+                attempt=attempt,
+                success=bool(raw),
+                latency_ms=(time.time() - t0) * 1000,
+            )
             if raw:
                 model_name = candidate
                 break
@@ -606,13 +686,21 @@ def pretrade_check(
     raw: Optional[str] = None
     model_name = ""
     # Fast chain only — pretrade is hot path, no heavy frontier models.
-    for candidate in _openrouter_model_chain(heavy=False):
+    for attempt, candidate in enumerate(_openrouter_model_chain(heavy=False), 1):
+        t0 = time.time()
         raw = _call_openai_compat(
             prompt,
             candidate,
             "https://openrouter.ai/api/v1",
             api_key,
             timeout=timeout,
+        )
+        record_llm_attempt(
+            model=candidate,
+            purpose="pretrade",
+            attempt=attempt,
+            success=bool(raw),
+            latency_ms=(time.time() - t0) * 1000,
         )
         if raw:
             model_name = candidate

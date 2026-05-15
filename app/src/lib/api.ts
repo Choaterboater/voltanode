@@ -18,6 +18,15 @@ export const getEngineStatus = () => fetchJson<{ running: boolean; account_count
 export const startEngine = () => fetchJson<{ status: string }>('/engine/start', { method: 'POST' });
 export const stopEngine = () => fetchJson<{ status: string }>('/engine/stop', { method: 'POST' });
 
+/** Restart the backend process. Returns immediately; the backend dies in ~2s
+ *  and a fresh one spawns in a new console window. Poll /engine/status to
+ *  detect when it's back up. */
+export const restartBackend = () =>
+  fetchJson<{ scheduled: boolean; pid_to_kill: number; estimated_downtime_sec: number }>(
+    '/settings/restart',
+    { method: 'POST' },
+  );
+
 // ── Portfolio ──
 export interface ApiPortfolio {
   account_id: string;

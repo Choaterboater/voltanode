@@ -9,11 +9,16 @@ Endpoints:
     POST /settings/safety              -> Configure safety limits
     POST /settings/kill-switch         -> Activate/deactivate kill switch
     GET  /settings/safety-status       -> Current safety metrics
+    POST /settings/restart             -> Restart the backend process
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -26,6 +31,55 @@ from security.encryption import ApiKeyStore
 logger = logging.getLogger("volta.api.settings")
 
 router = APIRouter()
+
+
+@router.post("/restart")
+async def restart_backend() -> Dict[str, Any]:
+    """Spawn a detached helper that waits briefly, kills this backend, and
+    starts a fresh one in a new console.
+
+    Returns immediately so the HTTP response lands before this process dies.
+    The frontend should poll ``GET /engine/status`` after ~3s to detect the
+    new backend is up.
+
+    Windows-only implementation: uses ``cmd /c`` + ``start`` to detach the
+    restart helper from the dying parent process.
+    """
+    parent_pid = os.getpid()
+    # routes/ -> api/ -> trading-bot-backend/
+    backend_dir = Path(__file__).resolve().parents[2]
+
+    # Detached cmd chain:
+    #   1. wait 2s so this HTTP response can complete
+    #   2. force-kill the current backend
+    #   3. cd into the backend dir
+    #   4. spawn a new backend in its own console window
+    chain = (
+        f'timeout /t 2 /nobreak >nul & '
+        f'taskkill /F /PID {parent_pid} >nul 2>&1 & '
+        f'cd /d "{backend_dir}" & '
+        f'start "VoltaNode backend" cmd /k python run.py --mode api --host 127.0.0.1 --port 8000'
+    )
+
+    DETACHED_PROCESS = 0x00000008
+    CREATE_NEW_PROCESS_GROUP = 0x00000200
+    try:
+        subprocess.Popen(
+            f'cmd /c "{chain}"',
+            shell=True,
+            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            close_fds=True,
+        )
+    except Exception as exc:
+        logger.error(f"restart: failed to spawn helper: {exc}")
+        raise HTTPException(status_code=500, detail=f"restart helper failed: {exc}")
+
+    logger.warning(f"restart: scheduled (parent PID {parent_pid} will die in ~2s)")
+    return {
+        "scheduled": True,
+        "pid_to_kill": parent_pid,
+        "estimated_downtime_sec": 5,
+    }
 
 
 # ── Pydantic Request / Response Models ──
@@ -387,6 +441,14 @@ async def configure_safety(request: Request, body: SafetyConfigRequest) -> dict:
         safety.allowed_symbols = body.allowed_symbols
     if body.blocked_symbols is not None:
         safety.blocked_symbols = body.blocked_symbols
+
+    # Push the new max_orders_per_minute to the live rate limiter. The
+    # rest of the limits are read through ``self.config`` on each call so
+    # they pick up the mutation automatically — the rate limiter caches
+    # ``max_per_minute`` at construction time, so we have to update it.
+    engine = _get_engine(request)
+    if engine is not None and hasattr(engine, "safety_validator"):
+        engine.safety_validator.rate_limiter.max_per_minute = safety.max_orders_per_minute
 
     return {
         "max_daily_loss_pct": safety.max_daily_loss_pct,

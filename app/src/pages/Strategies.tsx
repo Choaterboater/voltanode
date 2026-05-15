@@ -14,48 +14,92 @@ import {
 } from 'lucide-react';
 import Layout from '@/components/Layout';
 import Badge from '@/components/Badge';
-import { getStrategies, registerStrategy, toggleStrategy, type ApiStrategy } from '@/lib/api';
+import { getStrategies, getTrades, registerStrategy, toggleStrategy, type ApiStrategy } from '@/lib/api';
 
+interface PerStrategyMetrics {
+  trades: number;
+  closed: number;
+  wins: number;
+  pnl: number;
+}
+
+// Backend returns strategy_type in snake_case (e.g. "mean_reversion"),
+// so these lookup tables must use snake_case keys — previously they were
+// PascalCase and never matched, leaving every card with the fallback
+// "Custom strategy" copy and the generic Activity icon.
 const strategyIcons: Record<string, React.ReactNode> = {
-  Momentum: <TrendingUp className="h-5 w-5" />,
-  MeanReversion: <Activity className="h-5 w-5" />,
-  Grid: <Grid3X3 className="h-5 w-5" />,
-  Breakout: <Zap className="h-5 w-5" />,
-  MACD: <BarChart3 className="h-5 w-5" />,
-  Arbitrage: <Cpu className="h-5 w-5" />,
-  EnsembleML: <BrainCircuit className="h-5 w-5" />,
+  momentum: <TrendingUp className="h-5 w-5" />,
+  mean_reversion: <Activity className="h-5 w-5" />,
+  grid: <Grid3X3 className="h-5 w-5" />,
+  breakout: <Zap className="h-5 w-5" />,
+  macd: <BarChart3 className="h-5 w-5" />,
+  arbitrage: <Cpu className="h-5 w-5" />,
+  ensemble_ml: <BrainCircuit className="h-5 w-5" />,
+  news_sentiment: <BrainCircuit className="h-5 w-5" />,
+  auto_discovery: <Zap className="h-5 w-5" />,
+  squeeze: <TrendingUp className="h-5 w-5" />,
+  simple_trend: <TrendingUp className="h-5 w-5" />,
+  multi_coin: <Cpu className="h-5 w-5" />,
 };
 
 const strategyDescriptions: Record<string, string> = {
-  Momentum: 'Trend-following using EMA crossovers. Best in directional markets.',
-  MeanReversion: 'RSI + Bollinger Bands. Profits from price reversions to mean.',
-  Grid: 'Systematic grid orders. Profits from ranging markets.',
-  Breakout: 'Support/resistance breakouts with volume confirmation.',
-  MACD: 'Signal line crossovers with histogram divergence.',
-  Arbitrage: 'Cross-market price discrepancy scanner.',
-  EnsembleML: 'Multi-indicator weighted scoring ensemble.',
+  momentum: 'Trend-following using EMA crossovers. Best in directional markets.',
+  mean_reversion: 'RSI + Bollinger Bands. Buys oversold, sells overbought.',
+  grid: 'Systematic grid orders. Profits from ranging markets.',
+  breakout: 'Support/resistance breakouts with volume confirmation.',
+  macd: 'Signal line crossovers with histogram divergence.',
+  arbitrage: 'Cross-market price discrepancy scanner.',
+  ensemble_ml: 'Multi-indicator weighted scoring ensemble.',
+  news_sentiment: 'Sentiment-driven trades from headlines + LLM scoring.',
+  auto_discovery: 'Scans the universe and trades top composite-scored candidates.',
+  squeeze: '7-factor short-squeeze pattern trader. Wider stops, longer holds.',
+  simple_trend: 'Lightweight EMA-50/200 trend filter. Conservative entries.',
+  multi_coin: 'Momentum scanner across multiple crypto pairs simultaneously.',
 };
 
 export default function Strategies() {
   const [strategies, setStrategies] = useState<ApiStrategy[]>([]);
+  const [tradesByStrat, setTradesByStrat] = useState<Record<string, PerStrategyMetrics>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [registering, setRegistering] = useState<string | null>(null);
 
   useEffect(() => {
-    loadStrategies();
+    loadAll();
   }, []);
 
-  async function loadStrategies() {
+  // The /strategies/ endpoint returns metrics=null for almost every bot
+  // (the engine doesn't populate ApiStrategy.metrics until a closed-PnL
+  // round-trip lands), so every card showed Trades=0 even when the bot
+  // had fired BUYs. Aggregate /trades/ client-side per strategy_id and
+  // merge in.
+  async function loadAll() {
     try {
       setLoading(true);
-      const res = await getStrategies();
-      setStrategies(res.strategies);
+      const [stratsRes, trades] = await Promise.all([getStrategies(), getTrades()]);
+      setStrategies(stratsRes.strategies);
+      const agg: Record<string, PerStrategyMetrics> = {};
+      for (const t of trades) {
+        const sid = t.strategy_id ?? '';
+        if (!sid) continue;
+        if (!agg[sid]) agg[sid] = { trades: 0, closed: 0, wins: 0, pnl: 0 };
+        agg[sid].trades += 1;
+        if (t.realized_pnl != null) {
+          agg[sid].closed += 1;
+          agg[sid].pnl += t.realized_pnl;
+          if (t.realized_pnl > 0) agg[sid].wins += 1;
+        }
+      }
+      setTradesByStrat(agg);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load strategies');
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadStrategies() {
+    await loadAll();
   }
 
   async function handleToggle(s: ApiStrategy) {
@@ -79,8 +123,20 @@ export default function Strategies() {
     }
   }
 
-  const available = strategies.filter((s) => !s.metrics);
-  const registered = strategies.filter((s) => s.metrics !== undefined || s.is_active);
+  // Registered = bots the user (or auto-deploy) has created — they have a
+  // timestamp suffix on their ID like `momentum_1777844811849`.
+  // Available = the bare "strategy_type" templates the backend exposes
+  // via /strategies/available (no underscore-timestamp), which a user
+  // can clone via Register & Activate. Previously both filters matched
+  // strategies with `metrics: null`, which caused every active bot to
+  // also appear in the Strategy Library below — same card twice.
+  const TEMPLATE_IDS = new Set([
+    'momentum', 'mean_reversion', 'grid', 'breakout', 'macd', 'arbitrage',
+    'ensemble_ml', 'news_sentiment', 'multi_coin', 'simple_trend',
+    'auto_discovery', 'squeeze',
+  ]);
+  const registered = strategies.filter((s) => !TEMPLATE_IDS.has(s.strategy_id));
+  const available = strategies.filter((s) => TEMPLATE_IDS.has(s.strategy_id));
 
   if (loading) {
     return (
@@ -110,22 +166,47 @@ export default function Strategies() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {registered.map((s, i) => (
+              {registered.map((s, i) => {
+                const m = (s.metrics as Record<string, number> | null) || null;
+                const cfg = (s.config as Record<string, unknown>) || {};
+                const symList: string[] = Array.isArray(cfg.symbols)
+                  ? (cfg.symbols as string[])
+                  : cfg.symbol
+                  ? [String(cfg.symbol)]
+                  : [];
+                // Prefer backend metrics if present; otherwise fall back to
+                // the client-side aggregation of /trades by strategy_id.
+                const agg = tradesByStrat[s.strategy_id];
+                const totalTrades = m?.total_trades ?? agg?.trades ?? 0;
+                const closedTrades = agg?.closed ?? 0;
+                const pnl = Number(m?.total_pnl ?? agg?.pnl ?? 0);
+                const winRate =
+                  m?.win_rate != null
+                    ? m.win_rate
+                    : closedTrades > 0
+                    ? ((agg!.wins / closedTrades) * 100)
+                    : undefined;
+                return (
                 <motion.div
                   key={s.strategy_id}
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, delay: i * 0.08 }}
-                  className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+                  transition={{ duration: 0.3, delay: i * 0.04 }}
+                  className="flex h-full flex-col rounded-[10px] border border-border-subtle bg-bg-surface p-5"
                 >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-3">
                       <div className="rounded-lg bg-accent-cyan/10 p-2 text-accent-cyan">
                         {strategyIcons[s.strategy_type] || <Activity className="h-5 w-5" />}
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <p className="font-medium text-text-primary">{s.strategy_type}</p>
-                        <p className="text-xs text-text-muted">{s.strategy_id}</p>
+                        <p
+                          className="truncate text-xs text-text-muted"
+                          title={s.strategy_id}
+                        >
+                          {s.strategy_id}
+                        </p>
                       </div>
                     </div>
                     <Badge variant={s.is_active ? 'success' : 'neutral'}>
@@ -133,34 +214,67 @@ export default function Strategies() {
                     </Badge>
                   </div>
 
-                  <p className="mt-3 text-sm text-text-secondary">
-                    {strategyDescriptions[s.strategy_type] || 'Custom strategy'}
+                  <p className="mt-3 text-xs text-text-secondary">
+                    {strategyDescriptions[s.strategy_type] || 'Custom strategy.'}
                   </p>
 
-                  {s.metrics && (
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                      <div className="rounded bg-bg-input p-2">
-                        <p className="text-text-muted">Win Rate</p>
-                        <p className="font-mono text-text-primary">
-                          {((s.metrics as Record<string, unknown>).win_rate as number)?.toFixed(1) ?? '-'}%
-                        </p>
-                      </div>
-                      <div className="rounded bg-bg-input p-2">
-                        <p className="text-text-muted">Trades</p>
-                        <p className="font-mono text-text-primary">
-                          {((s.metrics as Record<string, unknown>).total_trades as number) ?? '-'}
-                        </p>
-                      </div>
-                      <div className="rounded bg-bg-input p-2">
-                        <p className="text-text-muted">P&L</p>
-                        <p className="font-mono text-text-primary">
-                          {((s.metrics as Record<string, unknown>).total_pnl as number)?.toFixed(2) ?? '-'}
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                  {/* Symbol chips */}
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {symList.length === 0 ? (
+                      <span className="text-[10px] italic text-text-muted">
+                        Dynamic universe
+                      </span>
+                    ) : (
+                      <>
+                        {symList.slice(0, 4).map((sym) => (
+                          <span
+                            key={sym}
+                            className="rounded border border-border-subtle bg-bg-input px-1.5 py-0.5 text-[10px] font-mono text-text-secondary"
+                          >
+                            {sym}
+                          </span>
+                        ))}
+                        {symList.length > 4 && (
+                          <span
+                            className="rounded border border-accent-cyan/30 bg-accent-cyan/10 px-1.5 py-0.5 text-[10px] font-mono text-accent-cyan"
+                            title={symList.join(', ')}
+                          >
+                            +{symList.length - 4}
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
 
-                  <div className="mt-4 flex items-center gap-2">
+                  {/* Always-on metrics block so cards have consistent height */}
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                    <div className="rounded bg-bg-input p-2">
+                      <p className="text-text-muted">Win Rate</p>
+                      <p className="font-mono text-text-primary">
+                        {winRate != null ? `${winRate.toFixed(1)}%` : '—'}
+                      </p>
+                    </div>
+                    <div className="rounded bg-bg-input p-2">
+                      <p className="text-text-muted">Trades</p>
+                      <p className="font-mono text-text-primary">{totalTrades}</p>
+                    </div>
+                    <div className="rounded bg-bg-input p-2">
+                      <p className="text-text-muted">P&L</p>
+                      <p
+                        className={`font-mono ${
+                          pnl > 0
+                            ? 'text-success-green'
+                            : pnl < 0
+                            ? 'text-danger-red'
+                            : 'text-text-primary'
+                        }`}
+                      >
+                        {pnl === 0 ? '—' : `${pnl > 0 ? '+' : ''}${pnl.toFixed(2)}`}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-auto flex items-center gap-2 pt-4">
                     <button
                       onClick={() => handleToggle(s)}
                       className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
@@ -177,7 +291,8 @@ export default function Strategies() {
                     </button>
                   </div>
                 </motion.div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

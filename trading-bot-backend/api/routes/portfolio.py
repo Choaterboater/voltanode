@@ -440,6 +440,70 @@ async def attach_stops(
     }
 
 
+@router.post("/{account_id}/purge-dust")
+async def purge_dust(
+    account_id: str,
+    mv_threshold: float = 0.01,
+    confirm: bool = False,
+) -> Dict[str, Any]:
+    """Remove dust positions (market value below threshold) from the ledger.
+
+    Sub-cent remainders from prior sells (e.g. ``7e-9`` shares of GOOGL)
+    accumulate on the broker side because the minimum order size is
+    bigger than what's left. ``/flatten`` can't close them — the broker
+    rejects the order. They linger forever as $0.00 rows, ticking on
+    every cycle for no reason.
+
+    This endpoint deletes them from the engine's portfolio ledger
+    directly (no broker call). The broker's account may still hold the
+    same dust on its side, but the local engine stops tracking it.
+
+    Args:
+        mv_threshold: Market value cutoff. ``0.01`` removes positions
+                      worth less than a cent.
+        confirm: Must be ``true`` to actually purge — guard against
+                 accidental no-arg calls wiping real positions.
+
+    Returns the list of purged symbols.
+    """
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Pass confirm=true to actually purge. Use mv_threshold to set the cutoff.",
+        )
+    try:
+        portfolio = engine.get_portfolio(account_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+
+    purged: List[Dict[str, Any]] = []
+    # Iterate over a snapshot so we can mutate ``_positions`` mid-loop.
+    for p in list(portfolio.get_all_positions()):
+        mv = abs(getattr(p, "market_value", 0.0) or (p.size * (getattr(p, "current_price", 0.0) or 0.0)))
+        if mv < mv_threshold:
+            # Direct dict mutation — these positions can't be SELL-closed,
+            # and we want to skip the realized_pnl bookkeeping that
+            # close_position would attempt (it'd record a meaningless
+            # $0 realization).
+            if p.symbol in portfolio._positions:
+                del portfolio._positions[p.symbol]
+                purged.append({
+                    "symbol": p.symbol,
+                    "size": p.size,
+                    "market_value": mv,
+                })
+    logger.info(f"Purged {len(purged)} dust position(s) under ${mv_threshold:.4f}: "
+                f"{', '.join(x['symbol'] for x in purged) if purged else '(none)'}")
+    return {
+        "account_id": account_id,
+        "mv_threshold": mv_threshold,
+        "purged_count": len(purged),
+        "purged": purged,
+    }
+
+
 @router.get("/{account_id}/snapshots")
 async def get_snapshots(account_id: str) -> Dict[str, Any]:
     """Get portfolio snapshots (simplified)."""

@@ -57,14 +57,18 @@ function computeSummary(trades: ApiTrade[]): TradeSummary {
       worstTrade: 0,
     };
   }
-  const wins = trades.filter((t) => (t.realized_pnl ?? 0) > 0);
-  const losses = trades.filter((t) => (t.realized_pnl ?? 0) < 0);
-  const pnls = trades.map((t) => t.realized_pnl ?? 0);
+  // Only count CLOSED trades (realized_pnl set) toward win/loss/win-rate.
+  // Open BUYs land with realized_pnl=null and previously inflated the
+  // "Breakeven" bucket of the win/loss pie.
+  const closed = trades.filter((t) => t.realized_pnl != null);
+  const wins = closed.filter((t) => (t.realized_pnl ?? 0) > 0);
+  const losses = closed.filter((t) => (t.realized_pnl ?? 0) < 0);
+  const pnls = closed.map((t) => t.realized_pnl ?? 0);
   return {
     totalTrades: trades.length,
     winCount: wins.length,
     lossCount: losses.length,
-    winRate: (wins.length / trades.length) * 100,
+    winRate: closed.length > 0 ? (wins.length / closed.length) * 100 : 0,
     totalPnl: pnls.reduce((a, b) => a + b, 0),
     avgWin: wins.length > 0 ? wins.reduce((s, t) => s + (t.realized_pnl ?? 0), 0) / wins.length : 0,
     avgLoss: losses.length > 0 ? losses.reduce((s, t) => s + (t.realized_pnl ?? 0), 0) / losses.length : 0,
@@ -89,7 +93,12 @@ export default function Analytics() {
       setLoading(true);
       const [p, t, s] = await Promise.all([getPortfolio(), getTrades(), getStrategies()]);
       setPortfolio(p);
-      setTrades(t);
+      // /trades/ returns oldest-first; sort newest-first for the Trade
+      // History table. Same fix as useDashboard.mapTrades.
+      const sorted = [...t].sort(
+        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+      setTrades(sorted);
       setStrategies(s.strategies);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load analytics');
@@ -101,6 +110,15 @@ export default function Analytics() {
   const summary = computeSummary(trades);
   const formatCurrency = (v: number) =>
     `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Smart price formatter that handles micro-cap crypto prices (SHIB ~6e-6).
+  // Stops displaying ``$0.0000`` for things like SHIB / PEPE.
+  const formatPrice = (v: number): string => {
+    if (v == null || !isFinite(v)) return '—';
+    if (Math.abs(v) >= 1) return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (Math.abs(v) >= 0.01) return `$${v.toFixed(4)}`;
+    if (Math.abs(v) > 0) return `$${v.toExponential(2)}`;
+    return '$0.00';
+  };
 
   const tradeColumns = [
     {
@@ -122,9 +140,16 @@ export default function Analytics() {
     {
       key: 'side',
       header: 'Side',
-      render: (row: ApiTrade) => (
-        <Badge variant={row.side === 'BUY' ? 'success' : 'danger'}>{row.side}</Badge>
-      ),
+      render: (row: ApiTrade) => {
+        // Backend serializes 'buy' / 'sell' lowercase; the old strict
+        // 'BUY' compare painted every row red.
+        const side = String(row.side ?? '').toLowerCase();
+        return (
+          <Badge variant={side === 'buy' ? 'success' : 'danger'}>
+            {side.toUpperCase()}
+          </Badge>
+        );
+      },
     },
     {
       key: 'qty',
@@ -137,7 +162,7 @@ export default function Analytics() {
       key: 'price',
       header: 'Price',
       render: (row: ApiTrade) => (
-        <span className="font-mono text-sm text-text-primary">{formatCurrency(row.price)}</span>
+        <span className="font-mono text-sm text-text-primary">{formatPrice(row.price)}</span>
       ),
     },
     {
@@ -181,12 +206,18 @@ export default function Analytics() {
   );
   const barData = Object.entries(tradesBySymbol).map(([symbol, pnl]) => ({ symbol, pnl }));
 
-  // Win/Loss pie data
+  // Win/Loss pie data — split into wins / losses / breakeven (closed at $0)
+  // and a separate "Open" bucket for trades still without a realized P&L.
+  const closedCount = summary.winCount + summary.lossCount;
+  const breakevenCount = trades.filter((t) => t.realized_pnl === 0).length;
+  const openCount = trades.filter((t) => t.realized_pnl == null).length;
   const pieData = [
     { name: 'Wins', value: summary.winCount, color: '#10B981' },
     { name: 'Losses', value: summary.lossCount, color: '#EF4444' },
-    { name: 'Breakeven', value: summary.totalTrades - summary.winCount - summary.lossCount, color: '#64748B' },
+    { name: 'Breakeven', value: breakevenCount, color: '#64748B' },
+    { name: 'Open', value: openCount, color: '#0EA5E9' },
   ].filter((d) => d.value > 0);
+  void closedCount;
 
   if (loading) {
     return (

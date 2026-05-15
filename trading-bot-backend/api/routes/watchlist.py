@@ -80,10 +80,15 @@ async def list_watchlist(asset_type: Optional[str] = None) -> List[Dict[str, Any
     return items
 
 
+_ENRICHED_CACHE: Dict[str, Any] = {}  # key: asset_type filter, value: (ts, payload)
+_ENRICHED_TTL_SECONDS = 60.0
+
+
 @router.get("/enriched")
 async def list_watchlist_enriched(
     asset_type: Optional[str] = None,
-    concurrency: int = 4,
+    concurrency: int = 12,
+    nocache: bool = False,
 ) -> Dict[str, Any]:
     """Return watchlist with live market data appended per row.
 
@@ -98,6 +103,7 @@ async def list_watchlist_enriched(
     the same Sparkline + sortable-table pattern.
     """
     import asyncio
+    import time
     from data.cache import DataCache
     from data.fetcher import MarketData
     from bot.config import BotConfig
@@ -105,6 +111,16 @@ async def list_watchlist_enriched(
     base = await list_watchlist(asset_type=asset_type)
     if not base:
         return {"items": [], "errors": []}
+
+    # Serve from in-memory cache if it's fresh (<60s). Avoids re-running
+    # the 40-symbol enrichment on every dashboard navigation. Pass
+    # ``nocache=true`` to force a refetch (used by the Refresh button).
+    cache_key = asset_type or "_all_"
+    now = time.time()
+    if not nocache:
+        cached = _ENRICHED_CACHE.get(cache_key)
+        if cached and (now - cached[0]) < _ENRICHED_TTL_SECONDS:
+            return cached[1]
 
     market_data = MarketData(cache=DataCache(cache_dir="./data/cache"), config=BotConfig())
     sem = asyncio.Semaphore(max(1, min(20, concurrency)))
@@ -165,7 +181,9 @@ async def list_watchlist_enriched(
         for e in enriched
         if e.get("fetch_error")
     ]
-    return {"items": enriched, "errors": errors}
+    payload = {"items": enriched, "errors": errors}
+    _ENRICHED_CACHE[cache_key] = (now, payload)
+    return payload
 
 
 @router.post("/")
