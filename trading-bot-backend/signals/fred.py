@@ -9,6 +9,13 @@ Strategies can read these via ``signal_context`` to gate entries
 ("no buys when VIX > 30", "skip the FOMC week", etc.).
 
 Source: Federal Reserve Bank of St. Louis
+
+Robustness: FRED's API returns intermittent 500s (we've seen this on
+T10Y2Y, CPIAUCSL, UNRATE, DGS2 across separate boots). The fetch path
+retries up to 3 times with exponential backoff on 5xx + connection
+errors. Per-series failures are logged at DEBUG (not WARN) for the
+expected-transient cases so the backend startup log isn't full of red
+the first time FRED hiccups.
 """
 
 from __future__ import annotations
@@ -27,6 +34,12 @@ logger = logging.getLogger("volta.signals.fred")
 _BASE_URL = "https://api.stlouisfed.org/fred"
 _TTL_SECONDS = 6 * 3600.0
 _CACHE: Dict[str, Any] = {}
+
+# Retry budget per series. Three attempts with 1s/2s/4s backoff is enough
+# to ride out FRED's transient 500s without dragging out startup.
+_MAX_RETRIES = 3
+_RETRY_STATUS_CODES = {500, 502, 503, 504}
+_BASE_BACKOFF_SEC = 1.0
 
 
 # Curated series — id, friendly name, and a short interpretation hint.
@@ -129,24 +142,59 @@ def is_configured() -> bool:
 
 
 def _fetch_series(series_id: str, api_key: str) -> Optional[FredObservation]:
-    """Pull last 2 observations of a series so we can compute change."""
+    """Pull last 2 observations of a series so we can compute change.
+
+    Retries up to ``_MAX_RETRIES`` times on 5xx and connection errors,
+    sleeping 1s/2s/4s between attempts. 4xx errors (bad series id, bad
+    key, etc.) are NOT retried — they fail fast since retrying won't
+    change the outcome.
+    """
     meta = SERIES.get(series_id, {"name": series_id, "hint": "", "frequency": "unknown"})
-    try:
-        r = requests.get(
-            f"{_BASE_URL}/series/observations",
-            params={
-                "series_id": series_id,
-                "api_key": api_key,
-                "file_type": "json",
-                "sort_order": "desc",
-                "limit": 2,
-            },
-            timeout=10,
-        )
-        r.raise_for_status()
-        body = r.json()
-    except (requests.RequestException, ValueError) as exc:
-        logger.warning(f"FRED fetch failed for {series_id}: {exc}")
+
+    body: Optional[Dict[str, Any]] = None
+    last_err: Optional[str] = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            r = requests.get(
+                f"{_BASE_URL}/series/observations",
+                params={
+                    "series_id": series_id,
+                    "api_key": api_key,
+                    "file_type": "json",
+                    "sort_order": "desc",
+                    "limit": 2,
+                },
+                timeout=10,
+            )
+            # Don't retry on 4xx — that's a request problem, not a server hiccup
+            if 400 <= r.status_code < 500:
+                logger.warning(
+                    f"FRED 4xx for {series_id}: {r.status_code} (no retry)"
+                )
+                return None
+            r.raise_for_status()
+            body = r.json()
+            break  # success
+        except requests.HTTPError as exc:
+            code = exc.response.status_code if exc.response is not None else 0
+            last_err = f"HTTP {code}"
+            if code not in _RETRY_STATUS_CODES or attempt == _MAX_RETRIES:
+                # Give up — final failure gets a single quiet log line
+                logger.debug(
+                    f"FRED {series_id}: gave up after {attempt}/{_MAX_RETRIES} attempts ({last_err})"
+                )
+                return None
+        except (requests.ConnectionError, requests.Timeout, ValueError) as exc:
+            last_err = type(exc).__name__
+            if attempt == _MAX_RETRIES:
+                logger.debug(
+                    f"FRED {series_id}: gave up after {attempt}/{_MAX_RETRIES} attempts ({last_err})"
+                )
+                return None
+        # Exponential backoff: 1s, 2s, 4s
+        time.sleep(_BASE_BACKOFF_SEC * (2 ** (attempt - 1)))
+
+    if body is None:
         return None
 
     obs_list = body.get("observations") or []
@@ -190,10 +238,28 @@ def fetch_macro_snapshot(force: bool = False) -> Optional[MacroSnapshot]:
 
     api_key = _api_key()
     snap = MacroSnapshot(fetched_at=datetime.now(timezone.utc).isoformat())
+    failed_series: List[str] = []
     for series_id in SERIES.keys():
         obs = _fetch_series(series_id, api_key)
         if obs is not None:
             snap.series[series_id] = obs
+        else:
+            failed_series.append(series_id)
+
+    # One summary line per fetch instead of one WARNING per failed series.
+    # Partial success is normal (FRED frequently 500s on a subset for a
+    # few minutes at a time); ALL-failure is what actually deserves alarm.
+    fetched_n = len(snap.series)
+    if fetched_n and failed_series:
+        logger.info(
+            f"FRED: fetched {fetched_n}/{len(SERIES)} series; "
+            f"missing after retries: {','.join(failed_series)}"
+        )
+    elif failed_series:
+        logger.warning(
+            f"FRED: ALL series failed after retries ({len(failed_series)}). "
+            "Check FRED_API_KEY and rate limits."
+        )
 
     if not snap.series:
         # Don't cache an empty result — likely transient
