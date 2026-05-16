@@ -17,6 +17,7 @@ from strategies.multi_coin import MultiCoinMomentumStrategy
 from strategies.simple_trend import SimpleTrendStrategy
 from strategies.auto_discovery import AutoDiscoveryStrategy
 from strategies.squeeze import SqueezeStrategy
+from strategies.bband_rsi import BbandRsiStrategy
 
 
 # Strategy registry
@@ -33,6 +34,7 @@ STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
     "simple_trend": SimpleTrendStrategy,
     "auto_discovery": AutoDiscoveryStrategy,
     "squeeze": SqueezeStrategy,
+    "bband_rsi": BbandRsiStrategy,
 }
 
 
@@ -118,6 +120,7 @@ __all__ = [
     "NewsSentimentStrategy",
     "AutoDiscoveryStrategy",
     "SqueezeStrategy",
+    "BbandRsiStrategy",
     "StrategyFactory",
     "list_strategies",
     "STRATEGY_REGISTRY",
