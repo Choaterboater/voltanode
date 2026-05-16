@@ -251,8 +251,14 @@ async def refresh_universes(
                 concurrency=6,
                 max_results=40,
             )
-            cands = (data.get("candidates") or [])[:top]
-            return [c["ticker"] for c in cands if c.get("ticker")]
+            # squeeze_screener returns rows under "results", not "candidates",
+            # keyed by "ticker". The older "candidates" key never existed —
+            # _fetch_squeeze was silently returning [] every refresh, leaving
+            # the squeeze bot stuck on its deploy-day hardcoded universe for
+            # weeks while the screener was happily surfacing 20-30 fresh
+            # setups per day.
+            rows = (data.get("results") or [])[:top]
+            return [r["ticker"] for r in rows if r.get("ticker")]
         except Exception as exc:
             logger.warning(f"refresh: squeeze failed: {exc}")
             return []
