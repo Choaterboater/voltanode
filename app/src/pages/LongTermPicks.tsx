@@ -55,7 +55,11 @@ export default function LongTermPicks() {
   const [symbolsInput, setSymbolsInput] = useState('');
   const [topN, setTopN] = useState(25);
   const [minScore, setMinScore] = useState(0);
-  const [limitUniverse, setLimitUniverse] = useState(100);
+  // Default universe limit is bumped to 250 so a capped scan (e.g. <$50)
+  // has enough candidates to surface meaningful picks. The full S&P 500
+  // is 503 names — 250 covers half alphabetically and still finishes in
+  // ~30-60s.
+  const [limitUniverse, setLimitUniverse] = useState(250);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [wFund, setWFund] = useState(0.5);
   const [wTrend, setWTrend] = useState(0.3);
@@ -188,7 +192,11 @@ export default function LongTermPicks() {
           </div>
 
           {/* Budget cap — chips for the common breakpoints + custom. The
-              chip's `null` value means "no cap" (default). */}
+              chip's `null` value means "no cap" (default). Clicking a cap
+              clears the preloaded symbols list and auto-runs a fresh scan
+              against the full universe, because the most common reason
+              someone picks <$50 is to find cheap S&P names — not to
+              intersect with the page's preloaded 10 mega-caps. */}
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[10px] uppercase tracking-wider text-text-muted">
               Max price
@@ -204,7 +212,20 @@ export default function LongTermPicks() {
               return (
                 <button
                   key={label}
-                  onClick={() => setMaxPrice(val)}
+                  onClick={() => {
+                    setMaxPrice(val);
+                    // Clear preloaded symbols so the cap scans the full
+                    // universe. If the user typed their own list, also
+                    // clear — common case is "give me cheap picks", not
+                    // "filter MY list". They can paste symbols back if
+                    // they really wanted both.
+                    if (val !== null) {
+                      setSymbolsInput('');
+                      // Auto-run so the operator doesn't have to click
+                      // Scan separately — the chip click IS the intent.
+                      setTimeout(() => void runScan(), 50);
+                    }
+                  }}
                   className={`rounded-full border px-2.5 py-0.5 text-[11px] font-mono transition-colors ${
                     active
                       ? 'border-accent-cyan bg-accent-cyan/15 text-accent-cyan'
@@ -330,8 +351,30 @@ export default function LongTermPicks() {
             </div>
           )}
           {!loading && data && data.results.length === 0 && (
-            <div className="p-10 text-center text-text-muted text-sm">
-              No picks above min-score threshold. Lower the threshold or expand the universe.
+            <div className="p-10 text-center text-text-muted text-sm space-y-2">
+              {maxPrice !== null && symbolsInput.trim() ? (
+                <>
+                  <p>No picks under ${maxPrice} in your custom symbol list.</p>
+                  <button
+                    onClick={() => {
+                      setSymbolsInput('');
+                      setTimeout(() => void runScan(), 50);
+                    }}
+                    className="text-accent-cyan hover:underline"
+                  >
+                    Clear symbols and scan the full S&amp;P 500
+                  </button>
+                </>
+              ) : maxPrice !== null ? (
+                <>
+                  <p>No picks under ${maxPrice} in the first {limitUniverse} symbols.</p>
+                  <p className="text-[11px]">
+                    Try bumping the universe limit (Advanced) or raising the price cap.
+                  </p>
+                </>
+              ) : (
+                <p>No picks above min-score threshold. Lower the threshold or expand the universe.</p>
+              )}
             </div>
           )}
           {data && data.results.length > 0 && (
