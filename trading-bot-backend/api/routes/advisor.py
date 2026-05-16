@@ -15,6 +15,8 @@ from pydantic import BaseModel
 from advisor.analyzer import SymbolAnalyzer
 from advisor.models import AnalysisResult, IndicatorReading, PriceTarget
 from advisor.pairlist import apply_chain as apply_pairlist_chain, default_chain as default_pairlist_chain
+from advisor.fundamentals import fetch_stock_fundamentals
+from advisor.long_term import LongTermScore, rank_long_term, score_long_term
 from advisor.research import build_research_report
 from advisor.scanner import ScannerScore, rank_scores, score_symbol
 from advisor.squeeze import (
@@ -850,6 +852,176 @@ async def market_scanner_chain(
             {"symbol": r.symbol, "error": r.error}
             for r in results if r.error is not None
         ][:20],
+    }
+
+
+# ── Long-term (year+) holding screener ─────────────────────────────────
+#
+# Different beast from /scanner (swing setups) and /squeeze (catalyst plays):
+# this ranks names by long-horizon quality — fundamentals (50%) + sustained
+# trend (30%) + low volatility (20%). Reuses fetch_stock_fundamentals and
+# the same OHLCV path as /scanner; the universe defaults to S&P 500 because
+# yfinance fundamentals are the load-bearing signal here. Crypto names
+# score with neutral fundamentals (50/100 per score_fundamentals) but the
+# trend + vol components still differentiate within asset class.
+
+async def _fetch_long_term_one(
+    symbol: str,
+    asset_class: str,
+    market_data: MarketData,
+    sem: asyncio.Semaphore,
+    stock_period: str = "2y",
+    crypto_days: int = 730,
+) -> LongTermScore:
+    """Fetch fundamentals + OHLCV in parallel, score one symbol."""
+    async with sem:
+        try:
+            # Fundamentals run in a thread (yfinance is blocking).
+            if asset_class == "stock":
+                snap_task = asyncio.to_thread(fetch_stock_fundamentals, symbol)
+                ohlcv_task = asyncio.to_thread(
+                    market_data.get_stock_ohlcv, symbol, stock_period, "1d"
+                )
+            else:
+                from advisor.fundamentals import fetch_crypto_fundamentals
+                snap_task = asyncio.to_thread(fetch_crypto_fundamentals, symbol)
+                ohlcv_task = market_data.get_crypto_ohlcv(
+                    symbol, vs_currency="usd", days=crypto_days, interval="daily"
+                )
+            snap, df = await asyncio.gather(snap_task, ohlcv_task)
+
+            if df is None or df.empty:
+                return LongTermScore(
+                    symbol=symbol, score=0.0, current_price=0.0, bars=0,
+                    error="empty_ohlcv",
+                )
+            df = df.copy()
+            df.columns = [str(c).lower() for c in df.columns]
+            return score_long_term(symbol, df, snap)
+        except Exception as exc:
+            logger.warning("long-term: %s fetch/score failed: %s", symbol, exc)
+            return LongTermScore(
+                symbol=symbol, score=0.0, current_price=0.0, bars=0,
+                error=str(exc)[:200],
+            )
+
+
+@router.get("/long-term")
+async def long_term_screener(
+    asset_class: str = Query(default="stock", description="'stock' or 'crypto'"),
+    top: int = Query(default=25, ge=1, le=200),
+    min_score: float = Query(default=0.0, ge=0.0, le=100.0),
+    limit_universe: int = Query(default=100, ge=5, le=600),
+    symbols: Optional[str] = Query(default=None,
+        description="Comma-separated explicit symbol list (overrides default universe)"),
+    concurrency: int = Query(default=4, ge=1, le=10,
+        description="Parallel fetches. Low default because yfinance + CoinGecko both rate-limit."),
+    stock_period: str = Query(default="2y",
+        description="yfinance period for stocks — need >= 1y for the 200dma + 1y-return signal"),
+    crypto_days: int = Query(default=730, ge=365, le=1095),
+    weight_fundamentals: float = Query(default=0.50, ge=0.0, le=1.0),
+    weight_trend: float = Query(default=0.30, ge=0.0, le=1.0),
+    weight_low_volatility: float = Query(default=0.20, ge=0.0, le=1.0),
+    sector: Optional[str] = Query(default=None,
+        description="Filter to a specific sector (case-insensitive substring match on yfinance sector field)"),
+) -> Dict[str, Any]:
+    """Long-term (year+) holding candidates.
+
+    Composite score per symbol:
+      - 50% fundamentals (P/E, growth, ROE, margins, debt — via score_fundamentals)
+      - 30% trend (close > 200dma + 1-year return, saturates at +30%)
+      - 20% low volatility (annualized stddev — <20% full credit, >60% zero)
+
+    Defaults to scanning the S&P 500. For crypto, ranks the top market-cap
+    coins by trend + vol since fundamentals are neutral across the class.
+
+    This is NOT a market-timing tool — it's a "what's worth buying and
+    forgetting about" filter. Use /advisor/research on the top picks for
+    LLM-driven per-symbol deep dives.
+    """
+    cache = DataCache(cache_dir="./data/cache")
+    market_data = MarketData(cache=cache, config=BotConfig())
+
+    # Universe selection
+    if symbols:
+        universe = [s.strip().upper() for s in symbols.split(",") if s.strip()][:limit_universe]
+    elif asset_class == "stock":
+        # S&P 500 is the canonical long-term universe — already curated for
+        # quality + liquidity, fundamentals are reliable via yfinance.
+        try:
+            universe = sp500_universe()[:limit_universe]
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"sp500 universe fetch failed: {exc}")
+    else:
+        # Crypto: rely on the scanner's universe builder, which pulls
+        # top-N market-cap coins from CoinGecko.
+        universe = await _scanner_universe(
+            asset_class, market_data, limit_universe, None,
+            include_sp500=False, include_movers=False,
+        )
+
+    if not universe:
+        return {
+            "asset_class": asset_class,
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
+            "universe_size": 0, "scored": 0, "results": [],
+        }
+
+    sem = asyncio.Semaphore(concurrency)
+    started = datetime.now(timezone.utc)
+    raw_results = await asyncio.gather(
+        *[
+            _fetch_long_term_one(
+                sym, asset_class, market_data, sem, stock_period, crypto_days,
+            )
+            for sym in universe
+        ]
+    )
+    elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+
+    # Optional sector filter — applied AFTER scoring so the operator can see
+    # what was dropped without re-running.
+    if sector:
+        s_low = sector.lower()
+        raw_results = [
+            r for r in raw_results
+            if r.error is not None or (r.sector and s_low in r.sector.lower())
+        ]
+
+    weights = {
+        "fundamentals": weight_fundamentals,
+        "trend": weight_trend,
+        "low_volatility": weight_low_volatility,
+    }
+    # Re-score with operator weights if non-default. Cheap: just re-applies
+    # the weighted sum to existing components.
+    if (weight_fundamentals, weight_trend, weight_low_volatility) != (0.50, 0.30, 0.20):
+        total = sum(weights.values()) or 1.0
+        norm = {k: v / total for k, v in weights.items()}
+        for r in raw_results:
+            if r.components:
+                r.score = (
+                    norm["fundamentals"] * r.components["fundamentals"].score
+                    + norm["trend"] * r.components["trend"].score
+                    + norm["low_volatility"] * r.components["low_volatility"].score
+                ) * 100.0
+
+    valid = rank_long_term(raw_results, top=top, min_score=min_score)
+    failed = [
+        {"symbol": r.symbol, "error": r.error}
+        for r in raw_results
+        if r.error not in (None, "insufficient_history_for_trend_or_vol")
+    ]
+
+    return {
+        "asset_class": asset_class,
+        "scanned_at": started.isoformat(),
+        "elapsed_ms": elapsed_ms,
+        "universe_size": len(universe),
+        "scored": len(valid),
+        "weights": {k: round(v, 3) for k, v in weights.items()},
+        "results": [r.to_dict() for r in valid],
+        "failed": failed[:20],
     }
 
 
