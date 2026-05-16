@@ -948,8 +948,11 @@ async def long_term_screener(
     elif asset_class == "stock":
         # S&P 500 is the canonical long-term universe — already curated for
         # quality + liquidity, fundamentals are reliable via yfinance.
+        # sp500_universe is async (CSV fetch + 24h cache); must be awaited
+        # before slicing or we get "coroutine is not subscriptable" → 502.
         try:
-            universe = sp500_universe()[:limit_universe]
+            sp500 = await sp500_universe()
+            universe = sp500[:limit_universe]
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"sp500 universe fetch failed: {exc}")
     else:
