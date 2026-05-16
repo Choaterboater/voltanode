@@ -78,17 +78,27 @@ def main() -> int:
     if args.json:
         print(json.dumps(result.to_dict(), indent=2, default=str))
     else:
+        import math as _math
+        finite_trials = sum(
+            1 for t in result.trial_history
+            if t.get("value") is not None and _math.isfinite(t["value"])
+        )
         print(f"\nstrategy:        {result.strategy_type}")
         print(f"symbol:          {result.symbol}")
         print(f"objective:       {result.objective}")
-        print(f"trials:          {result.n_trials} ({len(result.trial_history)} valid)")
+        print(f"trials:          {result.n_trials} requested, "
+              f"{len(result.trial_history)} completed, {finite_trials} produced a valid value")
         print(f"duration:        {result.duration_sec:.1f}s")
         print(f"baseline_value:  {result.baseline_value:.4f}")
         print(f"best_value:      {result.best_value:.4f}")
         print(f"improvement:     {result.improvement_pct:+.1f}%")
-        print(f"best_params:")
-        for k, v in result.best_params.items():
-            print(f"    {k}: {v}")
+        if result.best_params:
+            print(f"best_params:")
+            for k, v in result.best_params.items():
+                print(f"    {k}: {v}")
+        else:
+            print("best_params:     (none — every trial rejected; "
+                  "widen param_space, lengthen window, or lower min_trades)")
 
     return 0 if result.best_params else 1
 

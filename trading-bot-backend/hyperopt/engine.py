@@ -67,15 +67,28 @@ async def _fetch_ohlcv(
 ) -> pd.DataFrame:
     """Fetch historical OHLCV once for the study. Mirrors the loader the
     /backtest/run route uses (api/routes/backtest.py)."""
-    from bot.config import BotConfig
+    from bot.config import AssetClass, BotConfig
     from data.cache import DataCache
     from data.fetcher import MarketData
 
+    # MarketData.get_ohlcv takes the AssetClass enum, not a string. Coerce
+    # so callers can pass "crypto"/"stock"/"forex" verbatim.
+    if isinstance(asset_class, AssetClass):
+        ac = asset_class
+    else:
+        try:
+            ac = AssetClass(str(asset_class).lower())
+        except ValueError as exc:
+            raise ValueError(
+                f"Unsupported asset_class {asset_class!r}; "
+                f"expected one of {[a.value for a in AssetClass]}"
+            ) from exc
+
     cache = DataCache()
     market_data = MarketData(cache=cache, config=BotConfig())
-    df = await market_data.get_ohlcv(symbol, asset_class, timeframe)
+    df = await market_data.get_ohlcv(symbol, ac, timeframe)
     if df is None or df.empty:
-        raise RuntimeError(f"No OHLCV returned for {symbol} ({asset_class}, {timeframe})")
+        raise RuntimeError(f"No OHLCV returned for {symbol} ({ac.value}, {timeframe})")
     df.attrs["symbol"] = symbol
     return df
 
