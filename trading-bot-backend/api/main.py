@@ -10,9 +10,12 @@ import logging
 from pathlib import Path
 
 # Load .env (e.g. VOLTANODE_SECRET_KEY) before anything else reads os.environ.
+# override=True so /settings/restart respawns pick up the edited .env even
+# though they inherit env vars from the dying parent process. See run.py for
+# the same fix — both entry points need it.
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(override=True)
 except ImportError:
     pass
 
