@@ -126,8 +126,11 @@ export interface ApiPrice {
   timestamp: string;
 }
 
-export const getPrices = (symbols: string[]) =>
-  fetchJson<ApiPrice[]>(`/market/prices?symbols=${symbols.join(',')}`);
+export const getPrices = (symbols: string[], assetClass: 'stock' | 'crypto' | 'forex' = 'crypto') => {
+  if (symbols.length === 0) return Promise.resolve([] as ApiPrice[]);
+  const qs = `symbols=${encodeURIComponent(symbols.join(','))}&asset_class=${assetClass}`;
+  return fetchJson<ApiPrice[]>(`/market/prices?${qs}`);
+};
 
 export const getOHLCV = (symbol: string, assetClass = 'crypto', timeframe = '1d', limit = 100) =>
   fetchJson<{ timestamp: string; open: number; high: number; low: number; close: number; volume: number }[]>(
@@ -314,28 +317,9 @@ export const getSymbolSentiment = (symbol: string, hours = 24) =>
 export const getTrendingSymbols = (hours = 24, minArticles = 3) =>
   fetchJson<TrendingSymbol[]>(`/news/trending?hours=${hours}&min_articles=${minArticles}`);
 
-// ── Market prices (bulk) ──
-//
-// /market/prices?symbols=A,B,C&asset_class=stock returns
-// [{symbol, price, bid, ask, timestamp}]. asset_class must be one of
-// 'stock'|'crypto'|'forex'. Mixed-class lookups need two calls.
-export interface PriceRow {
-  symbol: string;
-  price: number;
-  bid: number | null;
-  ask: number | null;
-  timestamp: string;
-}
-
-export const getPrices = (symbols: string[], assetClass: 'stock' | 'crypto' | 'forex' = 'stock') => {
-  if (symbols.length === 0) return Promise.resolve([] as PriceRow[]);
-  const qs = `symbols=${encodeURIComponent(symbols.join(','))}&asset_class=${assetClass}`;
-  return fetchJson<PriceRow[]>(`/market/prices?${qs}`);
-};
-
-// Classify symbols by heuristic so callers can split a mixed list cheaply
-// without an extra round-trip. *USD-suffix tokens and the common bare
-// 3-letter coin tickers route to crypto. Everything else is stock.
+// Classify a symbol as stock or crypto by heuristic so getPriceMap can
+// route a mixed list to the right asset_class without an extra round-trip.
+// *USD/USDT/USDC suffixes and the common bare coin tickers → crypto.
 const CRYPTO_BARE = new Set([
   'BTC', 'ETH', 'SOL', 'AVAX', 'BNB', 'XRP', 'ADA', 'DOGE', 'SHIB', 'LTC',
   'BCH', 'LINK', 'DOT', 'MATIC', 'TRX', 'UNI', 'AAVE', 'YFI', 'MKR', 'SUSHI',
@@ -348,9 +332,10 @@ export function classifyAsset(symbol: string): 'stock' | 'crypto' {
   return 'stock';
 }
 
-// Bulk-fetch a mixed list, splitting crypto and stock into two parallel
-// calls. Returns a single {symbol: price} map (case-preserving on the
-// key the caller passed in).
+// Bulk-fetch prices for a mixed-asset symbol list. Splits into stock vs
+// crypto by classifyAsset(), hits /market/prices for each in parallel,
+// returns a flat {SYMBOL: price} map. Failed sub-calls are silent —
+// prices are decoration, not load-bearing.
 export async function getPriceMap(symbols: string[]): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   if (symbols.length === 0) return out;
@@ -360,8 +345,8 @@ export async function getPriceMap(symbols: string[]): Promise<Record<string, num
     (classifyAsset(s) === 'crypto' ? cryptos : stocks).push(s);
   }
   const results = await Promise.allSettled([
-    stocks.length ? getPrices(stocks, 'stock') : Promise.resolve([] as PriceRow[]),
-    cryptos.length ? getPrices(cryptos, 'crypto') : Promise.resolve([] as PriceRow[]),
+    stocks.length ? getPrices(stocks, 'stock') : Promise.resolve([] as ApiPrice[]),
+    cryptos.length ? getPrices(cryptos, 'crypto') : Promise.resolve([] as ApiPrice[]),
   ]);
   for (const r of results) {
     if (r.status === 'fulfilled') {
