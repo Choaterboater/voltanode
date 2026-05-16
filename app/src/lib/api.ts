@@ -313,3 +313,62 @@ export const getSymbolSentiment = (symbol: string, hours = 24) =>
 
 export const getTrendingSymbols = (hours = 24, minArticles = 3) =>
   fetchJson<TrendingSymbol[]>(`/news/trending?hours=${hours}&min_articles=${minArticles}`);
+
+// ── Market prices (bulk) ──
+//
+// /market/prices?symbols=A,B,C&asset_class=stock returns
+// [{symbol, price, bid, ask, timestamp}]. asset_class must be one of
+// 'stock'|'crypto'|'forex'. Mixed-class lookups need two calls.
+export interface PriceRow {
+  symbol: string;
+  price: number;
+  bid: number | null;
+  ask: number | null;
+  timestamp: string;
+}
+
+export const getPrices = (symbols: string[], assetClass: 'stock' | 'crypto' | 'forex' = 'stock') => {
+  if (symbols.length === 0) return Promise.resolve([] as PriceRow[]);
+  const qs = `symbols=${encodeURIComponent(symbols.join(','))}&asset_class=${assetClass}`;
+  return fetchJson<PriceRow[]>(`/market/prices?${qs}`);
+};
+
+// Classify symbols by heuristic so callers can split a mixed list cheaply
+// without an extra round-trip. *USD-suffix tokens and the common bare
+// 3-letter coin tickers route to crypto. Everything else is stock.
+const CRYPTO_BARE = new Set([
+  'BTC', 'ETH', 'SOL', 'AVAX', 'BNB', 'XRP', 'ADA', 'DOGE', 'SHIB', 'LTC',
+  'BCH', 'LINK', 'DOT', 'MATIC', 'TRX', 'UNI', 'AAVE', 'YFI', 'MKR', 'SUSHI',
+]);
+
+export function classifyAsset(symbol: string): 'stock' | 'crypto' {
+  const s = symbol.toUpperCase();
+  if (s.endsWith('USD') || s.endsWith('USDT') || s.endsWith('USDC')) return 'crypto';
+  if (CRYPTO_BARE.has(s)) return 'crypto';
+  return 'stock';
+}
+
+// Bulk-fetch a mixed list, splitting crypto and stock into two parallel
+// calls. Returns a single {symbol: price} map (case-preserving on the
+// key the caller passed in).
+export async function getPriceMap(symbols: string[]): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  if (symbols.length === 0) return out;
+  const stocks: string[] = [];
+  const cryptos: string[] = [];
+  for (const s of symbols) {
+    (classifyAsset(s) === 'crypto' ? cryptos : stocks).push(s);
+  }
+  const results = await Promise.allSettled([
+    stocks.length ? getPrices(stocks, 'stock') : Promise.resolve([] as PriceRow[]),
+    cryptos.length ? getPrices(cryptos, 'crypto') : Promise.resolve([] as PriceRow[]),
+  ]);
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      for (const row of r.value) {
+        if (row && typeof row.price === 'number') out[row.symbol] = row.price;
+      }
+    }
+  }
+  return out;
+}
