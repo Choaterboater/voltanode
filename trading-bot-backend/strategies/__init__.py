@@ -18,6 +18,7 @@ from strategies.simple_trend import SimpleTrendStrategy
 from strategies.auto_discovery import AutoDiscoveryStrategy
 from strategies.squeeze import SqueezeStrategy
 from strategies.bband_rsi import BbandRsiStrategy
+from strategies.swing_high_to_sky import SwingHighToSkyStrategy
 
 
 # Strategy registry
@@ -35,6 +36,7 @@ STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
     "auto_discovery": AutoDiscoveryStrategy,
     "squeeze": SqueezeStrategy,
     "bband_rsi": BbandRsiStrategy,
+    "swing_high_to_sky": SwingHighToSkyStrategy,
 }
 
 
@@ -121,6 +123,7 @@ __all__ = [
     "AutoDiscoveryStrategy",
     "SqueezeStrategy",
     "BbandRsiStrategy",
+    "SwingHighToSkyStrategy",
     "StrategyFactory",
     "list_strategies",
     "STRATEGY_REGISTRY",
