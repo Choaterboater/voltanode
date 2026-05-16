@@ -61,6 +61,10 @@ export default function LongTermPicks() {
   const [wTrend, setWTrend] = useState(0.3);
   const [wVol, setWVol] = useState(0.2);
 
+  // Budget cap — operator picks a max share price so cheaper names surface.
+  // null = no cap. Quick chips for the common breakpoints + custom input.
+  const [maxPrice, setMaxPrice] = useState<number | null>(null);
+
   const [data, setData] = useState<LongTermResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +83,7 @@ export default function LongTermPicks() {
         weight_fundamentals: wFund,
         weight_trend: wTrend,
         weight_low_volatility: wVol,
+        max_price: maxPrice ?? undefined,
       });
       setData(res);
     } catch (e) {
@@ -180,6 +185,52 @@ export default function LongTermPicks() {
             >
               {showAdvanced ? 'Hide' : 'Advanced'}
             </button>
+          </div>
+
+          {/* Budget cap — chips for the common breakpoints + custom. The
+              chip's `null` value means "no cap" (default). */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-text-muted">
+              Max price
+            </span>
+            {[
+              { label: 'Any', val: null },
+              { label: '< $25', val: 25 },
+              { label: '< $50', val: 50 },
+              { label: '< $100', val: 100 },
+              { label: '< $250', val: 250 },
+            ].map(({ label, val }) => {
+              const active = maxPrice === val;
+              return (
+                <button
+                  key={label}
+                  onClick={() => setMaxPrice(val)}
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-mono transition-colors ${
+                    active
+                      ? 'border-accent-cyan bg-accent-cyan/15 text-accent-cyan'
+                      : 'border-border-subtle bg-bg-elevated text-text-secondary hover:border-accent-cyan/40 hover:text-accent-cyan'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+            <input
+              type="number"
+              min="0"
+              step="5"
+              placeholder="custom"
+              value={
+                maxPrice !== null && ![25, 50, 100, 250].includes(maxPrice)
+                  ? maxPrice
+                  : ''
+              }
+              onChange={(e) => {
+                const v = e.target.value;
+                setMaxPrice(v === '' ? null : Number(v));
+              }}
+              className="w-20 rounded-md border border-border-subtle bg-bg-elevated py-0.5 px-2 text-[11px] font-mono text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+            />
           </div>
 
           {showAdvanced && (

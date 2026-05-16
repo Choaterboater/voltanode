@@ -924,6 +924,10 @@ async def long_term_screener(
     weight_low_volatility: float = Query(default=0.20, ge=0.0, le=1.0),
     sector: Optional[str] = Query(default=None,
         description="Filter to a specific sector (case-insensitive substring match on yfinance sector field)"),
+    max_price: Optional[float] = Query(default=None, ge=0.0,
+        description="Drop picks above this share price (e.g. 50 for sub-$50 names). Applied after scoring."),
+    min_price: Optional[float] = Query(default=None, ge=0.0,
+        description="Drop penny stocks below this share price."),
 ) -> Dict[str, Any]:
     """Long-term (year+) holding candidates.
 
@@ -990,6 +994,24 @@ async def long_term_screener(
             r for r in raw_results
             if r.error is not None or (r.sector and s_low in r.sector.lower())
         ]
+
+    # Price-cap / -floor filters for budget-aware picking. Applied after
+    # scoring; errored rows pass through so the failed[] surface still
+    # shows fetch failures. current_price=0 means we never got a quote —
+    # treat as "unknown price" and let it through so the operator can
+    # decide.
+    if max_price is not None or min_price is not None:
+        def _passes_price(r: "LongTermScore") -> bool:
+            if r.error is not None:
+                return True
+            if not r.current_price:
+                return True
+            if max_price is not None and r.current_price > max_price:
+                return False
+            if min_price is not None and r.current_price < min_price:
+                return False
+            return True
+        raw_results = [r for r in raw_results if _passes_price(r)]
 
     weights = {
         "fundamentals": weight_fundamentals,

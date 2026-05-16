@@ -170,6 +170,8 @@ export const getLongTermPicks = (params: {
   weight_fundamentals?: number;
   weight_trend?: number;
   weight_low_volatility?: number;
+  max_price?: number;
+  min_price?: number;
 } = {}) => {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
