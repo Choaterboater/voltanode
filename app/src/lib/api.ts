@@ -132,6 +132,53 @@ export const getPrices = (symbols: string[], assetClass: 'stock' | 'crypto' | 'f
   return fetchJson<ApiPrice[]>(`/market/prices?${qs}`);
 };
 
+// ── Long-term picks ──
+// GET /advisor/long-term — year+ holding screener (50% fundamentals / 30% trend /
+// 20% low-vol composite). Defaults to S&P 500; pass symbols=A,B,C for a custom universe.
+export interface LongTermComponent {
+  score: number;
+  value: number | null;
+  signal: string;
+}
+export interface LongTermPick {
+  symbol: string;
+  name: string;
+  sector: string;
+  score: number;
+  current_price: number;
+  bars: number;
+  components: Record<'fundamentals' | 'trend' | 'low_volatility', LongTermComponent>;
+  error: string | null;
+}
+export interface LongTermResponse {
+  asset_class: string;
+  scanned_at: string;
+  elapsed_ms: number;
+  universe_size: number;
+  scored: number;
+  weights: Record<string, number>;
+  results: LongTermPick[];
+  failed: { symbol: string; error: string | null }[];
+}
+export const getLongTermPicks = (params: {
+  asset_class?: 'stock' | 'crypto';
+  top?: number;
+  min_score?: number;
+  limit_universe?: number;
+  symbols?: string;
+  sector?: string;
+  weight_fundamentals?: number;
+  weight_trend?: number;
+  weight_low_volatility?: number;
+} = {}) => {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '') qs.set(k, String(v));
+  }
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return fetchJson<LongTermResponse>(`/advisor/long-term${suffix}`);
+};
+
 export const getOHLCV = (symbol: string, assetClass = 'crypto', timeframe = '1d', limit = 100) =>
   fetchJson<{ timestamp: string; open: number; high: number; low: number; close: number; volume: number }[]>(
     `/market/ohlcv?symbol=${symbol}&asset_class=${assetClass}&timeframe=${timeframe}&limit=${limit}`
