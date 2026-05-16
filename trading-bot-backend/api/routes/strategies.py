@@ -217,7 +217,9 @@ async def refresh_universes(
                 enable_pairlist=True,
                 min_quote_volume_usd=1_000_000.0,
                 min_bars=30,
-                pl_min_price=1.0,
+                # Asset-class-aware: 0 for crypto (keep DOGE/SHIB/TRX),
+                # $1 for stocks (drop penny stocks).
+                pl_min_price=0.0 if asset_class == "crypto" else 1.0,
                 pl_max_price=0.0,
                 max_spread_pct=0.08,
                 min_atr_pct=0.005,

@@ -585,7 +585,7 @@ async def market_scanner(
     enable_pairlist: bool = Query(default=True, description="Apply quality gates (volume/age/price/spread/volatility/blacklist) before scoring"),
     min_quote_volume_usd: float = Query(default=1_000_000.0, ge=0, description="Min 24h dollar-volume to keep a symbol (0 = disabled)"),
     min_bars: int = Query(default=30, ge=0, le=500, description="Min OHLCV bars of history required"),
-    pl_min_price: float = Query(default=1.0, ge=0, description="Minimum current price (drop penny stocks)"),
+    pl_min_price: Optional[float] = Query(default=None, ge=0, description="Minimum current price floor. Defaults: 0 for crypto (don't drop DOGE/SHIB/TRX), $1 for stock (drop penny stocks). Pass an explicit value to override."),
     pl_max_price: float = Query(default=0.0, ge=0, description="Maximum current price (0 = no ceiling)"),
     max_spread_pct: float = Query(default=0.08, ge=0, le=1.0, description="Max avg (high-low)/close as bid-ask proxy"),
     min_atr_pct: float = Query(default=0.005, ge=0, le=1.0, description="Min ATR/price — drop dead-flat names"),
@@ -609,6 +609,11 @@ async def market_scanner(
     """
     cache = DataCache(cache_dir="./data/cache")
     market_data = MarketData(cache=cache, config=BotConfig())
+
+    # Asset-class-aware default for the price floor — $1 sensibly drops US
+    # penny stocks but wrongly nukes liquid sub-$1 crypto (DOGE, SHIB, TRX).
+    if pl_min_price is None:
+        pl_min_price = 0.0 if asset_class == "crypto" else 1.0
 
     universe = await _scanner_universe(
         asset_class,
