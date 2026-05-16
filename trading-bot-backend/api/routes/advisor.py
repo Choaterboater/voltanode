@@ -714,6 +714,145 @@ async def market_scanner(
     }
 
 
+# ── Evaluator-chain scanner (Phase 5 pattern) ──────────────────────────
+#
+# Same three signals as /advisor/scanner (RSI extreme, breakout proximity,
+# relative volume), but composed via the OctoBot-style EvaluatorChain so
+# each evaluator's verdict is visible per-symbol and weights are tunable
+# without editing aggregation logic. Adding a new signal (e.g. orderbook
+# imbalance, social sentiment, on-chain flow) is now "register an Evaluator
+# subclass + give it a weight" — zero changes to this endpoint.
+
+async def _fetch_chain_one(
+    symbol: str,
+    asset_class: str,
+    market_data: MarketData,
+    sem: asyncio.Semaphore,
+    crypto_days: int,
+    stock_period: str,
+    chain,  # EvaluatorChain — typing avoided to dodge import-cycle on startup
+):
+    """Fetch OHLCV and run the chain. Mirrors _fetch_score_one's shape."""
+    from advisor.evaluators.base import ChainResult, DIR_NEUTRAL, EvaluatorContext
+    async with sem:
+        try:
+            if asset_class == "crypto":
+                df = await market_data.get_crypto_ohlcv(
+                    symbol, vs_currency="usd", days=crypto_days, interval="daily"
+                )
+            else:
+                df = await asyncio.to_thread(
+                    market_data.get_stock_ohlcv, symbol, stock_period, "1d"
+                )
+            if df is None or df.empty:
+                return ChainResult(
+                    symbol=symbol, composite_score=0.0, direction=DIR_NEUTRAL,
+                    weights=chain.weights, error="empty_dataframe",
+                )
+            df = df.copy()
+            df.columns = [str(c).lower() for c in df.columns]
+            if "volume" not in df.columns:
+                df["volume"] = 0.0
+            ctx = EvaluatorContext(symbol=symbol, asset_class=asset_class)
+            return chain.evaluate(symbol, df, ctx)
+        except Exception as exc:
+            logger.warning("chain: %s fetch/eval failed: %s", symbol, exc)
+            return ChainResult(
+                symbol=symbol, composite_score=0.0, direction=DIR_NEUTRAL,
+                weights=chain.weights, error=str(exc)[:200],
+            )
+
+
+@router.get("/scanner/chain")
+async def market_scanner_chain(
+    asset_class: str = Query(default="crypto", description="'crypto' or 'stock'"),
+    top: int = Query(default=20, ge=1, le=200),
+    min_score: float = Query(default=0.0, ge=0.0, le=100.0),
+    limit_universe: int = Query(default=50, ge=5, le=600),
+    symbols: Optional[str] = Query(default=None,
+        description="Comma-separated explicit symbol list (overrides auto-universe)"),
+    direction: Optional[str] = Query(default=None, description="'long' or 'short'"),
+    concurrency: int = Query(default=5, ge=1, le=20),
+    crypto_days: int = Query(default=60, ge=30, le=365),
+    stock_period: str = Query(default="3mo"),
+    include_movers: bool = Query(default=True),
+    rsi_period: int = Query(default=14, ge=5, le=50),
+    breakout_lookback: int = Query(default=20, ge=5, le=100),
+    volume_lookback: int = Query(default=20, ge=5, le=100),
+    weight_rsi: float = Query(default=0.40, ge=0.0, le=1.0),
+    weight_breakout: float = Query(default=0.30, ge=0.0, le=1.0),
+    weight_rel_volume: float = Query(default=0.30, ge=0.0, le=1.0),
+) -> Dict[str, Any]:
+    """Composite scanner via the evaluator-chain pattern.
+
+    Returns per-symbol verdicts from each evaluator alongside the aggregated
+    composite score and direction. Identical signal math to /advisor/scanner
+    (same RSI/breakout/volume math reused via wrappers), but the wire format
+    surfaces each evaluator's opinion separately so the operator can see
+    *why* a symbol scored where it did, and tune weights without code changes.
+
+    Weight params don't need to sum to 1.0 — the chain normalizes internally.
+    """
+    from advisor.evaluators import build_default_chain
+
+    cache = DataCache(cache_dir="./data/cache")
+    market_data = MarketData(cache=cache, config=BotConfig())
+
+    universe = await _scanner_universe(
+        asset_class, market_data, limit_universe, symbols,
+        include_sp500=False, include_movers=include_movers,
+    )
+    if not universe:
+        return {
+            "asset_class": asset_class,
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
+            "universe_size": 0, "scored": 0, "results": [],
+        }
+
+    chain = build_default_chain(
+        weights={
+            "rsi": weight_rsi,
+            "breakout": weight_breakout,
+            "rel_volume": weight_rel_volume,
+        },
+        rsi_period=rsi_period,
+        breakout_lookback=breakout_lookback,
+        volume_lookback=volume_lookback,
+    )
+
+    sem = asyncio.Semaphore(concurrency)
+    started = datetime.now(timezone.utc)
+    results = await asyncio.gather(
+        *[
+            _fetch_chain_one(
+                sym, asset_class, market_data, sem, crypto_days, stock_period, chain,
+            )
+            for sym in universe
+        ]
+    )
+    elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+
+    valid = [r for r in results if r.error is None and r.composite_score >= min_score]
+    valid.sort(key=lambda r: r.composite_score, reverse=True)
+    if direction in ("long", "short"):
+        valid = [r for r in valid if r.direction == direction]
+
+    return {
+        "asset_class": asset_class,
+        "scanned_at": started.isoformat(),
+        "elapsed_ms": elapsed_ms,
+        "universe_size": len(universe),
+        "scored": len(valid),
+        "weights": chain.weights,
+        "evaluators": [ev.name for ev, _ in chain._items],
+        "results": [r.to_dict() for r in valid[:top]],
+        "failed": [
+            {"symbol": r.symbol, "error": r.error}
+            for r in results if r.error is not None
+        ][:20],
+    }
+
+
 # ── Squeeze screener ────────────────────────────────────────────────────
 
 # Default sector blocklist mirrors the screenshot's "utilities/REITs" filter.
