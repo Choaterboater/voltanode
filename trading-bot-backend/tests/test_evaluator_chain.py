@@ -167,7 +167,12 @@ class TestChainAggregation:
 
     def test_default_chain_matches_scanner_weights(self) -> None:
         from advisor.scanner import DEFAULT_WEIGHTS
-        chain = build_default_chain()
+        # include_news=False keeps the chain weight-compatible with
+        # the legacy /scanner endpoint. With news on, weights are
+        # proportionally shrunk to sum to 1.0 after normalization,
+        # so the scanner-parity invariant only holds for the
+        # technical-only chain.
+        chain = build_default_chain(include_news=False)
         for k, v in DEFAULT_WEIGHTS.items():
             assert chain.weights[k] == pytest.approx(v)
 
@@ -202,7 +207,10 @@ class TestChainAggregation:
 
 class TestChainEndToEnd:
     def test_chain_emits_one_verdict_per_evaluator(self, oversold_ohlcv: pd.DataFrame) -> None:
-        chain = build_default_chain()
+        # Pin to the TA-only chain so this stays focused on the
+        # three technical evaluators. News evaluator has its own
+        # dedicated test file.
+        chain = build_default_chain(include_news=False)
         result = chain.evaluate("DOWN", oversold_ohlcv)
         names = [v.name for v in result.verdicts]
         assert names == ["rsi", "breakout", "rel_volume"]
@@ -213,7 +221,9 @@ class TestChainEndToEnd:
     ) -> None:
         """Compatibility check: same math, same composite, modulo rounding."""
         from advisor.scanner import score_symbol
-        chain_result = build_default_chain().evaluate("DOWN", oversold_ohlcv)
+        # Compare against the TA-only chain so the parity check
+        # actually maps to scanner.score_symbol's three signals.
+        chain_result = build_default_chain(include_news=False).evaluate("DOWN", oversold_ohlcv)
         scanner_result = score_symbol("DOWN", oversold_ohlcv)
         # Both should be within 0.01 (rounding of intermediate verdict scores)
         assert chain_result.composite_score == pytest.approx(scanner_result.score, abs=0.01)

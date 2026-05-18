@@ -248,6 +248,103 @@ def create_app() -> FastAPI:
     else:
         config = BotConfig()
 
+    async def _sync_broker_positions_to_engine(engine, broker, market_data) -> None:
+        """Pull broker positions into the engine portfolio + auto-stops + prime prices.
+
+        Runs after a successful real-broker connect. Idempotent — skips
+        anything that already exists in the engine portfolio. Was inline
+        in lifespan; extracted so the background broker-upgrade can call
+        it the moment the real broker comes online instead of forcing
+        the lifespan to await Alpaca's auth round-trip (which can block
+        the HTTP listener for 60-90s).
+        """
+        from bot.portfolio import PositionSide as _PS
+        portfolio_obj = engine.get_portfolio("default")
+        broker_positions = broker.get_positions()
+        synced = 0
+        for p in broker_positions or []:
+            sym = (p.get("symbol") or "").upper()
+            if not sym:
+                continue
+            qty = abs(float(p.get("qty", p.get("size", 0)) or 0))
+            entry = float(p.get("avg_entry_price", p.get("entry_price", 0)) or 0)
+            if qty <= 0 or entry <= 0:
+                continue
+            side = (p.get("side") or "long").lower()
+            pside = _PS.SHORT if side == "short" else _PS.LONG
+            if portfolio_obj.get_position(sym) is None:
+                portfolio_obj.open_position(sym, pside, qty, entry)
+                synced += 1
+        if synced:
+            logger.info(f"Synced {synced} broker position(s) into engine portfolio")
+        # Auto-attach default stops/TPs so restored positions get
+        # downside protection without an operator calling /attach-stops
+        # manually. Skips anything that already has a stop set; uses
+        # 8% stop / 30% TP from entry.
+        attached = 0
+        for pos in portfolio_obj.get_all_positions():
+            if getattr(pos, "status", "") != "open" or pos.size <= 0:
+                continue
+            has_stop = bool(getattr(pos, "stop_loss", 0) or 0)
+            has_tp = bool(getattr(pos, "take_profit", 0) or 0)
+            if has_stop or has_tp or pos.entry_price <= 0:
+                continue
+            is_long = getattr(pos.side, "value", str(pos.side)).lower() == "long"
+            def _rp(x: float) -> float:
+                # Magnitude-aware rounding — sub-cent tokens (SHIB) need
+                # more decimals to avoid round-to-zero.
+                ax = abs(x)
+                if ax < 1e-4: return round(x, 10)
+                if ax < 0.01: return round(x, 8)
+                if ax < 1:    return round(x, 6)
+                return round(x, 4)
+            if is_long:
+                pos.stop_loss = _rp(pos.entry_price * (1 - 0.08))
+                pos.take_profit = _rp(pos.entry_price * (1 + 0.30))
+            else:
+                pos.stop_loss = _rp(pos.entry_price * (1 + 0.08))
+                pos.take_profit = _rp(pos.entry_price * (1 - 0.30))
+            attached += 1
+        if attached:
+            logger.info(f"Auto-attached default stops to {attached} restored position(s)")
+
+        # Prime _current_prices in the background — the tick loop will
+        # fill any missing prices on its first pass anyway, this just
+        # shortens the window where the portfolio endpoint reports $0
+        # unrealized PnL for restored positions.
+        from bot.config import AssetClass as _AC
+
+        async def _prime_prices(positions: list) -> None:
+            primed = 0
+            sem = asyncio.Semaphore(4)
+
+            async def _one(p: dict) -> None:
+                nonlocal primed
+                sym = (p.get("symbol") or "").upper()
+                if not sym:
+                    return
+                if sym.endswith("USD") and len(sym) > 3:
+                    bot_sym = sym[:-3]
+                    ac = _AC.CRYPTO
+                else:
+                    bot_sym = sym
+                    ac = _AC.STOCK
+                async with sem:
+                    try:
+                        price = await market_data.get_price(bot_sym, ac)
+                        if price and price > 0:
+                            engine._current_prices[bot_sym] = price
+                            engine._current_prices[sym] = price
+                            primed += 1
+                    except Exception:
+                        return
+
+            await asyncio.gather(*[_one(p) for p in positions])
+            if primed:
+                logger.info(f"Primed {primed} live price(s) for held positions")
+
+        asyncio.create_task(_prime_prices(list(broker_positions or [])))
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator:
         """Application lifespan context manager."""
@@ -261,40 +358,62 @@ def create_app() -> FastAPI:
         # supports seamless live-mode toggling without engine swapping).
         from brokers.registry import get_broker
 
-        broker = None
-        if (
-            config.live_mode.enabled
-            and config.live_mode.default_broker
-            and config.live_mode.default_broker != "mock"
-        ):
+        # Backend startup MUST NOT await the live broker connect — Alpaca's
+        # auth + account-info round-trip can take 60-90s when their API is
+        # slow, and `await` here blocks the HTTP listener from binding,
+        # which makes the whole backend look "wedged" to anyone hitting it
+        # (incl. /settings/restart's port-bound-but-no-response race).
+        #
+        # New flow: install the mock broker immediately so the engine has
+        # something to work with, then upgrade to the real broker in a
+        # background task. /engine/status returns 200 in seconds; the
+        # upgrade lands when Alpaca answers. Endpoints that need broker
+        # state read through engine.broker, which the upgrade swaps
+        # atomically.
+        broker = get_broker("mock")
+        broker.connect("mock_key", "mock_secret")
+
+        async def _upgrade_broker_background() -> None:
+            """Try to connect to the real live broker; swap into engine on success."""
+            if not (
+                config.live_mode.enabled
+                and config.live_mode.default_broker
+                and config.live_mode.default_broker != "mock"
+            ):
+                return
             broker_name = config.live_mode.default_broker
             broker_cfg = config.brokers.get(broker_name)
-            if broker_cfg and broker_cfg.api_key_encrypted and broker_cfg.api_secret_encrypted:
+            if not (broker_cfg and broker_cfg.api_key_encrypted and broker_cfg.api_secret_encrypted):
+                return
+            try:
+                from security.encryption import ApiKeyStore
+                key_store = ApiKeyStore.from_env()
+                real_broker = get_broker(broker_name)
+                api_key = key_store.decrypt(broker_cfg.api_key_encrypted)
+                api_secret = key_store.decrypt(broker_cfg.api_secret_encrypted)
+                await asyncio.to_thread(
+                    real_broker.connect,
+                    api_key, api_secret,
+                    testnet=getattr(broker_cfg, "testnet", True),
+                    paper=getattr(broker_cfg, "paper", True),
+                )
+                # Atomic swap. The engine reads broker by attribute so a
+                # mid-tick replacement is safe; the next tick uses the new
+                # broker for new orders and position syncs.
+                engine.broker = real_broker
+                logger.info(f"Live broker upgraded in background: {broker_name}")
+                # Run the position-sync + price-prime path that the
+                # original lifespan did inline. We do it here now because
+                # it depends on the real broker being live.
                 try:
-                    from security.encryption import ApiKeyStore
-                    key_store = ApiKeyStore.from_env()
-                    real_broker = get_broker(broker_name)
-                    api_key = key_store.decrypt(broker_cfg.api_key_encrypted)
-                    api_secret = key_store.decrypt(broker_cfg.api_secret_encrypted)
-                    # Run sync HTTP connect off the event loop so the
-                    # listener can bind without waiting on broker round-trip.
-                    await asyncio.to_thread(
-                        real_broker.connect,
-                        api_key, api_secret,
-                        testnet=getattr(broker_cfg, "testnet", True),
-                        paper=getattr(broker_cfg, "paper", True),
-                    )
-                    broker = real_broker
-                    logger.info(f"Restored live broker on startup: {broker_name}")
+                    await _sync_broker_positions_to_engine(engine, real_broker, market_data)
                 except Exception as exc:
-                    logger.warning(
-                        f"Could not restore live broker '{broker_name}' on startup: {exc}. "
-                        "Falling back to mock."
-                    )
-
-        if broker is None:
-            broker = get_broker("mock")
-            broker.connect("mock_key", "mock_secret")
+                    logger.warning(f"Background position sync failed: {exc}")
+            except Exception as exc:
+                logger.warning(
+                    f"Background live-broker upgrade failed for '{broker_name}': {exc}. "
+                    "Engine continues on the mock broker."
+                )
 
         engine = LiveTradingEngine(config=config, broker=broker)
         engine.market_data = market_data
@@ -326,105 +445,12 @@ def create_app() -> FastAPI:
         # Without this, _running stays False and on_tick is never called.
         engine.start()
 
-        # Sync broker positions into the engine's local portfolio mirror so
-        # subsequent SELL fills can compute realized P&L against a real entry
-        # price. Without this, anything held when the engine started has
-        # entry_price=0 / no record, and partial closes show $0 P&L.
-        try:
-            if getattr(engine, "broker", None) and engine.broker.is_connected() and engine.broker.name != "mock":
-                from bot.portfolio import PositionSide as _PS
-                portfolio_obj = engine.get_portfolio("default")
-                broker_positions = engine.broker.get_positions()
-                synced = 0
-                for p in broker_positions or []:
-                    sym = (p.get("symbol") or "").upper()
-                    if not sym:
-                        continue
-                    qty = abs(float(p.get("qty", p.get("size", 0)) or 0))
-                    entry = float(p.get("avg_entry_price", p.get("entry_price", 0)) or 0)
-                    if qty <= 0 or entry <= 0:
-                        continue
-                    side = (p.get("side") or "long").lower()
-                    pside = _PS.SHORT if side == "short" else _PS.LONG
-                    if portfolio_obj.get_position(sym) is None:
-                        portfolio_obj.open_position(sym, pside, qty, entry)
-                        synced += 1
-                if synced:
-                    logger.info(f"Synced {synced} broker position(s) into engine portfolio")
-                # Auto-attach default stops/TPs so restored positions get
-                # downside protection without an operator having to call
-                # /attach-stops manually. Skips anything that already has
-                # a stop set; uses 8% stop / 30% TP from entry.
-                attached = 0
-                for pos in portfolio_obj.get_all_positions():
-                    if getattr(pos, "status", "") != "open" or pos.size <= 0:
-                        continue
-                    has_stop = bool(getattr(pos, "stop_loss", 0) or 0)
-                    has_tp = bool(getattr(pos, "take_profit", 0) or 0)
-                    if has_stop or has_tp or pos.entry_price <= 0:
-                        continue
-                    is_long = getattr(pos.side, "value", str(pos.side)).lower() == "long"
-                    # Magnitude-aware rounding — sub-cent tokens (SHIB)
-                    # need more decimals to avoid round-to-zero.
-                    def _rp(x: float) -> float:
-                        ax = abs(x)
-                        if ax < 1e-4: return round(x, 10)
-                        if ax < 0.01: return round(x, 8)
-                        if ax < 1:    return round(x, 6)
-                        return round(x, 4)
-                    if is_long:
-                        pos.stop_loss = _rp(pos.entry_price * (1 - 0.08))
-                        pos.take_profit = _rp(pos.entry_price * (1 + 0.30))
-                    else:
-                        pos.stop_loss = _rp(pos.entry_price * (1 + 0.08))
-                        pos.take_profit = _rp(pos.entry_price * (1 - 0.30))
-                    attached += 1
-                if attached:
-                    logger.info(f"Auto-attached default stops to {attached} restored position(s)")
-                # Prime _current_prices in the background so startup can
-                # finish binding the listener immediately. Before this fix
-                # the sequential CG fetch loop blocked startup for 60-90s
-                # whenever CoinGecko was rate-limiting. The tick loop will
-                # fill any missing prices on its first pass anyway; this
-                # priming just shortens the window where the portfolio
-                # endpoint reports $0 unrealized PnL.
-                from bot.config import AssetClass as _AC
-
-                async def _prime_prices_background(positions: list) -> None:
-                    primed = 0
-                    # Parallel fetches with bounded concurrency — at most 4
-                    # outstanding CG/Yahoo requests so we don't trip 429s
-                    # any worse than we already do.
-                    sem = asyncio.Semaphore(4)
-
-                    async def _one(p: dict) -> None:
-                        nonlocal primed
-                        sym = (p.get("symbol") or "").upper()
-                        if not sym:
-                            return
-                        if sym.endswith("USD") and len(sym) > 3:
-                            bot_sym = sym[:-3]
-                            ac = _AC.CRYPTO
-                        else:
-                            bot_sym = sym
-                            ac = _AC.STOCK
-                        async with sem:
-                            try:
-                                price = await market_data.get_price(bot_sym, ac)
-                                if price and price > 0:
-                                    engine._current_prices[bot_sym] = price
-                                    engine._current_prices[sym] = price
-                                    primed += 1
-                            except Exception:
-                                return
-
-                    await asyncio.gather(*[_one(p) for p in positions])
-                    if primed:
-                        logger.info(f"Primed {primed} live price(s) for held positions")
-
-                asyncio.create_task(_prime_prices_background(list(broker_positions or [])))
-        except Exception as exc:
-            logger.warning(f"Broker position sync failed: {exc}")
+        # The broker-position-sync + auto-stops + price-prime path that
+        # used to run inline here now lives inside the background broker
+        # upgrade task (see _sync_broker_positions_to_engine helper above
+        # the lifespan). Kicking off the broker upgrade asynchronously so
+        # the HTTP listener can bind immediately even when Alpaca is slow.
+        asyncio.create_task(_upgrade_broker_background())
 
         # Restore persisted bots so they survive restarts.
         try:

@@ -809,7 +809,13 @@ function RowGroup({
           </span>
         </td>
         <td className="px-2 py-3 font-mono tabular-nums">
-          {r.earnings_qoq_growth != null ? (
+          {/* When has_earnings_data is explicitly false, yfinance gave us
+              nothing — render "—" even if the field happens to be 0.
+              When the flag is missing (older API), fall back to null check. */}
+          {r.has_earnings_data === false ||
+          (r.has_earnings_data === undefined && r.earnings_qoq_growth == null) ? (
+            <span className="text-text-muted/50" title="no earnings data">—</span>
+          ) : r.earnings_qoq_growth != null ? (
             <span
               className={
                 r.earnings_qoq_growth > 0.1

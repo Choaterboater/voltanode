@@ -7,6 +7,7 @@ import {
   PieChart,
   Bot,
   Newspaper,
+  Activity,
   Sparkles,
   Flame,
   Anchor,
@@ -31,6 +32,7 @@ const navItems = [
   { label: 'Analytics', path: '/analytics', icon: PieChart },
   { label: 'Bot Lab', path: '/bots', icon: Bot },
   { label: 'News', path: '/news', icon: Newspaper },
+  { label: 'News Analytics', path: '/news-analytics', icon: Activity },
   { label: 'About', path: '/about', icon: Info },
 ];
 

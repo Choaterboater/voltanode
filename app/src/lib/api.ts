@@ -366,6 +366,61 @@ export const getSymbolSentiment = (symbol: string, hours = 24) =>
 export const getTrendingSymbols = (hours = 24, minArticles = 3) =>
   fetchJson<TrendingSymbol[]>(`/news/trending?hours=${hours}&min_articles=${minArticles}`);
 
+// ── News velocity + impact (analytics layer) ──
+export interface VelocityWindow {
+  hours: number;
+  article_count: number;
+  avg_compound: number;
+  max_compound: number;
+  min_compound: number;
+}
+export interface VelocitySnapshot {
+  symbol: string;
+  computed_at: string;
+  windows: VelocityWindow[];
+  velocity: number;
+  velocity_label: string;
+  acceleration: number;
+  fresh_article_pct: number;
+  error: string | null;
+}
+export const getNewsVelocity = (symbol: string, windows?: string) => {
+  const qs = windows ? `?windows=${encodeURIComponent(windows)}` : '';
+  return fetchJson<VelocitySnapshot>(`/news/velocity/${encodeURIComponent(symbol)}${qs}`);
+};
+
+export interface ImpactBucket {
+  score_low: number;
+  score_high: number;
+  horizon_days: number;
+  n: number;
+  mean_return_pct: number;
+  median_return_pct: number;
+  hit_rate: number;
+  stdev_return_pct: number;
+}
+export interface ImpactReport {
+  generated_at: string;
+  lookback_days: number;
+  symbols: string[];
+  article_count: number;
+  skipped_count: number;
+  buckets: ImpactBucket[];
+  by_symbol: Record<string, { n_articles?: number; mean_short_horizon_return_pct?: number | null; skipped?: boolean; reason?: string }>;
+  error: string | null;
+}
+export const getNewsImpact = (params: {
+  symbols: string;
+  lookback_days?: number;
+  horizons?: string;
+} ) => {
+  const qs = new URLSearchParams();
+  qs.set('symbols', params.symbols);
+  if (params.lookback_days !== undefined) qs.set('lookback_days', String(params.lookback_days));
+  if (params.horizons) qs.set('horizons', params.horizons);
+  return fetchJson<ImpactReport>(`/news/impact?${qs.toString()}`);
+};
+
 // Classify a symbol as stock or crypto by heuristic so getPriceMap can
 // route a mixed list to the right asset_class without an extra round-trip.
 // *USD/USDT/USDC suffixes and the common bare coin tickers → crypto.

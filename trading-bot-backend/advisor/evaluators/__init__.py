@@ -23,6 +23,7 @@ from advisor.evaluators.base import (
     aggregate_direction,
 )
 from advisor.evaluators.chain import EvaluatorChain, build_default_chain
+from advisor.evaluators.news import NewsSentimentEvaluator
 from advisor.evaluators.technical import (
     BreakoutEvaluator,
     RelativeVolumeEvaluator,
@@ -39,5 +40,6 @@ __all__ = [
     "RsiExtremeEvaluator",
     "BreakoutEvaluator",
     "RelativeVolumeEvaluator",
+    "NewsSentimentEvaluator",
     "aggregate_direction",
 ]

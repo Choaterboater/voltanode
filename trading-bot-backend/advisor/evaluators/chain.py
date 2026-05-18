@@ -100,12 +100,19 @@ def build_default_chain(
     rsi_period: int = 14,
     breakout_lookback: int = 20,
     volume_lookback: int = 20,
+    include_news: bool = True,
+    news_hours: int = 24,
 ) -> EvaluatorChain:
-    """Build the canonical scanner chain — RSI extremes + breakout + rel volume.
+    """Build the canonical scanner chain.
 
-    Same three signals ``advisor/scanner.py`` uses (so /scanner/chain output
-    is comparable to /scanner). Default weights mirror DEFAULT_WEIGHTS there.
+    Default chain: RSI extremes + breakout + rel volume (mirrors
+    advisor/scanner.py's DEFAULT_WEIGHTS) PLUS a news_sentiment voter
+    when ``include_news`` is True. News gets 20% weight by default,
+    proportionally shrinking the TA weights so they still sum to 1.0
+    after normalization. Set include_news=False for legacy
+    /scanner-compatible output.
     """
+    from advisor.evaluators.news import NewsSentimentEvaluator
     from advisor.evaluators.technical import (
         BreakoutEvaluator,
         RelativeVolumeEvaluator,
@@ -114,8 +121,15 @@ def build_default_chain(
     from advisor.scanner import DEFAULT_WEIGHTS
 
     w = {**DEFAULT_WEIGHTS, **(weights or {})}
-    return EvaluatorChain([
+    items: list = [
         (RsiExtremeEvaluator(rsi_period=rsi_period),       w.get("rsi", 0.0)),
         (BreakoutEvaluator(lookback=breakout_lookback),    w.get("breakout", 0.0)),
         (RelativeVolumeEvaluator(lookback=volume_lookback), w.get("rel_volume", 0.0)),
-    ])
+    ]
+    if include_news:
+        # 20% default — empirically the negative-news bucket showed 79-100%
+        # 1-3d hit rate (advisor/news_impact backtest). Operator can
+        # override via the weights dict using key "news_sentiment".
+        items.append((NewsSentimentEvaluator(hours=news_hours),
+                      w.get("news_sentiment", 0.20)))
+    return EvaluatorChain(items)

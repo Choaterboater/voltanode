@@ -784,6 +784,10 @@ async def market_scanner_chain(
     weight_rsi: float = Query(default=0.40, ge=0.0, le=1.0),
     weight_breakout: float = Query(default=0.30, ge=0.0, le=1.0),
     weight_rel_volume: float = Query(default=0.30, ge=0.0, le=1.0),
+    weight_news_sentiment: float = Query(default=0.20, ge=0.0, le=1.0,
+        description="News evaluator weight. Set 0 to disable news voting."),
+    news_hours: int = Query(default=24, ge=1, le=168,
+        description="Lookback window for news aggregation."),
 ) -> Dict[str, Any]:
     """Composite scanner via the evaluator-chain pattern.
 
@@ -816,10 +820,13 @@ async def market_scanner_chain(
             "rsi": weight_rsi,
             "breakout": weight_breakout,
             "rel_volume": weight_rel_volume,
+            "news_sentiment": weight_news_sentiment,
         },
         rsi_period=rsi_period,
         breakout_lookback=breakout_lookback,
         volume_lookback=volume_lookback,
+        include_news=(weight_news_sentiment > 0),
+        news_hours=news_hours,
     )
 
     sem = asyncio.Semaphore(concurrency)
@@ -1089,6 +1096,10 @@ async def _squeeze_score_one(
         "days_to_cover": fund.short_ratio_days_to_cover,
         "earnings_qoq_growth": fund.earnings_qoq_growth,
         "earnings_growth_yoy": fund.earnings_growth_yoy,
+        # Distinguish "yfinance returned no data" from "EPS is literally
+        # flat 0%". UI should render "—" when has_earnings_data=false
+        # instead of "+0.0%" which is misleading on a missing field.
+        "has_earnings_data": fund.has_earnings_growth_data,
         "next_earnings_date": fund.next_earnings_date,
         "has_recent_13d_filing": has_recent_13d,
         "quarterly_eps": [
