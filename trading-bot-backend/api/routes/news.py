@@ -218,3 +218,81 @@ async def cleanup_news(days: int = Query(7, ge=1, le=90)) -> Dict[str, Any]:
     storage = _get_storage()
     deleted = storage.cleanup_old(days=days)
     return {"deleted_rows": deleted, "days_threshold": days}
+
+
+# ── News velocity + impact backtest (analysis layer) ────────────────────
+#
+# /news/velocity/{symbol} returns how fast sentiment is changing — the
+# 1h / 6h / 24h windows + a derived velocity tag. Static avg compound
+# tells you the news is positive; velocity tells you it's *getting more*
+# positive — that's the swing-trade edge.
+#
+# /news/impact runs a calibration backtest over historical articles:
+# scores → forward returns → bucketed stats. Answers "did our +0.5
+# articles actually predict +1.2% over 3 days?" empirically.
+
+@router.get("/velocity/{symbol}")
+async def news_velocity(
+    symbol: str,
+    windows: Optional[str] = Query(default=None,
+        description="Comma-separated hour windows, shortest first (default '1,6,24')"),
+) -> Dict[str, Any]:
+    """Sentiment velocity + acceleration for a single symbol."""
+    from advisor.news_velocity import DEFAULT_WINDOWS_HOURS, compute_velocity
+    if windows:
+        try:
+            win_tuple = tuple(sorted(int(w.strip()) for w in windows.split(",") if w.strip()))
+            if not win_tuple or any(w <= 0 for w in win_tuple):
+                raise ValueError
+        except Exception:
+            raise HTTPException(status_code=400,
+                detail="windows must be comma-separated positive integers, e.g. '1,6,24'")
+    else:
+        win_tuple = DEFAULT_WINDOWS_HOURS
+
+    storage = _get_storage()
+    snap = compute_velocity(symbol, storage=storage, windows=win_tuple)
+    return snap.to_dict()
+
+
+@router.get("/impact")
+async def news_impact(
+    symbols: str = Query(..., description="Comma-separated tickers, e.g. 'NVDA,AAPL,TSLA'"),
+    lookback_days: int = Query(default=30, ge=7, le=365),
+    horizons: str = Query(default="1,3,5",
+        description="Comma-separated forward-return horizons in trading days"),
+    min_articles_per_bucket: int = Query(default=3, ge=1, le=50),
+) -> Dict[str, Any]:
+    """Calibration backtest: do sentiment scores actually predict returns?
+
+    Pulls every article in the lookback window, gets the underlying's
+    daily OHLCV via yfinance, computes forward returns at each horizon,
+    buckets by score band, and returns mean/median return + hit-rate per
+    bucket. Crypto symbols are auto-skipped (no clean yfinance bars).
+    """
+    from advisor.news_impact import (
+        DEFAULT_HORIZONS_DAYS,
+        DEFAULT_SCORE_BUCKETS,
+        compute_impact,
+    )
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    if not sym_list:
+        raise HTTPException(status_code=400, detail="at least one symbol required")
+    try:
+        horiz = tuple(sorted(int(h.strip()) for h in horizons.split(",") if h.strip()))
+        if not horiz or any(h <= 0 or h > 60 for h in horiz):
+            raise ValueError
+    except Exception:
+        raise HTTPException(status_code=400,
+            detail="horizons must be comma-separated positive integers (e.g. '1,3,5')")
+
+    storage = _get_storage()
+    # Run in a thread — yfinance fetches are blocking and we may hit
+    # several symbols in one call.
+    import asyncio
+    report = await asyncio.to_thread(
+        compute_impact,
+        sym_list, lookback_days, horiz, DEFAULT_SCORE_BUCKETS,
+        storage, min_articles_per_bucket,
+    )
+    return report.to_dict()
