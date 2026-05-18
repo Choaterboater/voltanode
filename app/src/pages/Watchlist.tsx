@@ -16,7 +16,11 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import Layout from '@/components/Layout';
-import { useWatchlist, type EnrichedWatchlistItem } from '@/hooks/useWatchlist';
+import {
+  readEnrichedCache,
+  useWatchlist,
+  type EnrichedWatchlistItem,
+} from '@/hooks/useWatchlist';
 
 type SortKey =
   | 'symbol'
@@ -150,7 +154,21 @@ export default function Watchlist() {
   const navigate = useNavigate();
   const { add, remove, fetchEnriched } = useWatchlist(false);
 
-  const [items, setItems] = useState<EnrichedWatchlistItem[]>([]);
+  // Hydrate from localStorage cache so the table never paints empty on
+  // mount when the backend is wedged or restarting. Background fetch
+  // overwrites with fresh data when it lands.
+  const [items, setItems] = useState<EnrichedWatchlistItem[]>(() => {
+    const cached = readEnrichedCache();
+    return cached?.data ?? [];
+  });
+  const [cacheTs, setCacheTs] = useState<number | null>(() => {
+    const cached = readEnrichedCache();
+    return cached?.ts ?? null;
+  });
+  // freshTs marks when the most recent live fetch succeeded. While it's
+  // null but `items` is populated, we're showing cached data — surface
+  // that in the UI so the operator knows.
+  const [freshTs, setFreshTs] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -168,6 +186,9 @@ export default function Watchlist() {
     try {
       const enriched = await fetchEnriched(undefined, opts);
       setItems(enriched);
+      const now = Date.now();
+      setFreshTs(now);
+      setCacheTs(now);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -176,7 +197,23 @@ export default function Watchlist() {
   };
 
   useEffect(() => {
+    // Mount-time fetch — if it lands, freshTs becomes set and the "cached"
+    // ribbon goes away. If it fails, the cached items stay visible.
     reload();
+    // Refetch on window focus + tab visibility — covers "came back to the
+    // tab and want fresh data" without polling continuously.
+    const onFocus = () => {
+      reload();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') reload();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -284,6 +321,25 @@ export default function Watchlist() {
             promoted from Squeeze and Scanner. Live price, day change, and
             sparkline pulled per row.
           </p>
+          {/* Cached-data ribbon — when items are on screen but freshTs is
+              still null, we're rendering localStorage cache because the
+              live fetch hasn't landed (or failed). Tells the operator
+              not to trust prices/sparklines as live yet. Auto-hides once
+              fresh data arrives. */}
+          {items.length > 0 && !freshTs && cacheTs && (
+            <p className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-warning-amber/40 bg-warning-amber/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-warning-amber">
+              <RefreshCw className="h-3 w-3" />
+              Cached ·{' '}
+              {(() => {
+                const sec = Math.max(1, Math.round((Date.now() - cacheTs) / 1000));
+                if (sec < 60) return `${sec}s ago`;
+                const min = Math.round(sec / 60);
+                if (min < 60) return `${min}m ago`;
+                const hr = Math.round(min / 60);
+                return `${hr}h ago`;
+              })()}
+            </p>
+          )}
         </motion.div>
 
         {/* Controls */}

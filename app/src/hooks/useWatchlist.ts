@@ -19,6 +19,60 @@ export interface EnrichedWatchlistItem extends WatchlistItem {
   fetch_error: string | null;
 }
 
+// localStorage cache so the watchlist doesn't show empty when the backend
+// is temporarily wedged or the page mounts mid-restart. We snapshot every
+// successful fetch and hydrate from the snapshot on mount; the background
+// fetch then overwrites with fresh data when it lands.
+//
+// Two keys (plain items + enriched items) because some pages only need
+// the cheap symbol set (Squeeze for "is watched?"), others need prices.
+const CACHE_KEY_ITEMS = 'volta:watchlist:items:v1';
+const CACHE_KEY_ENRICHED = 'volta:watchlist:enriched:v1';
+
+interface CacheEnvelope<T> {
+  ts: number;          // epoch ms
+  data: T;
+}
+
+function _cacheRead<T>(key: string): CacheEnvelope<T> | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const env = JSON.parse(raw) as CacheEnvelope<T>;
+    if (!env || typeof env.ts !== 'number') return null;
+    return env;
+  } catch {
+    return null;
+  }
+}
+
+function _cacheWrite<T>(key: string, data: T): void {
+  try {
+    localStorage.setItem(
+      key,
+      JSON.stringify({ ts: Date.now(), data } satisfies CacheEnvelope<T>),
+    );
+  } catch {
+    /* quota / private mode / etc — non-fatal */
+  }
+}
+
+// Public cache helpers — the Watchlist page uses these for the enriched
+// flavor too. Returning null when the cache is empty rather than throwing
+// so callers can branch cleanly.
+export function readWatchlistCache(): CacheEnvelope<WatchlistItem[]> | null {
+  return _cacheRead<WatchlistItem[]>(CACHE_KEY_ITEMS);
+}
+export function writeWatchlistCache(items: WatchlistItem[]): void {
+  _cacheWrite(CACHE_KEY_ITEMS, items);
+}
+export function readEnrichedCache(): CacheEnvelope<EnrichedWatchlistItem[]> | null {
+  return _cacheRead<EnrichedWatchlistItem[]>(CACHE_KEY_ENRICHED);
+}
+export function writeEnrichedCache(items: EnrichedWatchlistItem[]): void {
+  _cacheWrite(CACHE_KEY_ENRICHED, items);
+}
+
 // Module-level event bus so cross-page mutations refresh automatically
 // (e.g. when the Squeeze page adds an item, the Watchlist page sees it).
 const _listeners = new Set<() => void>();
@@ -33,9 +87,19 @@ function _emitChange() {
 }
 
 export function useWatchlist(autoload = true) {
-  const [items, setItems] = useState<WatchlistItem[]>([]);
+  // Hydrate state from the localStorage cache so the page never paints
+  // empty when the backend is wedged or restarting. The background fetch
+  // overwrites this with fresh data when it lands.
+  const [items, setItems] = useState<WatchlistItem[]>(() => {
+    const cached = readWatchlistCache();
+    return cached?.data ?? [];
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastFetchTs, setLastFetchTs] = useState<number | null>(() => {
+    const cached = readWatchlistCache();
+    return cached?.ts ?? null;
+  });
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -45,6 +109,8 @@ export function useWatchlist(autoload = true) {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = (await r.json()) as WatchlistItem[];
       setItems(data);
+      setLastFetchTs(Date.now());
+      writeWatchlistCache(data);
       return data;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -137,10 +203,24 @@ export function useWatchlist(autoload = true) {
       const r = await fetch(url);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
-      return (d.items ?? []) as EnrichedWatchlistItem[];
+      const items = (d.items ?? []) as EnrichedWatchlistItem[];
+      // Cache the enriched payload so the Watchlist page can hydrate
+      // instantly on next mount, even if the backend is wedged.
+      writeEnrichedCache(items);
+      return items;
     },
     [],
   );
 
-  return { items, loading, error, refresh, add, remove, contains, fetchEnriched };
+  return {
+    items,
+    loading,
+    error,
+    refresh,
+    add,
+    remove,
+    contains,
+    fetchEnriched,
+    lastFetchTs,
+  };
 }
