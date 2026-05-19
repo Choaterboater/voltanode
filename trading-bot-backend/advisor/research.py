@@ -42,6 +42,12 @@ class DimensionScore:
     label: str  # "POSITIVE", "NEUTRAL", "NEGATIVE", etc.
     rationale: str  # one-line summary of contributing factors
     details: Dict[str, Any] = field(default_factory=dict)
+    # False when the underlying data source returned nothing usable and
+    # the score is a default-neutral 50 fallback. UI should render "no
+    # data" in this state instead of "NEUTRAL" to avoid the composite
+    # being read as "actually neutral fundamentals" when it's really
+    # "no fundamentals available, so we defaulted."
+    data_available: bool = True
 
 
 @dataclass
@@ -230,6 +236,27 @@ def _timeframe_for_lookback(lookback_days: int, asset_type: str) -> str:
     return "12+ months"
 
 
+_HORIZON_LABELS = {
+    "short_term": "days to a few weeks",
+    "medium_term": "weeks to a couple months",
+    "long_term": "several months (6-12mo holding period)",
+    "intraday": "intraday (hours)",
+    "swing": "days to weeks (swing trade)",
+}
+
+
+def _humanize_horizon(raw: str) -> str:
+    """Map analyzer's underscore-cased horizon labels to plain English.
+
+    Prevents the LLM trader plan from rendering "Time horizon: long_term"
+    which reads as a direction conflict against "Trader: SHORT". The raw
+    value passes through unchanged when not in the map.
+    """
+    if not raw:
+        return "n/a"
+    return _HORIZON_LABELS.get(str(raw).lower().strip(), str(raw))
+
+
 def build_research_report(
     ta_result: AnalysisResult,
     advanced: bool = False,
@@ -245,13 +272,21 @@ def build_research_report(
     snap = fetch_fundamentals(ta_result.symbol, ta_result.asset_type)
     f_score, f_rationale = score_fundamentals(snap)
 
+    # score_fundamentals returns (50, "Insufficient fundamental data")
+    # when no fields were scored (yfinance miss). Surface the no-data
+    # state instead of letting a default-neutral 50 silently inflate or
+    # deflate the composite — and redistribute the dimension's weight
+    # so technical + sentiment carry the verdict on their own.
+    fund_no_data = f_rationale == "Insufficient fundamental data"
+
     fundamental = DimensionScore(
         name="fundamental",
         score=f_score,
-        weight=0.40 if ta_result.asset_type == "stock" else 0.20,
-        label=_score_to_label(f_score),
+        weight=0.0 if fund_no_data else (0.40 if ta_result.asset_type == "stock" else 0.20),
+        label="NO DATA" if fund_no_data else _score_to_label(f_score),
         rationale=f_rationale,
         details=snap.to_dict(),
+        data_available=not fund_no_data,
     )
     technical = _score_technical(ta_result)
     sentiment = _score_sentiment(ta_result.symbol, ta_result.asset_type)
@@ -260,6 +295,14 @@ def build_research_report(
     if ta_result.asset_type != "stock":
         technical.weight = 0.50
         sentiment.weight = 0.30
+
+    # When fundamentals are unavailable, redistribute the freed weight
+    # 60/40 to technical/sentiment (proportional to their existing weights
+    # for the stock case 30/30, leans slightly toward technical because
+    # it's the more concrete signal).
+    if fund_no_data:
+        technical.weight += 0.24  # was 0.30 + 0.24 = 0.54 of new total
+        sentiment.weight += 0.16
 
     total_w = fundamental.weight + technical.weight + sentiment.weight
     overall = int(round(
@@ -640,7 +683,13 @@ def _generate_narrative(
             if report.current_price else 0
         ),
         pos_pct=getattr(ta_result, "suggested_position_size", 0) * 100,
-        time_horizon=getattr(ta_result, "time_horizon", "n/a"),
+        # Map underscore-cased horizon labels to plain English. The raw
+        # "long_term" reads as "go long" to operators new to short
+        # trading, and the LLM was echoing it verbatim into trader
+        # action plans — produced confusing output like
+        # "Trader: SHORT ... Time horizon: long_term" (looks like the
+        # direction and horizon disagree).
+        time_horizon=_humanize_horizon(getattr(ta_result, "time_horizon", "n/a")),
         # Direction-aware levels — derived from |stop_distance| so SHORT
         # recommendations get a wider stop ABOVE current and target BELOW,
         # and LONGs get the mirror, regardless of the TA-verdict's symmetry.

@@ -87,6 +87,10 @@ export interface DimensionScore {
   label: string;
   rationale: string;
   details?: Record<string, unknown>;
+  // False when the underlying data source returned nothing — the score
+  // is then a default-neutral 50 fallback that the UI should render as
+  // "no data" (not "neutral") to avoid misleading the operator.
+  data_available?: boolean;
 }
 
 export interface ResearchReport {
