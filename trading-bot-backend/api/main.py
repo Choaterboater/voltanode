@@ -190,6 +190,26 @@ async def _run_tick_loop(app: FastAPI) -> None:
                 logger.debug(f"signal context build failed: {exc}")
                 signal_context = None
 
+            # Pre-warm crypto price cache with ONE batched CoinGecko call.
+            # Without this, the per-symbol `get_price` loop below hits
+            # /simple/price N times — CG free tier rate-limits at ~10-30
+            # req/min so 10+ crypto symbols guarantee a 429 cascade
+            # (visible in today's logs every 5-15s tick).
+            try:
+                crypto_syms = [
+                    sym for _, (sym, ac, _) in symbol_specs.items()
+                    if ac == AssetClass.CRYPTO
+                ]
+                if crypto_syms:
+                    await asyncio.wait_for(
+                        engine.market_data.get_crypto_prices_batched(crypto_syms),
+                        timeout=10.0,
+                    )
+            except asyncio.TimeoutError:
+                logger.warning("Batched crypto price warm timed out; falling back to per-symbol fetches")
+            except Exception as exc:
+                logger.warning(f"Batched crypto price warm failed: {exc}")
+
             for cache_key, (symbol, asset_class, needs_ohlcv) in symbol_specs.items():
                 try:
                     price = await asyncio.wait_for(

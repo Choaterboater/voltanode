@@ -291,6 +291,82 @@ class MarketData:
                 return stale
             raise RuntimeError(f"Failed to fetch crypto price: {e}") from e
 
+    async def get_crypto_prices_batched(
+        self, symbols: List[str], vs_currency: str = "usd",
+    ) -> Dict[str, float]:
+        """Fetch many crypto prices in ONE CoinGecko request.
+
+        CG's /simple/price endpoint accepts a comma-separated ids list
+        and returns all prices in a single response. Per-symbol fetching
+        (N requests for N symbols) hammers the free-tier rate limit
+        (~10-30 req/min) and produces the 429 cascades visible in the
+        logs. Batched fetching is the recommended pattern from CG's docs.
+
+        Populates the price cache for every successful symbol so
+        subsequent get_crypto_price() calls hit cache. Caller passes a
+        list of tickers OR CG-ids; we normalize each through
+        normalize_crypto_symbol before joining.
+
+        Returns: {ticker_as_passed: price}. Missing symbols (CG didn't
+        return data, e.g. unknown id) are silently omitted — caller is
+        responsible for handling absence (fall back to stale cache).
+        Failures (429 after retry, network down) return an EMPTY dict
+        rather than raising — strategy ticks continue with stale data
+        from a previous batch instead of crashing the loop.
+        """
+        out: Dict[str, float] = {}
+        if not symbols:
+            return out
+        # Normalize each symbol; keep a mapping from the normalized CG id
+        # back to the input form so the caller's keys stay intact.
+        cg_id_by_input: Dict[str, str] = {}
+        for s in symbols:
+            cg = normalize_crypto_symbol(s)
+            if cg:
+                cg_id_by_input[s] = cg
+        if not cg_id_by_input:
+            return out
+
+        # Deduplicate CG ids — many bots scope to BTC/ETH/SOL/AVAX so the
+        # raw symbols list often has duplicates after normalisation
+        # (different tickers mapping to same CG id is rare but
+        # cg_id_by_input handles it; this set is the unique CG ids).
+        unique_ids = sorted(set(cg_id_by_input.values()))
+
+        client = await self._get_client()
+        url = f"{self._cg_base_url}/simple/price"
+        params = {
+            "ids": ",".join(unique_ids),
+            "vs_currencies": vs_currency,
+        }
+        try:
+            response = await _fetch_with_retry(client, "GET", url, params=params)
+            data = response.json() or {}
+        except Exception as e:
+            # Whole batch failed (429 cascade exhausted, network down, etc).
+            # Return empty — callers fall back to whatever's in cache.
+            logger.warning(
+                f"CG batched price fetch failed for {len(unique_ids)} ids: {e}. "
+                "Returning empty map; cached prices remain authoritative."
+            )
+            return out
+
+        # Distribute response back to caller's symbol keys + populate cache.
+        for input_sym, cg_id in cg_id_by_input.items():
+            row = data.get(cg_id) or {}
+            price = row.get(vs_currency)
+            if price is None:
+                continue
+            try:
+                price_f = float(price)
+            except (TypeError, ValueError):
+                continue
+            out[input_sym] = price_f
+            # Cache under the normalized CG id — that's the key
+            # get_crypto_price uses on subsequent single-symbol fetches.
+            self.cache.store_price(cg_id, price_f)
+        return out
+
     async def get_crypto_ohlcv(
         self,
         symbol: str,
