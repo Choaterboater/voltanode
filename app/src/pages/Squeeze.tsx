@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Search,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import Layout from '@/components/Layout';
 import { useSqueeze, type SqueezeResult } from '@/hooks/useSqueeze';
 import { useWatchlist } from '@/hooks/useWatchlist';
@@ -247,7 +248,12 @@ function Sparkline({ values, color, width = 64, height = 20 }: SparklineProps) {
 
 export default function Squeeze() {
   const { result, loading, error, runScan, lookupSymbols } = useSqueeze();
-  const { items: watchlistItems, add: addToWatchlist, remove: removeFromWatchlist } = useWatchlist();
+  const {
+    items: watchlistItems,
+    add: addToWatchlist,
+    remove: removeFromWatchlist,
+    refresh: refreshWatchlist,
+  } = useWatchlist();
   // Set of symbols already on the watchlist (stock-class — Squeeze is stocks-only).
   const watchedSymbols = new Set(
     watchlistItems
@@ -641,15 +647,31 @@ export default function Squeeze() {
                             source: 'squeeze',
                             note,
                           });
-                        } catch {
-                          /* ignore — useWatchlist surfaces errors */
+                          // Belt-and-suspenders: useWatchlist's event bus
+                          // should refresh items, but force it so the icon
+                          // switches to "watched" immediately even if a
+                          // race delays the bus.
+                          await refreshWatchlist();
+                          toast.success(`${r.ticker} added to watchlist`, {
+                            description: note,
+                          });
+                        } catch (e) {
+                          toast.error(`Could not add ${r.ticker}`, {
+                            description:
+                              e instanceof Error ? e.message : String(e),
+                          });
                         }
                       }}
                       onRemoveWatch={async () => {
                         try {
                           await removeFromWatchlist(r.ticker, 'stock');
-                        } catch {
-                          /* ignore */
+                          await refreshWatchlist();
+                          toast.success(`${r.ticker} removed from watchlist`);
+                        } catch (e) {
+                          toast.error(`Could not remove ${r.ticker}`, {
+                            description:
+                              e instanceof Error ? e.message : String(e),
+                          });
                         }
                       }}
                     />
@@ -787,7 +809,13 @@ function RowGroup({
           </span>
         </td>
         <td className="px-2 py-3 font-mono tabular-nums">
-          {r.earnings_qoq_growth != null ? (
+          {/* When has_earnings_data is explicitly false, yfinance gave us
+              nothing — render "—" even if the field happens to be 0.
+              When the flag is missing (older API), fall back to null check. */}
+          {r.has_earnings_data === false ||
+          (r.has_earnings_data === undefined && r.earnings_qoq_growth == null) ? (
+            <span className="text-text-muted/50" title="no earnings data">—</span>
+          ) : r.earnings_qoq_growth != null ? (
             <span
               className={
                 r.earnings_qoq_growth > 0.1

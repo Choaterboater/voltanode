@@ -29,6 +29,17 @@ class MeanReversionStrategy(BaseStrategy):
         "touch_tolerance": 0.02,  # within 2% of band counts as a touch
     }
 
+    @classmethod
+    def param_space(cls) -> Dict[str, Dict[str, Any]]:
+        return {
+            "rsi_period":      {"type": "int",   "low": 5,     "high": 30},
+            "rsi_overbought":  {"type": "int",   "low": 50,    "high": 80},
+            "rsi_oversold":    {"type": "int",   "low": 20,    "high": 50},
+            "bb_period":       {"type": "int",   "low": 10,    "high": 40},
+            "bb_std":          {"type": "float", "low": 1.0,   "high": 3.0,  "step": 0.1},
+            "touch_tolerance": {"type": "float", "low": 0.005, "high": 0.05, "step": 0.005},
+        }
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._last_signal_bar: Dict[str, Any] = {}

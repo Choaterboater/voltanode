@@ -10,9 +10,11 @@ const Backtest = lazy(() => import('./pages/Backtest'))
 const Analytics = lazy(() => import('./pages/Analytics'))
 const BotLab = lazy(() => import('./pages/BotLab'))
 const NewsSentiment = lazy(() => import('./pages/NewsSentiment'))
+const NewsAnalytics = lazy(() => import('./pages/NewsAnalytics'))
 const About = lazy(() => import('./pages/About'))
 const Advisor = lazy(() => import('./pages/Advisor'))
 const Squeeze = lazy(() => import('./pages/Squeeze'))
+const LongTermPicks = lazy(() => import('./pages/LongTermPicks'))
 const SettingsPage = lazy(() => import('./pages/Settings'))
 const Watchlist = lazy(() => import('./pages/Watchlist'))
 
@@ -33,12 +35,14 @@ export default function App() {
           <Route path="/watchlist" element={<Watchlist />} />
           <Route path="/advisor" element={<Advisor />} />
           <Route path="/squeeze" element={<Squeeze />} />
+          <Route path="/long-term" element={<LongTermPicks />} />
           <Route path="/paper" element={<PaperTrading />} />
           <Route path="/strategies" element={<Strategies />} />
           <Route path="/backtest" element={<Backtest />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/bots" element={<BotLab />} />
           <Route path="/news" element={<NewsSentiment />} />
+          <Route path="/news-analytics" element={<NewsAnalytics />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/about" element={<About />} />
         </Routes>

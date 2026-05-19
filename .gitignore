@@ -44,6 +44,7 @@ trading-bot-backend/data/cache/
 trading-bot-backend/data/news.db
 trading-bot-backend/data/watchlist.json
 trading-bot-backend/data/fills.jsonl
+trading-bot-backend/data/hyperopt_history.jsonl
 trading-bot-backend/.env
 trading-bot-backend/data/equity_history/
 trading-bot-backend/backend-startup.log

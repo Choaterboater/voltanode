@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -10,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from typing import Any, Dict, List
 
 from api.models import StrategyInfo, StrategyListResponse, StrategyRegisterRequest, StrategyToggleRequest
-from strategies import StrategyFactory, list_strategies
+from strategies import STRATEGY_REGISTRY, StrategyFactory, list_strategies
 from strategies.base import BaseStrategy
 from bot.engine import PaperTradingEngine
 
@@ -216,7 +217,9 @@ async def refresh_universes(
                 enable_pairlist=True,
                 min_quote_volume_usd=1_000_000.0,
                 min_bars=30,
-                pl_min_price=1.0,
+                # Asset-class-aware: 0 for crypto (keep DOGE/SHIB/TRX),
+                # $1 for stocks (drop penny stocks).
+                pl_min_price=0.0 if asset_class == "crypto" else 1.0,
                 pl_max_price=0.0,
                 max_spread_pct=0.08,
                 min_atr_pct=0.005,
@@ -248,8 +251,14 @@ async def refresh_universes(
                 concurrency=6,
                 max_results=40,
             )
-            cands = (data.get("candidates") or [])[:top]
-            return [c["ticker"] for c in cands if c.get("ticker")]
+            # squeeze_screener returns rows under "results", not "candidates",
+            # keyed by "ticker". The older "candidates" key never existed —
+            # _fetch_squeeze was silently returning [] every refresh, leaving
+            # the squeeze bot stuck on its deploy-day hardcoded universe for
+            # weeks while the screener was happily surfacing 20-30 fresh
+            # setups per day.
+            rows = (data.get("results") or [])[:top]
+            return [r["ticker"] for r in rows if r.get("ticker")]
         except Exception as exc:
             logger.warning(f"refresh: squeeze failed: {exc}")
             return []
@@ -313,3 +322,176 @@ async def refresh_universes(
         "updated": updated,
         "skipped": skipped,
     }
+
+
+# ─── Hyperopt ──────────────────────────────────────────────────────────────
+#
+# Strategies ship with textbook defaults (RSI=14, MACD=12/26/9, ...) frozen
+# at deploy day. These endpoints run Bayesian parameter search over the
+# existing backtest path and let the operator apply the winning config to a
+# live bot. See ``hyperopt/`` for the engine and ``strategies/*.py`` for
+# per-strategy ``param_space()``.
+
+def _first_symbol(strat: BaseStrategy) -> str | None:
+    """Pick a representative symbol for a single-symbol hyperopt run."""
+    syms = strat.configured_symbols()
+    if syms:
+        return syms[0]
+    cfg = strat.config or {}
+    for key in ("symbol", "default_symbol"):
+        v = cfg.get(key)
+        if v:
+            return str(v)
+    return None
+
+
+@router.get("/{strategy_id}/hyperopt/space")
+async def get_param_space(strategy_id: str) -> Dict[str, Any]:
+    """Return the strategy's tunable parameter ranges. Lets the UI render
+    sliders / preview a study before kicking one off."""
+    strat = _registered_strategies.get(strategy_id)
+    if strat is None:
+        raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
+    cls = STRATEGY_REGISTRY.get(strat.name)
+    space = cls.param_space() if cls else {}
+    return {
+        "strategy_id": strategy_id,
+        "strategy_type": strat.name,
+        "supports_hyperopt": bool(space),
+        "param_space": space,
+        "current_config": {k: strat.config.get(k) for k in space.keys()},
+    }
+
+
+@router.post("/{strategy_id}/hyperopt")
+async def hyperopt_strategy(
+    strategy_id: str,
+    n_trials: int = 50,
+    objective: str = "sharpe",
+    symbol: str | None = None,
+    asset_class: str = "crypto",
+    timeframe: str = "1h",
+    timeout_sec: int | None = 600,
+) -> Dict[str, Any]:
+    """Run a Bayesian hyperopt study against the strategy's backtest path.
+
+    Does NOT mutate the strategy. The winning params are stashed in
+    ``data/hyperopt_history.jsonl``; call ``POST /apply-hyperopt`` to merge
+    them into the live config.
+
+    The study runs inside ``asyncio.to_thread`` so it doesn't block the
+    single-worker async server while the backtest loop chews through bars.
+    """
+    strat = _registered_strategies.get(strategy_id)
+    if strat is None:
+        raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
+    cls = STRATEGY_REGISTRY.get(strat.name)
+    if cls is None or not cls.param_space():
+        raise HTTPException(
+            status_code=400,
+            detail=f"{strat.name} does not support hyperopt (no param_space)",
+        )
+
+    sym = symbol or _first_symbol(strat)
+    if not sym:
+        raise HTTPException(
+            status_code=400,
+            detail="No symbol provided and strategy has no configured symbol",
+        )
+
+    # Pull modules inside the handler so import-time failures (e.g. optuna
+    # missing) don't take the whole API down on startup.
+    from hyperopt import append_history, run_hyperopt
+    from hyperopt.engine import _fetch_ohlcv
+
+    try:
+        df = await _fetch_ohlcv(sym, asset_class, timeframe)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"OHLCV fetch failed: {exc}")
+
+    fixed_config = {"symbols": [sym]}
+
+    def _run():
+        return run_hyperopt(
+            strategy_type=strat.name,
+            symbol=sym,
+            asset_class=asset_class,
+            timeframe=timeframe,
+            n_trials=n_trials,
+            objective=objective,
+            fixed_config=fixed_config,
+            timeout_sec=timeout_sec,
+            df=df,
+        )
+
+    try:
+        result = await asyncio.to_thread(_run)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Hyperopt failed: {exc}")
+
+    append_history(result, strategy_id=strategy_id)
+
+    return {
+        "strategy_id": strategy_id,
+        "strategy_type": result.strategy_type,
+        "symbol": result.symbol,
+        "objective": result.objective,
+        "n_trials": result.n_trials,
+        "valid_trials": len(result.trial_history),
+        "best_params": result.best_params,
+        "best_value": result.best_value,
+        "baseline_value": result.baseline_value,
+        "improvement_pct": result.improvement_pct,
+        "duration_sec": result.duration_sec,
+    }
+
+
+@router.post("/{strategy_id}/apply-hyperopt")
+async def apply_hyperopt(strategy_id: str) -> Dict[str, Any]:
+    """Merge the most-recent hyperopt best_params into the strategy's config
+    and persist. The bot picks up the new params on its next tick — no
+    restart needed (config is read every ``on_tick``)."""
+    strat = _registered_strategies.get(strategy_id)
+    if strat is None:
+        raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
+
+    from hyperopt import latest_for_strategy
+
+    row = latest_for_strategy(strategy_id)
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No hyperopt history for this strategy; run POST /hyperopt first",
+        )
+    best_params = row.get("best_params") or {}
+    if not best_params:
+        raise HTTPException(
+            status_code=400,
+            detail="Most-recent hyperopt run produced no valid params (all trials rejected)",
+        )
+
+    old = {k: strat.config.get(k) for k in best_params.keys()}
+    new_cfg = dict(strat.config or {})
+    new_cfg.update(best_params)
+    strat.config = new_cfg
+    _persist()
+
+    return {
+        "strategy_id": strategy_id,
+        "applied_params": best_params,
+        "previous_params": old,
+        "objective": row.get("objective"),
+        "best_value": row.get("best_value"),
+        "baseline_value": row.get("baseline_value"),
+    }
+
+
+@router.get("/{strategy_id}/hyperopt/history")
+async def hyperopt_history(strategy_id: str, limit: int = 10) -> Dict[str, Any]:
+    """Return the most-recent hyperopt rows for this strategy, newest first."""
+    from hyperopt import read_all
+    rows = [r for r in read_all() if r.get("strategy_id") == strategy_id]
+    rows.reverse()
+    return {"strategy_id": strategy_id, "count": len(rows), "rows": rows[:limit]}

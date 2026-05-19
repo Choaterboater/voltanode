@@ -22,6 +22,16 @@ class MACDStrategy(BaseStrategy):
         "signal": 9,
     }
 
+    @classmethod
+    def param_space(cls) -> Dict[str, Dict[str, Any]]:
+        # Constraint fast<slow is enforced in the hyperopt objective
+        # (returns -inf when violated); cheaper than constraining the sampler.
+        return {
+            "fast":   {"type": "int", "low": 5,  "high": 20},
+            "slow":   {"type": "int", "low": 20, "high": 50},
+            "signal": {"type": "int", "low": 5,  "high": 15},
+        }
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._last_signal_bar: Dict[str, Any] = {}

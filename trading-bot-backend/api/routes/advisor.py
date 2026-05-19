@@ -15,6 +15,8 @@ from pydantic import BaseModel
 from advisor.analyzer import SymbolAnalyzer
 from advisor.models import AnalysisResult, IndicatorReading, PriceTarget
 from advisor.pairlist import apply_chain as apply_pairlist_chain, default_chain as default_pairlist_chain
+from advisor.fundamentals import fetch_stock_fundamentals
+from advisor.long_term import LongTermScore, rank_long_term, score_long_term
 from advisor.research import build_research_report
 from advisor.scanner import ScannerScore, rank_scores, score_symbol
 from advisor.squeeze import (
@@ -585,7 +587,7 @@ async def market_scanner(
     enable_pairlist: bool = Query(default=True, description="Apply quality gates (volume/age/price/spread/volatility/blacklist) before scoring"),
     min_quote_volume_usd: float = Query(default=1_000_000.0, ge=0, description="Min 24h dollar-volume to keep a symbol (0 = disabled)"),
     min_bars: int = Query(default=30, ge=0, le=500, description="Min OHLCV bars of history required"),
-    pl_min_price: float = Query(default=1.0, ge=0, description="Minimum current price (drop penny stocks)"),
+    pl_min_price: Optional[float] = Query(default=None, ge=0, description="Minimum current price floor. Defaults: 0 for crypto (don't drop DOGE/SHIB/TRX), $1 for stock (drop penny stocks). Pass an explicit value to override."),
     pl_max_price: float = Query(default=0.0, ge=0, description="Maximum current price (0 = no ceiling)"),
     max_spread_pct: float = Query(default=0.08, ge=0, le=1.0, description="Max avg (high-low)/close as bid-ask proxy"),
     min_atr_pct: float = Query(default=0.005, ge=0, le=1.0, description="Min ATR/price — drop dead-flat names"),
@@ -609,6 +611,11 @@ async def market_scanner(
     """
     cache = DataCache(cache_dir="./data/cache")
     market_data = MarketData(cache=cache, config=BotConfig())
+
+    # Asset-class-aware default for the price floor — $1 sensibly drops US
+    # penny stocks but wrongly nukes liquid sub-$1 crypto (DOGE, SHIB, TRX).
+    if pl_min_price is None:
+        pl_min_price = 0.0 if asset_class == "crypto" else 1.0
 
     universe = await _scanner_universe(
         asset_class,
@@ -709,6 +716,347 @@ async def market_scanner(
     }
 
 
+# ── Evaluator-chain scanner (Phase 5 pattern) ──────────────────────────
+#
+# Same three signals as /advisor/scanner (RSI extreme, breakout proximity,
+# relative volume), but composed via the OctoBot-style EvaluatorChain so
+# each evaluator's verdict is visible per-symbol and weights are tunable
+# without editing aggregation logic. Adding a new signal (e.g. orderbook
+# imbalance, social sentiment, on-chain flow) is now "register an Evaluator
+# subclass + give it a weight" — zero changes to this endpoint.
+
+async def _fetch_chain_one(
+    symbol: str,
+    asset_class: str,
+    market_data: MarketData,
+    sem: asyncio.Semaphore,
+    crypto_days: int,
+    stock_period: str,
+    chain,  # EvaluatorChain — typing avoided to dodge import-cycle on startup
+):
+    """Fetch OHLCV and run the chain. Mirrors _fetch_score_one's shape."""
+    from advisor.evaluators.base import ChainResult, DIR_NEUTRAL, EvaluatorContext
+    async with sem:
+        try:
+            if asset_class == "crypto":
+                df = await market_data.get_crypto_ohlcv(
+                    symbol, vs_currency="usd", days=crypto_days, interval="daily"
+                )
+            else:
+                df = await asyncio.to_thread(
+                    market_data.get_stock_ohlcv, symbol, stock_period, "1d"
+                )
+            if df is None or df.empty:
+                return ChainResult(
+                    symbol=symbol, composite_score=0.0, direction=DIR_NEUTRAL,
+                    weights=chain.weights, error="empty_dataframe",
+                )
+            df = df.copy()
+            df.columns = [str(c).lower() for c in df.columns]
+            if "volume" not in df.columns:
+                df["volume"] = 0.0
+            ctx = EvaluatorContext(symbol=symbol, asset_class=asset_class)
+            return chain.evaluate(symbol, df, ctx)
+        except Exception as exc:
+            logger.warning("chain: %s fetch/eval failed: %s", symbol, exc)
+            return ChainResult(
+                symbol=symbol, composite_score=0.0, direction=DIR_NEUTRAL,
+                weights=chain.weights, error=str(exc)[:200],
+            )
+
+
+@router.get("/scanner/chain")
+async def market_scanner_chain(
+    asset_class: str = Query(default="crypto", description="'crypto' or 'stock'"),
+    top: int = Query(default=20, ge=1, le=200),
+    min_score: float = Query(default=0.0, ge=0.0, le=100.0),
+    limit_universe: int = Query(default=50, ge=5, le=600),
+    symbols: Optional[str] = Query(default=None,
+        description="Comma-separated explicit symbol list (overrides auto-universe)"),
+    direction: Optional[str] = Query(default=None, description="'long' or 'short'"),
+    concurrency: int = Query(default=5, ge=1, le=20),
+    crypto_days: int = Query(default=60, ge=30, le=365),
+    stock_period: str = Query(default="3mo"),
+    include_movers: bool = Query(default=True),
+    rsi_period: int = Query(default=14, ge=5, le=50),
+    breakout_lookback: int = Query(default=20, ge=5, le=100),
+    volume_lookback: int = Query(default=20, ge=5, le=100),
+    weight_rsi: float = Query(default=0.40, ge=0.0, le=1.0),
+    weight_breakout: float = Query(default=0.30, ge=0.0, le=1.0),
+    weight_rel_volume: float = Query(default=0.30, ge=0.0, le=1.0),
+    weight_news_sentiment: float = Query(default=0.20, ge=0.0, le=1.0,
+        description="News evaluator weight. Set 0 to disable news voting."),
+    news_hours: int = Query(default=24, ge=1, le=168,
+        description="Lookback window for news aggregation."),
+) -> Dict[str, Any]:
+    """Composite scanner via the evaluator-chain pattern.
+
+    Returns per-symbol verdicts from each evaluator alongside the aggregated
+    composite score and direction. Identical signal math to /advisor/scanner
+    (same RSI/breakout/volume math reused via wrappers), but the wire format
+    surfaces each evaluator's opinion separately so the operator can see
+    *why* a symbol scored where it did, and tune weights without code changes.
+
+    Weight params don't need to sum to 1.0 — the chain normalizes internally.
+    """
+    from advisor.evaluators import build_default_chain
+
+    cache = DataCache(cache_dir="./data/cache")
+    market_data = MarketData(cache=cache, config=BotConfig())
+
+    universe = await _scanner_universe(
+        asset_class, market_data, limit_universe, symbols,
+        include_sp500=False, include_movers=include_movers,
+    )
+    if not universe:
+        return {
+            "asset_class": asset_class,
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
+            "universe_size": 0, "scored": 0, "results": [],
+        }
+
+    chain = build_default_chain(
+        weights={
+            "rsi": weight_rsi,
+            "breakout": weight_breakout,
+            "rel_volume": weight_rel_volume,
+            "news_sentiment": weight_news_sentiment,
+        },
+        rsi_period=rsi_period,
+        breakout_lookback=breakout_lookback,
+        volume_lookback=volume_lookback,
+        include_news=(weight_news_sentiment > 0),
+        news_hours=news_hours,
+    )
+
+    sem = asyncio.Semaphore(concurrency)
+    started = datetime.now(timezone.utc)
+    results = await asyncio.gather(
+        *[
+            _fetch_chain_one(
+                sym, asset_class, market_data, sem, crypto_days, stock_period, chain,
+            )
+            for sym in universe
+        ]
+    )
+    elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+
+    valid = [r for r in results if r.error is None and r.composite_score >= min_score]
+    valid.sort(key=lambda r: r.composite_score, reverse=True)
+    if direction in ("long", "short"):
+        valid = [r for r in valid if r.direction == direction]
+
+    return {
+        "asset_class": asset_class,
+        "scanned_at": started.isoformat(),
+        "elapsed_ms": elapsed_ms,
+        "universe_size": len(universe),
+        "scored": len(valid),
+        "weights": chain.weights,
+        "evaluators": [ev.name for ev, _ in chain._items],
+        "results": [r.to_dict() for r in valid[:top]],
+        "failed": [
+            {"symbol": r.symbol, "error": r.error}
+            for r in results if r.error is not None
+        ][:20],
+    }
+
+
+# ── Long-term (year+) holding screener ─────────────────────────────────
+#
+# Different beast from /scanner (swing setups) and /squeeze (catalyst plays):
+# this ranks names by long-horizon quality — fundamentals (50%) + sustained
+# trend (30%) + low volatility (20%). Reuses fetch_stock_fundamentals and
+# the same OHLCV path as /scanner; the universe defaults to S&P 500 because
+# yfinance fundamentals are the load-bearing signal here. Crypto names
+# score with neutral fundamentals (50/100 per score_fundamentals) but the
+# trend + vol components still differentiate within asset class.
+
+async def _fetch_long_term_one(
+    symbol: str,
+    asset_class: str,
+    market_data: MarketData,
+    sem: asyncio.Semaphore,
+    stock_period: str = "2y",
+    crypto_days: int = 730,
+) -> LongTermScore:
+    """Fetch fundamentals + OHLCV in parallel, score one symbol."""
+    async with sem:
+        try:
+            # Fundamentals run in a thread (yfinance is blocking).
+            if asset_class == "stock":
+                snap_task = asyncio.to_thread(fetch_stock_fundamentals, symbol)
+                ohlcv_task = asyncio.to_thread(
+                    market_data.get_stock_ohlcv, symbol, stock_period, "1d"
+                )
+            else:
+                from advisor.fundamentals import fetch_crypto_fundamentals
+                snap_task = asyncio.to_thread(fetch_crypto_fundamentals, symbol)
+                ohlcv_task = market_data.get_crypto_ohlcv(
+                    symbol, vs_currency="usd", days=crypto_days, interval="daily"
+                )
+            snap, df = await asyncio.gather(snap_task, ohlcv_task)
+
+            if df is None or df.empty:
+                return LongTermScore(
+                    symbol=symbol, score=0.0, current_price=0.0, bars=0,
+                    error="empty_ohlcv",
+                )
+            df = df.copy()
+            df.columns = [str(c).lower() for c in df.columns]
+            return score_long_term(symbol, df, snap)
+        except Exception as exc:
+            logger.warning("long-term: %s fetch/score failed: %s", symbol, exc)
+            return LongTermScore(
+                symbol=symbol, score=0.0, current_price=0.0, bars=0,
+                error=str(exc)[:200],
+            )
+
+
+@router.get("/long-term")
+async def long_term_screener(
+    asset_class: str = Query(default="stock", description="'stock' or 'crypto'"),
+    top: int = Query(default=25, ge=1, le=200),
+    min_score: float = Query(default=0.0, ge=0.0, le=100.0),
+    limit_universe: int = Query(default=100, ge=5, le=600),
+    symbols: Optional[str] = Query(default=None,
+        description="Comma-separated explicit symbol list (overrides default universe)"),
+    concurrency: int = Query(default=4, ge=1, le=10,
+        description="Parallel fetches. Low default because yfinance + CoinGecko both rate-limit."),
+    stock_period: str = Query(default="2y",
+        description="yfinance period for stocks — need >= 1y for the 200dma + 1y-return signal"),
+    crypto_days: int = Query(default=730, ge=365, le=1095),
+    weight_fundamentals: float = Query(default=0.50, ge=0.0, le=1.0),
+    weight_trend: float = Query(default=0.30, ge=0.0, le=1.0),
+    weight_low_volatility: float = Query(default=0.20, ge=0.0, le=1.0),
+    sector: Optional[str] = Query(default=None,
+        description="Filter to a specific sector (case-insensitive substring match on yfinance sector field)"),
+    max_price: Optional[float] = Query(default=None, ge=0.0,
+        description="Drop picks above this share price (e.g. 50 for sub-$50 names). Applied after scoring."),
+    min_price: Optional[float] = Query(default=None, ge=0.0,
+        description="Drop penny stocks below this share price."),
+) -> Dict[str, Any]:
+    """Long-term (year+) holding candidates.
+
+    Composite score per symbol:
+      - 50% fundamentals (P/E, growth, ROE, margins, debt — via score_fundamentals)
+      - 30% trend (close > 200dma + 1-year return, saturates at +30%)
+      - 20% low volatility (annualized stddev — <20% full credit, >60% zero)
+
+    Defaults to scanning the S&P 500. For crypto, ranks the top market-cap
+    coins by trend + vol since fundamentals are neutral across the class.
+
+    This is NOT a market-timing tool — it's a "what's worth buying and
+    forgetting about" filter. Use /advisor/research on the top picks for
+    LLM-driven per-symbol deep dives.
+    """
+    cache = DataCache(cache_dir="./data/cache")
+    market_data = MarketData(cache=cache, config=BotConfig())
+
+    # Universe selection
+    if symbols:
+        universe = [s.strip().upper() for s in symbols.split(",") if s.strip()][:limit_universe]
+    elif asset_class == "stock":
+        # S&P 500 is the canonical long-term universe — already curated for
+        # quality + liquidity, fundamentals are reliable via yfinance.
+        # sp500_universe is async (CSV fetch + 24h cache); must be awaited
+        # before slicing or we get "coroutine is not subscriptable" → 502.
+        try:
+            sp500 = await sp500_universe()
+            universe = sp500[:limit_universe]
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"sp500 universe fetch failed: {exc}")
+    else:
+        # Crypto: rely on the scanner's universe builder, which pulls
+        # top-N market-cap coins from CoinGecko.
+        universe = await _scanner_universe(
+            asset_class, market_data, limit_universe, None,
+            include_sp500=False, include_movers=False,
+        )
+
+    if not universe:
+        return {
+            "asset_class": asset_class,
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
+            "universe_size": 0, "scored": 0, "results": [],
+        }
+
+    sem = asyncio.Semaphore(concurrency)
+    started = datetime.now(timezone.utc)
+    raw_results = await asyncio.gather(
+        *[
+            _fetch_long_term_one(
+                sym, asset_class, market_data, sem, stock_period, crypto_days,
+            )
+            for sym in universe
+        ]
+    )
+    elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+
+    # Optional sector filter — applied AFTER scoring so the operator can see
+    # what was dropped without re-running.
+    if sector:
+        s_low = sector.lower()
+        raw_results = [
+            r for r in raw_results
+            if r.error is not None or (r.sector and s_low in r.sector.lower())
+        ]
+
+    # Price-cap / -floor filters for budget-aware picking. Applied after
+    # scoring; errored rows pass through so the failed[] surface still
+    # shows fetch failures. current_price=0 means we never got a quote —
+    # treat as "unknown price" and let it through so the operator can
+    # decide.
+    if max_price is not None or min_price is not None:
+        def _passes_price(r: "LongTermScore") -> bool:
+            if r.error is not None:
+                return True
+            if not r.current_price:
+                return True
+            if max_price is not None and r.current_price > max_price:
+                return False
+            if min_price is not None and r.current_price < min_price:
+                return False
+            return True
+        raw_results = [r for r in raw_results if _passes_price(r)]
+
+    weights = {
+        "fundamentals": weight_fundamentals,
+        "trend": weight_trend,
+        "low_volatility": weight_low_volatility,
+    }
+    # Re-score with operator weights if non-default. Cheap: just re-applies
+    # the weighted sum to existing components.
+    if (weight_fundamentals, weight_trend, weight_low_volatility) != (0.50, 0.30, 0.20):
+        total = sum(weights.values()) or 1.0
+        norm = {k: v / total for k, v in weights.items()}
+        for r in raw_results:
+            if r.components:
+                r.score = (
+                    norm["fundamentals"] * r.components["fundamentals"].score
+                    + norm["trend"] * r.components["trend"].score
+                    + norm["low_volatility"] * r.components["low_volatility"].score
+                ) * 100.0
+
+    valid = rank_long_term(raw_results, top=top, min_score=min_score)
+    failed = [
+        {"symbol": r.symbol, "error": r.error}
+        for r in raw_results
+        if r.error not in (None, "insufficient_history_for_trend_or_vol")
+    ]
+
+    return {
+        "asset_class": asset_class,
+        "scanned_at": started.isoformat(),
+        "elapsed_ms": elapsed_ms,
+        "universe_size": len(universe),
+        "scored": len(valid),
+        "weights": {k: round(v, 3) for k, v in weights.items()},
+        "results": [r.to_dict() for r in valid],
+        "failed": failed[:20],
+    }
+
+
 # ── Squeeze screener ────────────────────────────────────────────────────
 
 # Default sector blocklist mirrors the screenshot's "utilities/REITs" filter.
@@ -748,6 +1096,10 @@ async def _squeeze_score_one(
         "days_to_cover": fund.short_ratio_days_to_cover,
         "earnings_qoq_growth": fund.earnings_qoq_growth,
         "earnings_growth_yoy": fund.earnings_growth_yoy,
+        # Distinguish "yfinance returned no data" from "EPS is literally
+        # flat 0%". UI should render "—" when has_earnings_data=false
+        # instead of "+0.0%" which is misleading on a missing field.
+        "has_earnings_data": fund.has_earnings_growth_data,
         "next_earnings_date": fund.next_earnings_date,
         "has_recent_13d_filing": has_recent_13d,
         "quarterly_eps": [

@@ -77,6 +77,10 @@ export interface SqueezeResult {
   days_to_cover: number | null;
   earnings_qoq_growth: number | null;
   earnings_growth_yoy: number | null;
+  // True iff yfinance actually returned earnings-growth fields. Lets
+  // the UI render "—" when has_earnings_data=false instead of "+0.0%"
+  // for a missing-field row.
+  has_earnings_data?: boolean;
   next_earnings_date: string | null;
   has_recent_13d_filing: boolean;
   quarterly_eps: QuarterlyEPS[];

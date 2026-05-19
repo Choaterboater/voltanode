@@ -20,8 +20,29 @@ class MomentumStrategy(BaseStrategy):
         "fast_ema": 12,
         "slow_ema": 26,
         "signal_ema": 9,
-        "trend_filter_ema": 200,
+        # Lowered from 200 → 100: on a 1-year daily backtest (~252 bars),
+        # an EMA-200 warmup eats ~80% of the available history, leaving
+        # almost no bars for the strategy to actually fire on. 100 still
+        # captures macro-trend filtering while leaving 150+ bars of
+        # signal-generation room. Operators tuning on 1h+ timeframes can
+        # bump this back up via config; the hyperopt param_space below
+        # now spans 30-200 so the optimizer can explore both ends.
+        "trend_filter_ema": 100,
     }
+
+    @classmethod
+    def param_space(cls) -> Dict[str, Dict[str, Any]]:
+        # fast_ema<slow_ema is enforced in the hyperopt objective.
+        # trend_filter_ema range lowered to 30-200 (was 100-300): on
+        # daily bars the upper end was eating most of a 1y window before
+        # any signal fired. 30 lets the optimizer find scalping-style
+        # short-trend filters when the data supports it.
+        return {
+            "fast_ema":         {"type": "int", "low": 5,   "high": 25},
+            "slow_ema":         {"type": "int", "low": 20,  "high": 60},
+            "signal_ema":       {"type": "int", "low": 5,   "high": 15},
+            "trend_filter_ema": {"type": "int", "low": 30,  "high": 200, "step": 10},
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

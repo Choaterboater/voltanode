@@ -268,24 +268,45 @@ function ResearchReportCard({ report }: { report: import('@/hooks/useAdvisor').R
 
       {/* Three dimensions */}
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {[report.fundamental, report.technical, report.sentiment].map((dim) => (
-          <div key={dim.name} className="rounded-md border border-border-subtle bg-bg-input/40 p-3">
-            <div className="flex items-baseline justify-between">
-              <span className="text-xs uppercase text-text-muted">{dim.name}</span>
-              <span className="text-[10px] text-text-muted">{Math.round(dim.weight * 100)}% weight</span>
+        {[report.fundamental, report.technical, report.sentiment].map((dim) => {
+          // When data_available is explicitly false, the score is a
+          // default-50 fallback that means "no data" — render dimmed +
+          // strikethrough on the score + "NO DATA" label so the
+          // composite isn't read as "actually neutral fundamentals".
+          const noData = dim.data_available === false;
+          return (
+            <div
+              key={dim.name}
+              className={`rounded-md border border-border-subtle bg-bg-input/40 p-3 ${noData ? 'opacity-60' : ''}`}
+            >
+              <div className="flex items-baseline justify-between">
+                <span className="text-xs uppercase text-text-muted">{dim.name}</span>
+                <span className="text-[10px] text-text-muted">
+                  {noData ? 'excluded' : `${Math.round(dim.weight * 100)}% weight`}
+                </span>
+              </div>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span
+                  className={`font-mono text-2xl font-bold ${
+                    noData ? 'text-text-muted line-through' : dimColor(dim.label)
+                  }`}
+                  title={noData ? 'No data — score excluded from composite' : ''}
+                >
+                  {dim.score}
+                </span>
+                <span className="text-xs text-text-muted">/100</span>
+                <span
+                  className={`ml-auto text-[10px] font-medium ${
+                    noData ? 'text-text-muted' : dimColor(dim.label)
+                  }`}
+                >
+                  {noData ? 'NO DATA' : dim.label}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-text-secondary leading-snug">{dim.rationale}</p>
             </div>
-            <div className="mt-1 flex items-baseline gap-2">
-              <span className={`font-mono text-2xl font-bold ${dimColor(dim.label)}`}>
-                {dim.score}
-              </span>
-              <span className="text-xs text-text-muted">/100</span>
-              <span className={`ml-auto text-[10px] font-medium ${dimColor(dim.label)}`}>
-                {dim.label}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-text-secondary leading-snug">{dim.rationale}</p>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Company Overview — what they do + current catalysts */}

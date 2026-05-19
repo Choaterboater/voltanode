@@ -277,26 +277,38 @@ def _call_ollama(prompt: str, model: str, timeout: float = 60.0) -> Optional[str
         return None
 
 
+# Reordered + refreshed 2026-05-18 after the OR free-tier probe done
+# during this session (logged in data/collector/llm_model_stats.jsonl):
+#   - inclusionai/ring-2.6-1t:free transitioned to a paid model (404)
+#   - google/gemma-4-31b-it:free returns "Provider returned error"
+#   - qwen/qwen3-next-80b-a3b-instruct:free returns "Provider returned error"
+#     (and hallucinates wrong verdict vocabulary on sibling-bot)
+#   - nvidia/nemotron-3-nano-30b-a3b:free hits transient 429s
+# These lists are the in-source defaults used only when the
+# OPENROUTER_FALLBACK_MODELS env var is NOT set. Operators with .env
+# overrides aren't affected (and shouldn't be), but a fresh deploy that
+# forgets the env would hit the broken models on attempt 1 → 4 before
+# falling through to a working one. The 2026-05-18 reorder puts working
+# models first and parks the broken ones at the tail so when OR restores
+# them the chain auto-benefits.
 _HEAVY_MODELS = [
-    "inclusionai/ring-2.6-1t:free",            # 1T MoE — biggest available
-    "openai/gpt-oss-120b:free",                # 120B, very reliable
-    "nvidia/nemotron-3-super-120b-a12b:free",  # 120B
+    "openai/gpt-oss-120b:free",                # 120B reasoning, JSON via prompt
+    "nvidia/nemotron-3-super-120b-a12b:free",  # 120B MoE, JSON-native
     "minimax/minimax-m2.5:free",               # large MoE, 196K ctx
     "z-ai/glm-4.5-air:free",                   # solid mid-large
+    "inclusionai/ring-2.6-1t:free",            # parked: now paid (404) as of 2026-05-18
 ]
 
 _FAST_MODELS = [
-    # Reordered + refreshed 2026-05-14 after a live probe of 364 OR models:
-    # tencent/hy3-preview:free was silently retired from OR's free list,
-    # replaced by faster nvidia + arcee options that returned clean JSON
-    # on a real sentiment prompt.
-    "nvidia/nemotron-3-nano-30b-a3b:free",     # 30B, ~2s — fastest clean JSON
-    "arcee-ai/trinity-large-thinking:free",    # reasoning, ~3.6s
-    "openrouter/owl-alpha",                    # 1M ctx, ~4s
+    "openrouter/owl-alpha",                    # 1M ctx, workhorse — 198/204 success in live probe
+    "openai/gpt-oss-120b:free",                # 120B reasoning, deeper fallback
+    "nvidia/nemotron-3-super-120b-a12b:free",  # 120B MoE, JSON-native
     "meta-llama/llama-3.3-70b-instruct:free",  # 70B, fast & reliable
-    "google/gemma-4-31b-it:free",              # 31B, very fast
-    "qwen/qwen3-next-80b-a3b-instruct:free",   # 80B Qwen3
-    "openai/gpt-oss-120b:free",                # last-resort heavy fallback
+    "minimax/minimax-m2.5:free",               # large MoE, 196K ctx
+    "arcee-ai/trinity-large-thinking:free",    # reasoning, ~3.6s
+    "nvidia/nemotron-3-nano-30b-a3b:free",     # parked: transient 429s as of 2026-05-18
+    "google/gemma-4-31b-it:free",              # parked: provider errors as of 2026-05-18
+    "qwen/qwen3-next-80b-a3b-instruct:free",   # parked: provider errors as of 2026-05-18
 ]
 
 

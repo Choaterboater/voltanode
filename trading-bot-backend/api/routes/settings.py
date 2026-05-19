@@ -442,13 +442,35 @@ async def configure_safety(request: Request, body: SafetyConfigRequest) -> dict:
     if body.blocked_symbols is not None:
         safety.blocked_symbols = body.blocked_symbols
 
-    # Push the new max_orders_per_minute to the live rate limiter. The
-    # rest of the limits are read through ``self.config`` on each call so
-    # they pick up the mutation automatically — the rate limiter caches
-    # ``max_per_minute`` at construction time, so we have to update it.
+    # Push updates into the running SafetyValidator. Two distinct caches
+    # need refreshing:
+    #   1. validator.config — read by get_status() (the /safety-status
+    #      response) and by validate_order() when no explicit config is
+    #      threaded through. Stale here means the operator sees the old
+    #      limits forever via /safety-status even though the BotConfig
+    #      itself has been mutated.
+    #   2. rate_limiter.max_per_minute — cached at constructor time.
     engine = _get_engine(request)
     if engine is not None and hasattr(engine, "safety_validator"):
-        engine.safety_validator.rate_limiter.max_per_minute = safety.max_orders_per_minute
+        sv = engine.safety_validator
+        sv.config.max_daily_loss_pct = safety.max_daily_loss_pct
+        sv.config.max_position_size_pct = safety.max_position_size_pct
+        sv.config.max_exposure_pct = safety.max_exposure_pct
+        sv.config.max_orders_per_minute = safety.max_orders_per_minute
+        sv.config.allowed_symbols = list(safety.allowed_symbols)
+        sv.config.blocked_symbols = list(safety.blocked_symbols)
+        sv.rate_limiter.max_per_minute = safety.max_orders_per_minute
+
+    # Persist to disk so the limits survive the next restart. Without this
+    # the BotConfig YAML keeps the old values and the engine boots back to
+    # them. Pattern matches the other route handlers in this file (broker,
+    # live-mode, app config).
+    try:
+        import os
+        config_path = os.environ.get("BOT_CONFIG", "config.yaml")
+        config.to_yaml(config_path)
+    except Exception as exc:
+        logger.warning(f"Failed to persist safety config: {exc}")
 
     return {
         "max_daily_loss_pct": safety.max_daily_loss_pct,

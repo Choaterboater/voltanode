@@ -10,7 +10,10 @@ def main() -> None:
     """Main entry point."""
     try:
         from dotenv import load_dotenv
-        load_dotenv()
+        # override=True so a respawn (e.g. POST /settings/restart) picks up
+        # edits to .env. Default override=False quietly keeps stale inherited
+        # env vars, which makes operator edits look like they didn't apply.
+        load_dotenv(override=True)
     except ImportError:
         pass
 

@@ -126,8 +126,60 @@ export interface ApiPrice {
   timestamp: string;
 }
 
-export const getPrices = (symbols: string[]) =>
-  fetchJson<ApiPrice[]>(`/market/prices?symbols=${symbols.join(',')}`);
+export const getPrices = (symbols: string[], assetClass: 'stock' | 'crypto' | 'forex' = 'crypto') => {
+  if (symbols.length === 0) return Promise.resolve([] as ApiPrice[]);
+  const qs = `symbols=${encodeURIComponent(symbols.join(','))}&asset_class=${assetClass}`;
+  return fetchJson<ApiPrice[]>(`/market/prices?${qs}`);
+};
+
+// ── Long-term picks ──
+// GET /advisor/long-term — year+ holding screener (50% fundamentals / 30% trend /
+// 20% low-vol composite). Defaults to S&P 500; pass symbols=A,B,C for a custom universe.
+export interface LongTermComponent {
+  score: number;
+  value: number | null;
+  signal: string;
+}
+export interface LongTermPick {
+  symbol: string;
+  name: string;
+  sector: string;
+  score: number;
+  current_price: number;
+  bars: number;
+  components: Record<'fundamentals' | 'trend' | 'low_volatility', LongTermComponent>;
+  error: string | null;
+}
+export interface LongTermResponse {
+  asset_class: string;
+  scanned_at: string;
+  elapsed_ms: number;
+  universe_size: number;
+  scored: number;
+  weights: Record<string, number>;
+  results: LongTermPick[];
+  failed: { symbol: string; error: string | null }[];
+}
+export const getLongTermPicks = (params: {
+  asset_class?: 'stock' | 'crypto';
+  top?: number;
+  min_score?: number;
+  limit_universe?: number;
+  symbols?: string;
+  sector?: string;
+  weight_fundamentals?: number;
+  weight_trend?: number;
+  weight_low_volatility?: number;
+  max_price?: number;
+  min_price?: number;
+} = {}) => {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '') qs.set(k, String(v));
+  }
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return fetchJson<LongTermResponse>(`/advisor/long-term${suffix}`);
+};
 
 export const getOHLCV = (symbol: string, assetClass = 'crypto', timeframe = '1d', limit = 100) =>
   fetchJson<{ timestamp: string; open: number; high: number; low: number; close: number; volume: number }[]>(
@@ -313,3 +365,99 @@ export const getSymbolSentiment = (symbol: string, hours = 24) =>
 
 export const getTrendingSymbols = (hours = 24, minArticles = 3) =>
   fetchJson<TrendingSymbol[]>(`/news/trending?hours=${hours}&min_articles=${minArticles}`);
+
+// ── News velocity + impact (analytics layer) ──
+export interface VelocityWindow {
+  hours: number;
+  article_count: number;
+  avg_compound: number;
+  max_compound: number;
+  min_compound: number;
+}
+export interface VelocitySnapshot {
+  symbol: string;
+  computed_at: string;
+  windows: VelocityWindow[];
+  velocity: number;
+  velocity_label: string;
+  acceleration: number;
+  fresh_article_pct: number;
+  error: string | null;
+}
+export const getNewsVelocity = (symbol: string, windows?: string) => {
+  const qs = windows ? `?windows=${encodeURIComponent(windows)}` : '';
+  return fetchJson<VelocitySnapshot>(`/news/velocity/${encodeURIComponent(symbol)}${qs}`);
+};
+
+export interface ImpactBucket {
+  score_low: number;
+  score_high: number;
+  horizon_days: number;
+  n: number;
+  mean_return_pct: number;
+  median_return_pct: number;
+  hit_rate: number;
+  stdev_return_pct: number;
+}
+export interface ImpactReport {
+  generated_at: string;
+  lookback_days: number;
+  symbols: string[];
+  article_count: number;
+  skipped_count: number;
+  buckets: ImpactBucket[];
+  by_symbol: Record<string, { n_articles?: number; mean_short_horizon_return_pct?: number | null; skipped?: boolean; reason?: string }>;
+  error: string | null;
+}
+export const getNewsImpact = (params: {
+  symbols: string;
+  lookback_days?: number;
+  horizons?: string;
+} ) => {
+  const qs = new URLSearchParams();
+  qs.set('symbols', params.symbols);
+  if (params.lookback_days !== undefined) qs.set('lookback_days', String(params.lookback_days));
+  if (params.horizons) qs.set('horizons', params.horizons);
+  return fetchJson<ImpactReport>(`/news/impact?${qs.toString()}`);
+};
+
+// Classify a symbol as stock or crypto by heuristic so getPriceMap can
+// route a mixed list to the right asset_class without an extra round-trip.
+// *USD/USDT/USDC suffixes and the common bare coin tickers → crypto.
+const CRYPTO_BARE = new Set([
+  'BTC', 'ETH', 'SOL', 'AVAX', 'BNB', 'XRP', 'ADA', 'DOGE', 'SHIB', 'LTC',
+  'BCH', 'LINK', 'DOT', 'MATIC', 'TRX', 'UNI', 'AAVE', 'YFI', 'MKR', 'SUSHI',
+]);
+
+export function classifyAsset(symbol: string): 'stock' | 'crypto' {
+  const s = symbol.toUpperCase();
+  if (s.endsWith('USD') || s.endsWith('USDT') || s.endsWith('USDC')) return 'crypto';
+  if (CRYPTO_BARE.has(s)) return 'crypto';
+  return 'stock';
+}
+
+// Bulk-fetch prices for a mixed-asset symbol list. Splits into stock vs
+// crypto by classifyAsset(), hits /market/prices for each in parallel,
+// returns a flat {SYMBOL: price} map. Failed sub-calls are silent —
+// prices are decoration, not load-bearing.
+export async function getPriceMap(symbols: string[]): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  if (symbols.length === 0) return out;
+  const stocks: string[] = [];
+  const cryptos: string[] = [];
+  for (const s of symbols) {
+    (classifyAsset(s) === 'crypto' ? cryptos : stocks).push(s);
+  }
+  const results = await Promise.allSettled([
+    stocks.length ? getPrices(stocks, 'stock') : Promise.resolve([] as ApiPrice[]),
+    cryptos.length ? getPrices(cryptos, 'crypto') : Promise.resolve([] as ApiPrice[]),
+  ]);
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      for (const row of r.value) {
+        if (row && typeof row.price === 'number') out[row.symbol] = row.price;
+      }
+    }
+  }
+  return out;
+}

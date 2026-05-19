@@ -16,7 +16,7 @@ import Layout from '../components/Layout';
 import MetricCard from '../components/MetricCard';
 import Badge from '../components/Badge';
 import DataTable from '../components/DataTable';
-import { getNewsStatus, analyzeHeadline, getSymbolSentiment, getTrendingSymbols } from '../lib/api';
+import { getNewsStatus, analyzeHeadline, getSymbolSentiment, getTrendingSymbols, getPriceMap } from '../lib/api';
 import type { SentimentResult, TrendingSymbol, NewsStatus } from '../types';
 
 export default function NewsSentiment() {
@@ -34,6 +34,32 @@ export default function NewsSentiment() {
   const [trending, setTrending] = useState<TrendingSymbol[]>([]);
   const [trendingLoading, setTrendingLoading] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // Live prices for every symbol referenced on this page. Populated lazily
+  // whenever analyzeResults / lookupResult / trending change. Map keyed by
+  // upper-case symbol so the display lookups don't have to worry about case.
+  const [priceMap, setPriceMap] = useState<Record<string, number>>({});
+
+  const refreshPrices = useCallback(async (syms: string[]) => {
+    const unique = Array.from(new Set(syms.map((s) => s.toUpperCase()).filter(Boolean)));
+    if (unique.length === 0) return;
+    try {
+      const m = await getPriceMap(unique);
+      setPriceMap((prev) => ({ ...prev, ...m }));
+    } catch {
+      // silent — prices are decoration, not load-bearing
+    }
+  }, []);
+
+  // Renders "$215.30" or "—" so layouts stay consistent when a fetch fails
+  // (e.g. yfinance hiccups on one symbol but not the others).
+  const fmtPrice = (sym: string): string => {
+    const p = priceMap[sym.toUpperCase()];
+    if (typeof p !== 'number' || !isFinite(p)) return '—';
+    if (p < 1) return `$${p.toFixed(4)}`;
+    if (p < 100) return `$${p.toFixed(2)}`;
+    return `$${p.toFixed(2)}`;
+  };
 
   // Reusable lookup runner so trending cards (and the form) can both
   // trigger a sentiment fetch for a specific symbol without going through
@@ -121,6 +147,25 @@ export default function NewsSentiment() {
     const interval = setInterval(loadStatus, 30000);
     return () => clearInterval(interval);
   }, [loadStatus, loadTrending]);
+
+  // Whenever a result set lands, fetch prices for its symbols. Three
+  // sources contribute (analyze, lookup, trending); each refresh merges
+  // into the shared priceMap rather than overwriting.
+  useEffect(() => {
+    if (analyzeResults.length === 0) return;
+    refreshPrices(analyzeResults.map((r) => r.symbol));
+  }, [analyzeResults, refreshPrices]);
+
+  useEffect(() => {
+    if (!lookupResult) return;
+    const syms = [lookupResult.symbol, ...lookupResult.scores.map((r) => r.symbol)];
+    refreshPrices(syms);
+  }, [lookupResult, refreshPrices]);
+
+  useEffect(() => {
+    if (trending.length === 0) return;
+    refreshPrices(trending.map((t) => t.symbol));
+  }, [trending, refreshPrices]);
 
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -338,6 +383,7 @@ export default function NewsSentiment() {
                   <div className="mb-2 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-sm font-medium text-text-primary">{r.symbol}</span>
+                      <span className="font-mono text-xs text-text-secondary tabular-nums">{fmtPrice(r.symbol)}</span>
                       <Badge variant={sentimentVariant(r.compoundScore)}>
                         {sentimentLabel(r.compoundScore)}
                       </Badge>
@@ -438,7 +484,10 @@ export default function NewsSentiment() {
           {lookupResult?.summary && (
             <div className="mb-4 rounded-lg border border-border-subtle bg-bg-base p-4">
               <div className="mb-2 flex items-center justify-between">
-                <span className="font-mono text-sm font-medium text-text-primary">{lookupResult.symbol}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm font-medium text-text-primary">{lookupResult.symbol}</span>
+                  <span className="font-mono text-xs text-text-secondary tabular-nums">{fmtPrice(lookupResult.symbol)}</span>
+                </div>
                 <Badge variant={sentimentVariant(lookupResult.summary.avgCompound)}>
                   {lookupResult.summary.sentimentLabel}
                 </Badge>
@@ -523,7 +572,10 @@ export default function NewsSentiment() {
               title={`Click to look up ${t.symbol} sentiment + headlines`}
             >
               <div className="mb-2 flex items-center justify-between">
-                <span className="font-mono text-base font-semibold text-accent-cyan">{t.symbol}</span>
+                <div className="flex items-baseline gap-2">
+                  <span className="font-mono text-base font-semibold text-accent-cyan">{t.symbol}</span>
+                  <span className="font-mono text-xs text-text-secondary tabular-nums">{fmtPrice(t.symbol)}</span>
+                </div>
                 <div className="flex items-center gap-2">
                   <Badge variant={sentimentVariant(t.avgCompound)}>{t.sentimentLabel}</Badge>
                   <span className="text-xs text-text-muted">{t.articleCount} articles</span>

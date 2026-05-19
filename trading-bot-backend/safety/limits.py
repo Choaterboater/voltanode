@@ -132,7 +132,13 @@ class SafetyValidator:
             except Exception:
                 price = 0
         order_notional = order.quantity * price if price > 0 else 0
-        if order_notional > 0:
+        # Skip position-size cap on SELL orders — they're closing exposure,
+        # not opening it. Without this, an already-oversized position (ETH
+        # at 28% when cap is 20%) can't be trimmed because the trim itself
+        # would temporarily look like "opening a 28% position." Same logic
+        # as the exposure check below; mirror it here.
+        _side_val = getattr(order.side, "value", str(order.side)).lower()
+        if _side_val != "sell" and order_notional > 0:
             position_size_pct = (order_notional / total_equity) * 100.0 if total_equity > 0 else 0.0
             if position_size_pct > cfg.max_position_size_pct:
                 raise SafetyValidationError(
