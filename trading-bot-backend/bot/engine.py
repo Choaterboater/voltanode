@@ -535,10 +535,30 @@ class PaperTradingEngine:
                         close_side = OrderSide.BUY
 
                 if close_side is not None:
+                    # Floor the close quantity to a safe precision so we
+                    # never ask the broker for ε more than available.
+                    # Float64 storage of fractional positions (e.g. SHIB
+                    # 13874750.787367453) re-emits as ...454 after a
+                    # round-trip through the math, and Alpaca rejects
+                    # with code 40310000 "insufficient balance". Clamping
+                    # to 6 decimals (or 0 for large lots) is well within
+                    # broker precision and never asks for more than held.
+                    _q = pos.size
+                    if _q >= 1.0:
+                        # >= 1 unit: floor to 6 decimals (covers ETH/BTC
+                        # fractional lots, kills float ε for large
+                        # whole-share holdings like SHIB).
+                        import math as _math
+                        _q = _math.floor(_q * 1e6) / 1e6
+                    else:
+                        # Sub-unit lots (BTC fractions, fees in dust):
+                        # 8 decimals matches Alpaca's broker precision.
+                        import math as _math
+                        _q = _math.floor(_q * 1e8) / 1e8
                     close_order = Order.market(
                         symbol=tick.symbol,
                         side=close_side,
-                        quantity=pos.size,
+                        quantity=_q,
                         account_id=account_id,
                         strategy_id="sltp_manager",
                     )

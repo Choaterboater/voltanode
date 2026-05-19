@@ -103,6 +103,31 @@ async def _run_news_loop(app: FastAPI) -> None:
             await asyncio.sleep(300)
 
 
+def _maybe_log_tick_issue(app: FastAPI, cache_key: str, kind: str, detail: str) -> None:
+    """Dedup tick-error WARNs so a persistent upstream rate-limit doesn't
+    flood the log with 50+ identical lines every 5s tick.
+
+    First occurrence of a given (cache_key, kind) is logged at WARNING.
+    Subsequent identical errors within a 5-minute window are silently
+    dropped — the watchdog/health endpoints already surface that ticks
+    aren't completing, and 50× /min duplicates make the log unreadable.
+    Window state is keyed per-symbol-per-kind on app.state.
+    """
+    state = getattr(app.state, "_tick_issue_log", None)
+    if state is None:
+        state = {}
+        app.state._tick_issue_log = state
+    now = asyncio.get_running_loop().time()
+    key = (cache_key, kind, detail[:40])  # also dedup on error prefix
+    last = state.get(key, 0.0)
+    if now - last >= 300.0:  # 5-minute dedup window
+        state[key] = now
+        if kind == "timeout":
+            logger.warning(f"Tick timeout for {cache_key} (suppressing dupes for 5min)")
+        else:
+            logger.warning(f"Tick error for {cache_key}: {detail} (suppressing dupes for 5min)")
+
+
 async def _run_tick_loop(app: FastAPI) -> None:
     """Background task that fetches prices and drives the engine tick loop."""
     engine: PaperTradingEngine | None = None
@@ -191,20 +216,27 @@ async def _run_tick_loop(app: FastAPI) -> None:
                 signal_context = None
 
             # Pre-warm crypto price cache with ONE batched CoinGecko call.
-            # Without this, the per-symbol `get_price` loop below hits
-            # /simple/price N times — CG free tier rate-limits at ~10-30
-            # req/min so 10+ crypto symbols guarantee a 429 cascade
-            # (visible in today's logs every 5-15s tick).
+            # Throttled: only fire when the cache is stale (>= 60s old) —
+            # without this, the warm fires every tick (5s) which itself
+            # exceeds CG free-tier rate limits (~10-30 req/min) and
+            # triggers a 429 cascade. 60s gives ~1 call/min worst case,
+            # well within budget. The per-symbol price cache TTL is 300s
+            # so this is a fraction of cache validity — strategies still
+            # see fresh-enough prices.
             try:
                 crypto_syms = [
                     sym for _, (sym, ac, _) in symbol_specs.items()
                     if ac == AssetClass.CRYPTO
                 ]
                 if crypto_syms:
-                    await asyncio.wait_for(
-                        engine.market_data.get_crypto_prices_batched(crypto_syms),
-                        timeout=10.0,
-                    )
+                    _now = asyncio.get_running_loop().time()
+                    _last = getattr(app.state, "_last_crypto_warm_ts", 0.0)
+                    if (_now - _last) >= 60.0:
+                        await asyncio.wait_for(
+                            engine.market_data.get_crypto_prices_batched(crypto_syms),
+                            timeout=10.0,
+                        )
+                        app.state._last_crypto_warm_ts = _now
             except asyncio.TimeoutError:
                 logger.warning("Batched crypto price warm timed out; falling back to per-symbol fetches")
             except Exception as exc:
@@ -228,9 +260,9 @@ async def _run_tick_loop(app: FastAPI) -> None:
 
                     engine.on_tick(tick, ohlcv_data=ohlcv_data, signal_context=signal_context)
                 except asyncio.TimeoutError:
-                    logger.warning(f"Tick timeout for {cache_key}")
+                    _maybe_log_tick_issue(app, cache_key, "timeout", "")
                 except Exception as exc:
-                    logger.warning(f"Tick error for {cache_key}: {exc}")
+                    _maybe_log_tick_issue(app, cache_key, "error", str(exc)[:120])
 
             # Record an equity snapshot for each account (throttled to once
             # per minute per account regardless of tick frequency).
