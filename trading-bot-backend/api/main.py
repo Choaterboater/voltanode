@@ -68,14 +68,22 @@ async def _run_news_loop(app: FastAPI) -> None:
                         # Only score newly-saved articles. Articles already in
                         # storage have already been scored — re-running burns
                         # GPU cycles and creates duplicate sentiment rows.
-                        is_new = storage.save_article(article)
+                        # save_article is sync SQLite — wrap so concurrent
+                        # request handlers aren't blocked while we write.
+                        is_new = await asyncio.to_thread(storage.save_article, article)
                         if not is_new:
                             continue
                         new_count += 1
                         try:
-                            results = engine_n.analyze(article)
+                            # engine.analyze() calls _call_openrouter which is
+                            # SYNC requests.post(). Without to_thread the event
+                            # loop blocks for the full HTTP round-trip (1-30s)
+                            # PER ARTICLE — this was today's recurring wedge
+                            # cause (caught by the loop watchdog in
+                            # data/wedge_traces/stall-20260519T154555.txt).
+                            results = await asyncio.to_thread(engine_n.analyze, article)
                             for r in results:
-                                storage.save_sentiment(r)
+                                await asyncio.to_thread(storage.save_sentiment, r)
                                 analyzed_count += 1
                         except Exception as exc:
                             logger.warning(f"Sentiment analysis failed for article {article.id}: {exc}")
