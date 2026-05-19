@@ -260,7 +260,10 @@ def create_app() -> FastAPI:
         """
         from bot.portfolio import PositionSide as _PS
         portfolio_obj = engine.get_portfolio("default")
-        broker_positions = broker.get_positions()
+        # broker.get_positions() is a sync HTTP call. Without to_thread it
+        # blocks the event loop, which is the recurring wedge symptom
+        # (port bound, ESTABLISHED connections accumulate, no responses).
+        broker_positions = await asyncio.to_thread(broker.get_positions)
         synced = 0
         for p in broker_positions or []:
             sym = (p.get("symbol") or "").upper()
@@ -460,6 +463,16 @@ def create_app() -> FastAPI:
         except Exception as exc:
             logger.warning(f"Could not restore bots from disk: {exc}")
 
+        # Start event-loop watchdog so a stalled coroutine writes a
+        # diagnostic stack-dump instead of silently wedging the listener.
+        # Stalls are surfaced via CRITICAL log + data/wedge_alerts.jsonl
+        # row + data/wedge_traces/stall-YYYYMMDDTHHMMSS.txt file.
+        try:
+            from utils.loop_watchdog import start_loop_watchdog
+            start_loop_watchdog()
+        except Exception as exc:
+            logger.warning(f"Could not start loop watchdog: {exc}")
+
         # Start background tick loop
         tick_task = asyncio.create_task(_run_tick_loop(app))
         # Start background news fetcher (Alpaca + sentiment)
@@ -510,6 +523,16 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Truly minimal liveness probe — touches NOTHING. Returns 200 with a
+    # constant payload. The existing /engine/status touches engine state
+    # which can itself wedge if a tick-loop coroutine is hung, so it
+    # doesn't tell you "is the process responsive" — only "is the engine
+    # responsive". /healthz is the answer to the former: if it 200s,
+    # the event loop + uvicorn are alive even if the engine is stuck.
+    @app.get("/healthz", tags=["Health"])
+    async def healthz() -> dict:
+        return {"ok": True}
 
     # Register routers
     app.include_router(portfolio.router, prefix="/portfolio", tags=["Portfolio"])

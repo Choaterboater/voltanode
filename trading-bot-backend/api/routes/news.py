@@ -159,14 +159,24 @@ async def news_status() -> Dict[str, Any]:
     fetcher = _get_fetcher()
     engine = _get_engine()
 
-    # Check Ollama availability
-    ollama_available = False
+    # Check Ollama availability. Run the sync requests.get in a thread
+    # so a slow/hung Ollama doesn't block the event loop (the 2s timeout
+    # caps the damage to 2s per /news/status hit, but that's still 2s
+    # the loop can't do anything else — a watchdog stall in waiting).
+    import asyncio as _aio
+    import requests as _req
+
+    def _ollama_ping() -> bool:
+        try:
+            resp = _req.get("http://localhost:11434/api/tags", timeout=2)
+            return resp.status_code == 200
+        except Exception:
+            return False
+
     try:
-        import requests
-        resp = requests.get("http://localhost:11434/api/tags", timeout=2)
-        ollama_available = resp.status_code == 200
+        ollama_available = await _aio.to_thread(_ollama_ping)
     except Exception:
-        pass
+        ollama_available = False
 
     return {
         "alpaca_configured": bool(fetcher and fetcher.api_key and fetcher.api_secret),
