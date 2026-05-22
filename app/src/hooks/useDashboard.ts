@@ -154,14 +154,8 @@ function mapTickers(prices: ApiPrice[]): MarketTicker[] {
 }
 
 function mapTrades(trades: ApiTrade[]): Trade[] {
-  // /trades/ returns chronological (oldest-first). Reverse so the
-  // Dashboard's "Recent Trades" panel shows newest-first as the label
-  // implies. Sort by timestamp explicitly in case the backend ever
-  // changes its ordering — this is the canonical client-side sort.
-  const sorted = [...trades].sort(
-    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-  );
-  return sorted.map((t) => {
+  // /trades/ is newest-first from the API; map in response order.
+  return trades.map((t) => {
     // Backend ``OrderSide`` enum serializes lowercase ('buy'/'sell'); the
     // older comparison against 'BUY' bucketed everything as 'short'.
     const sideRaw = String(t.side ?? '').toLowerCase();

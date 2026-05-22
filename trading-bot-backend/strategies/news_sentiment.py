@@ -32,7 +32,7 @@ class NewsSentimentStrategy(BaseStrategy):
     name = "news_sentiment"
     DEFAULT_CONFIG: Dict[str, Any] = {
         "sentiment_threshold": 0.3,
-        "confidence_threshold": 0.6,
+        "confidence_threshold": 0.45,
         "lookback_hours": 6,
         "position_size_pct": 5.0,
         "require_trend_confirmation": True,
@@ -117,7 +117,7 @@ class NewsSentimentStrategy(BaseStrategy):
         # Determine position size
         suggested_size = None
         try:
-            notional = 1000.0 * (self.config.get("position_size_pct", 5.0) / 100.0)
+            notional = getattr(self, "_equity", 100_000.0) * (self.config.get("position_size_pct", 5.0) / 100.0)
             suggested_size = notional / current_price if current_price > 0 else 0.1
         except Exception:
             pass

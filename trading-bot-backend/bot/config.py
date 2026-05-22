@@ -121,6 +121,8 @@ class EngineConfig(BaseModel):
     tick_interval_seconds: float = 5.0
     max_accounts: int = 10
     auto_start_strategies: bool = True
+    # Shorter window in paper mode so take-profit exits can re-enter sooner.
+    post_close_cooldown_minutes: float = 15.0
 
 
 class AppConfig(BaseModel):
@@ -171,18 +173,18 @@ class BrokerConfig(BaseModel):
 class SafetyConfig(BaseModel):
     """Live trading safety limits configuration.
 
-    All defaults are conservative and safe:
-    - paper/testnet mode
+    Defaults match paper-mode operator tuning (see config.yaml):
     - 5% max daily loss
     - 20% max single position
-    - 50% max total exposure
+    - 300% max total exposure (multi-bot crypto books)
+    - 300 orders/minute rate budget
     """
     max_daily_loss_pct: float = 5.0
     max_position_size_pct: float = 20.0
-    max_exposure_pct: float = 50.0
+    max_exposure_pct: float = 300.0
     require_confirmation: bool = True
     kill_switch_on_disconnect: bool = True
-    max_orders_per_minute: int = 10
+    max_orders_per_minute: int = 300
     allowed_symbols: List[str] = Field(default_factory=list)
     blocked_symbols: List[str] = Field(default_factory=list)
     # Alert channels

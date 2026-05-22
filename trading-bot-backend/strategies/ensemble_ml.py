@@ -30,8 +30,8 @@ class EnsembleMLStrategy(BaseStrategy):
             "bb_position": {"weight": 0.15, "period": 20},
             "volume_trend": {"weight": 0.15},
         },
-        "buy_threshold": 0.6,
-        "sell_threshold": -0.6,
+        "buy_threshold": 0.45,
+        "sell_threshold": -0.45,
         "use_ml": False,
     }
 

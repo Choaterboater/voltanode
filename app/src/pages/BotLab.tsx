@@ -15,6 +15,7 @@ import {
   BrainCircuit,
 } from 'lucide-react';
 import Layout from '@/components/Layout';
+import IdleStateBanner from '@/components/IdleStateBanner';
 import Badge from '@/components/Badge';
 import {
   getStrategies,
@@ -152,6 +153,7 @@ export default function BotLab() {
             {error}
           </div>
         )}
+        <IdleStateBanner />
 
         {/* Create Bot */}
         <motion.div

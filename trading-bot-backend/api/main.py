@@ -340,6 +340,18 @@ def create_app() -> FastAPI:
                 synced += 1
         if synced:
             logger.info(f"Synced {synced} broker position(s) into engine portfolio")
+        # Mirror broker cash/equity into the engine ledger so safety % checks
+        # and paper-style balance gates see the real account size, not the
+        # 10k USDT seed left from engine __init__.
+        try:
+            broker_bal = await asyncio.to_thread(broker.get_balance)
+            if broker_bal:
+                for asset, amount in broker_bal.items():
+                    if amount is None:
+                        continue
+                    portfolio_obj._balances[str(asset).upper()] = float(amount)
+        except Exception as exc:
+            logger.debug(f"Broker balance sync skipped: {exc}")
         # Auto-attach default stops/TPs so restored positions get
         # downside protection without an operator calling /attach-stops
         # manually. Skips anything that already has a stop set; uses

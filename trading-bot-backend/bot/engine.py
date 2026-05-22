@@ -606,10 +606,12 @@ class PaperTradingEngine:
         # cooldown gives the price action time to confirm before the bot
         # gets back in.
         from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        eng_cfg = getattr(self.config, "engine", None)
         cooldown_min = float(
-            getattr(self.config, "post_close_cooldown_minutes", None)
-            or (self.config.get("post_close_cooldown_minutes") if isinstance(self.config, dict) else 60)
-            or 60
+            getattr(eng_cfg, "post_close_cooldown_minutes", None)
+            or getattr(self.config, "post_close_cooldown_minutes", None)
+            or (self.config.get("post_close_cooldown_minutes") if isinstance(self.config, dict) else None)
+            or 15
         )
         cooldown_cut = _dt.now(_tz.utc) - _td(minutes=cooldown_min)
         recent_close_symbols: set = set()
@@ -1036,6 +1038,12 @@ class LiveTradingEngine(PaperTradingEngine):
         # tagged with ``strategy_id == "manual_flatten"`` bypass safety —
         # they're an operator-initiated cleanup and shouldn't be blocked
         # by the per-minute rate budget that strategy traffic shares.
+        broker_balances: Dict[str, float] | None = None
+        if self.broker.is_connected() and self.broker.name != "mock":
+            try:
+                broker_balances = self.broker.get_balance()
+            except Exception:
+                broker_balances = None
         try:
             if (order.strategy_id or "") != "manual_flatten":
                 self.safety_validator.validate_order(
@@ -1043,6 +1051,7 @@ class LiveTradingEngine(PaperTradingEngine):
                     portfolio,
                     self.config,
                     self.daily_tracker.daily_pnl,
+                    broker_balances=broker_balances,
                 )
         except SafetyValidationError as sv_exc:
             order.status = OrderStatus.REJECTED

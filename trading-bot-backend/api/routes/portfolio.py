@@ -310,13 +310,38 @@ async def flatten_positions(
                 strategy_id="manual_flatten",
                 account_id=account_id,
             )
+            # Register before execute so /trades/ and get_trade_history(account_id)
+            # can attribute fills; paper execute_order does not submit on its own.
+            engine.submit_order(order, account_id)
+            mark_price = (
+                engine.get_current_price(pos.symbol)
+                or getattr(pos, "current_price", 0.0)
+                or 0.0
+            )
+            if mark_price <= 0:
+                failed.append({
+                    "symbol": pos.symbol,
+                    "error": "no mark price available for flatten",
+                })
+                continue
             # In live mode the engine routes to broker on execute_order;
             # in paper mode it fills locally.
             try:
                 fill = engine.execute_order(order)
             except TypeError:
                 # Paper engine signature is (order, current_price)
-                fill = engine.execute_order(order, getattr(pos, "current_price", 0.0) or 0.0)
+                fill = engine.execute_order(order, mark_price)
+            # Live broker may return PENDING with filled_qty=0; poll once so
+            # _update_portfolio_on_fill runs and the trade lands in /trades/.
+            if (
+                fill
+                and getattr(fill, "filled_qty", 0) <= 0
+                and hasattr(engine, "get_order_status")
+            ):
+                try:
+                    engine.get_order_status(order.id, account_id)
+                except Exception:
+                    pass
             filled_qty = getattr(fill, "filled_qty", 0.0) if fill else 0.0
             status = order.status.value if hasattr(order.status, "value") else str(order.status)
             closed.append({

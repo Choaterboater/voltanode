@@ -60,7 +60,7 @@ class AutoDiscoveryStrategy(BaseStrategy):
         "asset_class": "crypto",
         "symbols": [],
         # Composite-score thresholds (0–100).
-        "entry_score": 60.0,
+        "entry_score": 52.0,
         "exit_score": 30.0,
         # Position sizing — same convention as SimpleTrendStrategy.
         "position_pct": 0.05,
@@ -79,7 +79,7 @@ class AutoDiscoveryStrategy(BaseStrategy):
         # short_only) gets a sanity-check from the OpenRouter Haiku chain
         # before submission. Cached 60s per (symbol, side); fails OPEN so
         # an LLM outage never blocks trading.
-        "enable_llm_gate": True,
+        "enable_llm_gate": False,
         # Watchlist auto-include — merge symbols from data/watchlist.json
         # whose ``source`` is in ``watchlist_source_allowlist`` into the
         # universe each tick. Lets external apps (e.g. an alerts pipeline
@@ -297,7 +297,7 @@ class AutoDiscoveryStrategy(BaseStrategy):
                 confidence=confidence,
                 timestamp=pd.Timestamp.now(),
                 metadata=metadata,
-                suggested_size=(pos_pct * 1000.0) / current_price if current_price > 0 else 0.0,
+                suggested_size=(pos_pct * getattr(self, "_equity", 100_000.0)) / current_price if current_price > 0 else 0.0,
                 stop_loss=current_price * (1 - sl_pct) if signal_type == SignalType.BUY else current_price * (1 + sl_pct),
                 take_profit=current_price * (1 + tp_pct) if signal_type == SignalType.BUY else current_price * (1 - tp_pct),
             )
@@ -333,7 +333,7 @@ class AutoDiscoveryStrategy(BaseStrategy):
                 },
                 # Engine clamps SELL suggested_size to held quantity — pass a
                 # generous size and let the engine layer figure the right qty.
-                suggested_size=(pos_pct * 1000.0) / current_price if current_price > 0 else 0.0,
+                suggested_size=(pos_pct * getattr(self, "_equity", 100_000.0)) / current_price if current_price > 0 else 0.0,
                 stop_loss=None,
                 take_profit=None,
             )

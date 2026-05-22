@@ -38,6 +38,7 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import Layout from '@/components/Layout';
+import IdleStateBanner from '@/components/IdleStateBanner';
 import MetricCard from '@/components/MetricCard';
 import Badge from '@/components/Badge';
 import StatusDot from '@/components/StatusDot';
@@ -418,6 +419,7 @@ export default function Home() {
         </div>
       )}
       <div className="space-y-5">
+        <IdleStateBanner />
         {/* Signals Strip — macro / sentiment / catalysts at a glance */}
         <SignalsStrip signals={signals} />
 

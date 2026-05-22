@@ -46,11 +46,11 @@ Base: `http://localhost:8000`
 - `GET /portfolio/default/stats?range=1H|24H|7D|30D|ALL` — equity curve, Sharpe, drawdown, win rate.
 - `GET /settings/live-mode` — `{live_mode, broker_name, broker_connected, confirmation_required}`.
 - `GET /settings/safety-status` — current safety limits + kill switch + daily tracker.
-- `POST /settings/safety` — update safety limits *(see Known Bugs)*.
+- `POST /settings/safety` — update safety limits (persists YAML + pushes live `SafetyValidator` when engine is live).
 - `POST /settings/kill-switch` body `{"action":"deactivate"}` — clear a latched kill switch.
 - `POST /portfolio/{id}/flatten?symbols=SOL,BTC&trim_pct=0.4` — trim or close positions. `trim_pct=1.0` = full close, `0.4` = close 40%, keep 60%.
 - `POST /strategies/auto-deploy?max_positions=N` — run the 12-coin scan + bot deploy.
-- `GET /trades/?limit=200` — **returns chronological (oldest first)**, sort client-side for newest-first.
+- `GET /trades/?limit=200` — newest-first (reversed from append-only engine history).
 - `GET /advisor/scanner` — RSI + breakout + relative-volume composite scorer.
 - `GET /advisor/squeeze` — 7-factor squeeze screener (SI%, float, DTC, off-ex short, etc.).
 - `GET /watchlist/`, `POST /watchlist/`, `DELETE /watchlist/{symbol}` — persistent watchlist.
@@ -84,9 +84,7 @@ SELL signals bypass exposure checks (closing a position can't add exposure).
 
 ## Known bugs (small, worth fixing)
 
-- **`POST /settings/safety` doesn't propagate.** Updates the persisted config but doesn't push to the running `SafetyValidator`. `/settings/safety-status` keeps reporting old limits. Workaround: restart the backend.
-- **`/portfolio/{id}/flatten` orders bypass the `/trades/` ledger.** Position state updates correctly, but the trade row never lands. Means `daily_tracker.trade_count` doesn't reflect operator-initiated trims.
-- **`/trades/` returns oldest-first.** Most callers want newest-first — easy to forget.
+_None tracked at the moment — file issues in GitHub as they surface._
 
 ## Frontend conventions
 

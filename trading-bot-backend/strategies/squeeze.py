@@ -77,14 +77,14 @@ class SqueezeStrategy(BaseStrategy):
         "asset_class": "stock",
         "symbols": [],            # leave empty to auto-populate with DEFAULT_SQUEEZE_UNIVERSE
         # Composite-score thresholds (0-100, scanner-component-only here).
-        "entry_score": 55.0,      # technical RSI/breakout/volume composite must clear this
+        "entry_score": 48.0,      # technical RSI/breakout/volume composite must clear this
         "exit_score": 25.0,
         # Position sizing.
         "position_pct": 0.04,
         "stop_loss_pct": 0.08,    # squeeze names are volatile — wider stop
         "take_profit_pct": 0.30,  # let winners run, this is the squeeze thesis
         # Cooldowns / latches.
-        "min_hold_minutes": 240,  # 4h — slower than other strategies
+        "min_hold_minutes": 120,  # 2h — still patient, but less idle than 4h
         # Indicator lookbacks.
         "rsi_period": 14,
         "breakout_lookback": 20,
@@ -92,7 +92,7 @@ class SqueezeStrategy(BaseStrategy):
         # LLM pre-trade gate — same semantics as auto_discovery. Squeeze
         # names are smaller-cap / higher-volatility, so the sanity check
         # has higher leverage here than on majors.
-        "enable_llm_gate": True,
+        "enable_llm_gate": False,
     }
 
     def __init__(self, *args, **kwargs):
@@ -217,7 +217,7 @@ class SqueezeStrategy(BaseStrategy):
                 confidence=confidence,
                 timestamp=pd.Timestamp.now(),
                 metadata=metadata,
-                suggested_size=(pos_pct * 1000.0) / current_price if current_price > 0 else 0.0,
+                suggested_size=(pos_pct * getattr(self, "_equity", 100_000.0)) / current_price if current_price > 0 else 0.0,
                 stop_loss=current_price * (1 - sl_pct),
                 take_profit=current_price * (1 + tp_pct),
             )
@@ -240,7 +240,7 @@ class SqueezeStrategy(BaseStrategy):
                     "score": score.score,
                     "direction": score.direction,
                 },
-                suggested_size=(pos_pct * 1000.0) / current_price if current_price > 0 else 0.0,
+                suggested_size=(pos_pct * getattr(self, "_equity", 100_000.0)) / current_price if current_price > 0 else 0.0,
             )
             self._record_signal(sig)
             return sig

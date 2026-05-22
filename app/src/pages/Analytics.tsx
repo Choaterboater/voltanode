@@ -93,12 +93,7 @@ export default function Analytics() {
       setLoading(true);
       const [p, t, s] = await Promise.all([getPortfolio(), getTrades(), getStrategies()]);
       setPortfolio(p);
-      // /trades/ returns oldest-first; sort newest-first for the Trade
-      // History table. Same fix as useDashboard.mapTrades.
-      const sorted = [...t].sort(
-        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      );
-      setTrades(sorted);
+      setTrades(t);
       setStrategies(s.strategies);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load analytics');

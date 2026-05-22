@@ -11,6 +11,7 @@ import numpy as np
 from bot.config import OrderSide, RiskConfig, SizingMethod
 from bot.orders import Order
 from bot.portfolio import Portfolio
+from safety.limits import compute_portfolio_equity
 
 
 @dataclass
@@ -282,8 +283,7 @@ class RiskManager:
 
         # Check position size limit
         notional = order.quantity * (order.price or 1.0)
-        balances = portfolio.get_all_balances()
-        equity = sum(balances.values()) if balances else 10000.0
+        equity = compute_portfolio_equity(portfolio)
         max_notional = equity * self.config.max_position_size_pct
 
         if notional > max_notional:

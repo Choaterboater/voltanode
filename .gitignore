@@ -37,6 +37,9 @@ data/collector/
 .env
 .env.local
 
+# Staging snapshot — source of truth is app/ and trading-bot-backend/
+newbuild/
+
 # Runtime state — created at startup, regenerated as needed
 trading-bot-backend/data/registered_strategies.json
 trading-bot-backend/data/registered_strategies.json.bak*
