@@ -121,6 +121,54 @@ async def _run_news_loop(app: FastAPI) -> None:
             await asyncio.sleep(300)
 
 
+async def _run_funding_loop(app: FastAPI) -> None:
+    """Background task: refresh perp funding-rate/OI regimes into the cache.
+
+    Public Binance data (no keys). Populates ``data/funding.py``'s cache so the
+    opt-in per-bot funding gate (``strategies/base.py``) can read regimes with
+    ZERO I/O inside the tick loop — wiring it synchronously into on_tick would
+    reintroduce the sync-I/O wedge. Self-skips gracefully when Binance is
+    unreachable; bots only act on this when ``config['funding_gate'].enabled``.
+    """
+    for _ in range(30):
+        if hasattr(app.state, "engine"):
+            break
+        await asyncio.sleep(1)
+
+    while True:
+        try:
+            try:
+                from data.funding import refresh_funding, _to_binance_perp
+
+                cfg = getattr(app.state, "config", None)
+                crypto = []
+                if cfg is not None:
+                    crypto = (getattr(cfg.market_data, "symbols", {}) or {}).get("crypto", []) or []
+                # Config mixes CoinGecko ids + tickers; dedupe by perp symbol
+                # and cap so we don't hammer Binance with 100+ calls per cycle.
+                seen, syms = set(), []
+                for s in crypto:
+                    perp = _to_binance_perp(s)
+                    if perp not in seen:
+                        seen.add(perp)
+                        syms.append(s)
+                    if len(syms) >= 40:
+                        break
+                if syms:
+                    n = await asyncio.to_thread(refresh_funding, syms)
+                    if n:
+                        logger.info(f"Funding loop: refreshed {n}/{len(syms)} symbols")
+            except Exception as exc:
+                logger.warning(f"Funding loop iteration failed: {exc}")
+
+            await asyncio.sleep(300)  # 5 min
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.exception(f"Unexpected error in funding loop: {exc}")
+            await asyncio.sleep(300)
+
+
 def _maybe_log_tick_issue(app: FastAPI, cache_key: str, kind: str, detail: str) -> None:
     """Dedup tick-error WARNs so a persistent upstream rate-limit doesn't
     flood the log with 50+ identical lines every 5s tick.
@@ -641,6 +689,10 @@ def create_app() -> FastAPI:
         # Start background news fetcher (Alpaca + sentiment)
         news_task = asyncio.create_task(_run_news_loop(app))
         capital_deploy_task = asyncio.create_task(_run_capital_deploy_loop(app))
+        # Background perp funding-rate/OI refresher (public Binance data).
+        # Populates the cache the opt-in funding gate reads; harmless until a
+        # bot enables config['funding_gate'].
+        funding_task = asyncio.create_task(_run_funding_loop(app))
 
         yield
 
@@ -648,7 +700,8 @@ def create_app() -> FastAPI:
         tick_task.cancel()
         news_task.cancel()
         capital_deploy_task.cancel()
-        for task in (tick_task, news_task, capital_deploy_task):
+        funding_task.cancel()
+        for task in (tick_task, news_task, capital_deploy_task, funding_task):
             try:
                 await task
             except asyncio.CancelledError:

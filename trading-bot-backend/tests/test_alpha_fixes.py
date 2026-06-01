@@ -363,3 +363,58 @@ def test_impact_off_by_default_no_price_change() -> None:
     f = sim.execute(Order.market("BTC", OrderSide.BUY, 1000.0), current_price=100.0)
     assert f is not None
     assert f.filled_price == pytest.approx(100.0)
+
+
+# ── 9. Funding-regime gate (opt-in, cache-only, zero tick-loop I/O) ─────────
+
+
+def _clear_funding_cache() -> None:
+    from data.funding import _CACHE, _CACHE_TS
+    _CACHE.clear()
+    _CACHE_TS.clear()
+
+
+def test_funding_gate_vetoes_buy_in_crowded_long() -> None:
+    from data.funding import prime_cache
+    _clear_funding_cache()
+    prime_cache("BTC", 0.001)  # crowded long -> blocks_new_long
+    portfolio = Portfolio("default", {"USD": 100_000.0})
+    strat = _BuyStrategy("fg1", {"funding_gate": {"enabled": True}})
+    out = strat.on_tick(TickData(symbol="BTC", price=100.0), portfolio, ohlcv_data=_ohlcv_from_closes([100.0] * 10))
+    assert out.signal_type == SignalType.HOLD
+    assert (out.metadata or {}).get("trigger") == "funding_gate"
+
+
+def test_funding_gate_allows_buy_in_crowded_short() -> None:
+    from data.funding import prime_cache
+    _clear_funding_cache()
+    prime_cache("BTC", -0.001)  # crowded short -> squeeze setup, allowed
+    portfolio = Portfolio("default", {"USD": 100_000.0})
+    strat = _BuyStrategy("fg2", {"funding_gate": {"enabled": True}})
+    out = strat.on_tick(TickData(symbol="BTC", price=100.0), portfolio, ohlcv_data=_ohlcv_from_closes([100.0] * 10))
+    assert out.signal_type == SignalType.BUY
+
+
+def test_funding_gate_allows_when_no_data_or_disabled() -> None:
+    from data.funding import prime_cache, cached_funding_signal
+    _clear_funding_cache()
+    portfolio = Portfolio("default", {"USD": 100_000.0})
+    # enabled but no cached regime -> no opinion -> allow
+    strat = _BuyStrategy("fg3", {"funding_gate": {"enabled": True}})
+    out = strat.on_tick(TickData(symbol="ETH", price=100.0), portfolio, ohlcv_data=_ohlcv_from_closes([100.0] * 10))
+    assert out.signal_type == SignalType.BUY
+    assert cached_funding_signal("ETH") is None
+    # disabled -> allow even with a crowded-long regime cached
+    prime_cache("ETH", 0.001)
+    strat2 = _BuyStrategy("fg4", {})
+    out2 = strat2.on_tick(TickData(symbol="ETH", price=100.0), portfolio, ohlcv_data=_ohlcv_from_closes([100.0] * 10))
+    assert out2.signal_type == SignalType.BUY
+
+
+def test_cached_funding_signal_staleness() -> None:
+    from data.funding import prime_cache, cached_funding_signal, _CACHE_TS, _to_binance_perp
+    _clear_funding_cache()
+    prime_cache("SOL", 0.0002)
+    assert cached_funding_signal("SOL", max_age_s=900) is not None
+    _CACHE_TS[_to_binance_perp("SOL")] = 0.0  # epoch -> very old
+    assert cached_funding_signal("SOL", max_age_s=900) is None

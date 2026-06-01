@@ -268,6 +268,44 @@ class BaseStrategy(ABC):
             return signal
         return signal
 
+    def _apply_funding_gate(self, signal: "Signal | None", symbol: str) -> "Signal | None":
+        """Veto a BUY into a crowded-long perp funding regime (opt-in).
+
+        Enabled per-bot via ``config['funding_gate']``::
+
+            {"enabled": true, "max_age_s": 900}
+
+        Reads ``data.funding.cached_funding_signal`` (cache only, no network).
+        ``None`` (no/stale data) ⇒ no opinion ⇒ allow. Default off. Only crypto
+        symbols will have a funding regime; equities return ``None`` ⇒ allowed.
+        """
+        try:
+            fg = self.config.get("funding_gate") or {}
+            if not fg.get("enabled"):
+                return signal
+            if signal is None or signal.signal_type != SignalType.BUY:
+                return signal
+            from data.funding import cached_funding_signal
+
+            fsig = cached_funding_signal(symbol, max_age_s=float(fg.get("max_age_s", 900.0)))
+            if fsig is None or not fsig.blocks_new_long:
+                return signal
+            return Signal(
+                strategy_id=self.strategy_id,
+                symbol=signal.symbol,
+                signal_type=SignalType.HOLD,
+                confidence=0.0,
+                timestamp=signal.timestamp,
+                metadata={
+                    "trigger": "funding_gate",
+                    "regime": fsig.regime,
+                    "funding_rate": fsig.funding_rate,
+                    "original_trigger": (signal.metadata or {}).get("trigger"),
+                },
+            )
+        except Exception:
+            return signal
+
     def _matches_symbol(self, tick_symbol: str) -> bool:
         """True when the tick's symbol is in this strategy's scope."""
         configured = self.configured_symbols()
@@ -339,6 +377,10 @@ class BaseStrategy(ABC):
             # margin. At minutes cadence, turnover cost dominates PnL — this
             # stops deploying trades that are net-negative before they start.
             signal = self._apply_cost_gate(signal, tick.price)
+            # Funding-regime gate (opt-in, default off): veto BUYs into a
+            # crowded-long perp funding regime. Reads a cache populated by the
+            # background funding loop — ZERO network I/O in the tick path.
+            signal = self._apply_funding_gate(signal, tick.symbol)
             # Position-aware BUY gate: if the strategy proposes to open a
             # long but the portfolio already has an open long position on
             # the same symbol, downgrade to HOLD. This kills the "every

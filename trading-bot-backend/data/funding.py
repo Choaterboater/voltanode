@@ -141,6 +141,48 @@ def fetch_binance_funding(symbol: str, timeout: float = 6.0) -> Optional[Dict[st
         return None
 
 
+def cached_funding_signal(symbol: str, max_age_s: float = 900.0) -> Optional[FundingSignal]:
+    """Read a symbol's regime from cache with ZERO network I/O.
+
+    Returns ``None`` if nothing is cached or the cached value is older than
+    ``max_age_s`` (stale ⇒ "no opinion" rather than acting on hours-old data
+    if the refresher died). This is what the tick-loop funding gate calls so it
+    never blocks on the network.
+    """
+    key = _to_binance_perp(symbol)
+    ts = _CACHE_TS.get(key)
+    if ts is None or (time.time() - ts) > max_age_s:
+        return None
+    return _CACHE.get(key)
+
+
+def refresh_funding(symbols) -> int:
+    """Force-refresh a list of symbols into the cache (does network I/O).
+
+    Intended to run in a background thread (see the funding loop in
+    ``api/main.py``), NOT in the tick path. Returns the count refreshed; never
+    raises (per-symbol failures are swallowed).
+    """
+    n = 0
+    for s in symbols or []:
+        try:
+            if funding_signal(s, use_cache=False) is not None:
+                n += 1
+        except Exception:
+            pass
+    return n
+
+
+def prime_cache(symbol: str, funding_rate: float, open_interest: Optional[float] = None) -> FundingSignal:
+    """Inject a classified regime into the cache (no I/O). Used by tests and
+    callers that source funding rates elsewhere."""
+    sig = classify_funding_regime(funding_rate, open_interest, symbol=symbol)
+    key = _to_binance_perp(symbol)
+    _CACHE[key] = sig
+    _CACHE_TS[key] = time.time()
+    return sig
+
+
 def funding_signal(symbol: str, *, use_cache: bool = True) -> Optional[FundingSignal]:
     """Fetch + classify a symbol's funding regime (cached ~5 min).
 
