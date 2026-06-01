@@ -169,6 +169,33 @@ async def _run_funding_loop(app: FastAPI) -> None:
             await asyncio.sleep(300)
 
 
+async def _run_learning_loop(app: FastAPI) -> None:
+    """Background task: refresh the trade-memory store from fills every 10 min
+    so the Obsidian vault + dashboard stay current as bots trade. This is how
+    the lab FORWARD-validates strategies it can't backtest (e.g. squeeze):
+    every closed round-trip is captured + scored by entry strategy/source over
+    real (paper) time. Idempotent rebuild; degrades silently on error."""
+    for _ in range(30):
+        if hasattr(app.state, "engine"):
+            break
+        await asyncio.sleep(1)
+    while True:
+        try:
+            try:
+                from learning.trade_memory import TradeMemory
+                n = await asyncio.to_thread(TradeMemory().backfill_from_fills)
+                if n:
+                    logger.info(f"Learning loop: trade-memory refreshed ({n} round-trips)")
+            except Exception as exc:
+                logger.warning(f"Learning loop iteration failed: {exc}")
+            await asyncio.sleep(600)  # 10 min
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.exception(f"Unexpected error in learning loop: {exc}")
+            await asyncio.sleep(600)
+
+
 def _maybe_log_tick_issue(app: FastAPI, cache_key: str, kind: str, detail: str) -> None:
     """Dedup tick-error WARNs so a persistent upstream rate-limit doesn't
     flood the log with 50+ identical lines every 5s tick.
@@ -693,6 +720,9 @@ def create_app() -> FastAPI:
         # Populates the cache the opt-in funding gate reads; harmless until a
         # bot enables config['funding_gate'].
         funding_task = asyncio.create_task(_run_funding_loop(app))
+        # Background learning loop: refresh trade-memory/Obsidian vault from
+        # fills so the lab forward-validates strategies over (paper) time.
+        learning_task = asyncio.create_task(_run_learning_loop(app))
 
         yield
 
@@ -701,7 +731,8 @@ def create_app() -> FastAPI:
         news_task.cancel()
         capital_deploy_task.cancel()
         funding_task.cancel()
-        for task in (tick_task, news_task, capital_deploy_task, funding_task):
+        learning_task.cancel()
+        for task in (tick_task, news_task, capital_deploy_task, funding_task, learning_task):
             try:
                 await task
             except asyncio.CancelledError:
