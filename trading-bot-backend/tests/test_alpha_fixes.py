@@ -282,3 +282,52 @@ def test_funding_classifier_regimes() -> None:
     assert _to_binance_perp("bitcoin") == "BTCUSDT"
     assert _to_binance_perp("BTC-USD") == "BTCUSDT"
     assert _to_binance_perp("ETHUSDT") == "ETHUSDT"
+
+
+# ── 7. Cost-aware entry gate (opt-in) ──────────────────────────────────────
+
+
+class _BuyWithTPStrategy(BaseStrategy):
+    name = "buy_tp_test"
+
+    def __init__(self, sid, cfg, tp_mult):
+        super().__init__(sid, cfg)
+        self._tp_mult = tp_mult
+
+    def generate_signal(self, data: pd.DataFrame, current_price: float) -> Signal:
+        return Signal(
+            strategy_id=self.strategy_id,
+            symbol=data.attrs.get("symbol", "BTC"),
+            signal_type=SignalType.BUY,
+            confidence=0.9,
+            timestamp=pd.Timestamp.now(),
+            suggested_size=1.0,
+            take_profit=current_price * self._tp_mult,
+        )
+
+
+_CG_CONFIG = {"cost_gate": {"enabled": True, "round_trip_bps": 30.0, "margin": 1.5}}
+
+
+def test_cost_gate_rejects_buy_with_tight_target() -> None:
+    """TP only 0.2% (20 bps) away < 45 bps required -> HOLD."""
+    portfolio = Portfolio("default", {"USD": 100_000.0})
+    strat = _BuyWithTPStrategy("cg1", _CG_CONFIG, tp_mult=1.002)
+    out = strat.on_tick(TickData(symbol="BTC", price=100.0), portfolio, ohlcv_data=_ohlcv_from_closes([100.0] * 10))
+    assert out.signal_type == SignalType.HOLD
+    assert (out.metadata or {}).get("trigger") == "cost_gate"
+
+
+def test_cost_gate_allows_buy_with_wide_target() -> None:
+    """TP 10% (1000 bps) away >> required -> BUY passes."""
+    portfolio = Portfolio("default", {"USD": 100_000.0})
+    strat = _BuyWithTPStrategy("cg2", _CG_CONFIG, tp_mult=1.10)
+    out = strat.on_tick(TickData(symbol="BTC", price=100.0), portfolio, ohlcv_data=_ohlcv_from_closes([100.0] * 10))
+    assert out.signal_type == SignalType.BUY
+
+
+def test_cost_gate_disabled_leaves_buy() -> None:
+    portfolio = Portfolio("default", {"USD": 100_000.0})
+    strat = _BuyWithTPStrategy("cg3", {}, tp_mult=1.002)
+    out = strat.on_tick(TickData(symbol="BTC", price=100.0), portfolio, ohlcv_data=_ohlcv_from_closes([100.0] * 10))
+    assert out.signal_type == SignalType.BUY

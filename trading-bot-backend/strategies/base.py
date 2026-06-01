@@ -224,6 +224,50 @@ class BaseStrategy(ABC):
             return signal
         return signal
 
+    def _apply_cost_gate(self, signal: "Signal | None", current_price: float) -> "Signal | None":
+        """Downgrade a BUY to HOLD when its target can't beat round-trip cost.
+
+        Enabled per-bot via ``config['cost_gate']``::
+
+            {"enabled": true, "round_trip_bps": 30.0, "margin": 1.5}
+
+        ``round_trip_bps`` should cover entry+exit fees + slippage + half-spread
+        (default 30 bps ≈ 10 bps fee + 5 bps slippage, each side). A BUY whose
+        take-profit is closer than ``round_trip_bps * margin`` is rejected.
+        Signals without a take-profit are left untouched (can't assess). Default
+        off — absent block ⇒ unchanged behavior.
+        """
+        try:
+            cg = self.config.get("cost_gate") or {}
+            if not cg.get("enabled"):
+                return signal
+            if signal is None or signal.signal_type != SignalType.BUY:
+                return signal
+            tp = signal.take_profit
+            if not tp or not current_price or current_price <= 0:
+                return signal
+            tp_bps = abs(float(tp) - current_price) / current_price * 1e4
+            round_trip_bps = float(cg.get("round_trip_bps", 30.0))
+            margin = float(cg.get("margin", 1.5))
+            required = round_trip_bps * margin
+            if tp_bps < required:
+                return Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=signal.symbol,
+                    signal_type=SignalType.HOLD,
+                    confidence=0.0,
+                    timestamp=signal.timestamp,
+                    metadata={
+                        "trigger": "cost_gate",
+                        "tp_bps": round(tp_bps, 1),
+                        "required_bps": round(required, 1),
+                        "original_trigger": (signal.metadata or {}).get("trigger"),
+                    },
+                )
+        except Exception:
+            return signal
+        return signal
+
     def _matches_symbol(self, tick_symbol: str) -> bool:
         """True when the tick's symbol is in this strategy's scope."""
         configured = self.configured_symbols()
@@ -290,6 +334,11 @@ class BaseStrategy(ABC):
             # per position. The downstream max_position_size_pct cap still
             # bounds the result.
             signal = self._apply_volatility_target(signal, ohlcv_data)
+            # Cost-aware entry gate (opt-in, default off): reject a BUY whose
+            # take-profit target can't clear estimated round-trip cost with
+            # margin. At minutes cadence, turnover cost dominates PnL — this
+            # stops deploying trades that are net-negative before they start.
+            signal = self._apply_cost_gate(signal, tick.price)
             # Position-aware BUY gate: if the strategy proposes to open a
             # long but the portfolio already has an open long position on
             # the same symbol, downgrade to HOLD. This kills the "every
