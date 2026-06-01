@@ -88,6 +88,24 @@ def test_recall_stats_and_worst_setups(tmp_path):
     assert worst[0][0] == "mean_reversion/SOL"  # the bleeding setup surfaces first
 
 
+def test_backfill_attributes_entry_strategy_and_source(tmp_path, monkeypatch):
+    """Trade is tagged by what OPENED it (entry strategy) + its watchlist
+    source, not by the exit mechanism."""
+    fills = tmp_path / "fills.jsonl"
+    _write_fills(fills, [
+        {"order_id": "1", "symbol": "AAPL", "side": "buy", "filled_qty": 1.0, "filled_price": 100.0, "fee": 0.0, "timestamp": "2026-01-01T00:00:00+00:00", "strategy_id": "auto_discovery_1"},
+        {"order_id": "2", "symbol": "AAPL", "side": "sell", "filled_qty": 1.0, "filled_price": 98.0, "fee": 0.0, "timestamp": "2026-01-01T01:00:00+00:00", "strategy_id": "trailing_stop"},
+    ])
+    tm = TradeMemory(memory_path=str(tmp_path / "m.jsonl"), vault_dir=str(tmp_path / "v"))
+    monkeypatch.setattr(tm, "_load_watchlist_sources", lambda *a, **k: {"AAPL": "tradingbot"})
+    tm.backfill_from_fills(str(fills))
+    r = tm.all()[0]
+    assert r["strategy"] == "auto_discovery_1"        # ENTRY, not the exit
+    assert r["exit_reason"] == "stop"                 # exit mechanism preserved
+    assert r["context"]["source"] == "tradingbot"
+    assert "tradingbot" in tm.stats()["by_source"]
+
+
 def _rec(**kw):
     base = dict(
         id="x", symbol="SOL", strategy="mean_reversion",

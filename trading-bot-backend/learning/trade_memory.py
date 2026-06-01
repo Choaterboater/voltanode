@@ -179,11 +179,14 @@ class TradeMemory:
                 "avg_pnl_pct": round(avg_pct, 3),
             }
         by_setup: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        by_source: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for r in rows:
             by_setup[f"{r.get('strategy','?')}/{r.get('symbol','?')}"].append(r)
+            by_source[(r.get("context") or {}).get("source", "unknown")].append(r)
         return {
             "overall": agg(rows),
             "by_setup": {k: agg(v) for k, v in sorted(by_setup.items())},
+            "by_source": {k: agg(v) for k, v in sorted(by_source.items())},
         }
 
     def worst_setups(self, min_trades: int = 2, n: int = 5) -> List[Tuple[str, Dict[str, Any]]]:
@@ -278,8 +281,11 @@ class TradeMemory:
             "## Overall",
             f"- Trades: **{o['trades']}** · Win rate: **{o['win_rate']}%** · "
             f"Total P&L: **${o['total_pnl']}** · Avg/trade: **{o['avg_pnl_pct']}%**\n",
-            "## Worst setups (stop-doing candidates)",
+            "## By pick source (which feed makes money?)",
         ]
+        for name, v in sorted(s.get("by_source", {}).items(), key=lambda kv: -kv[1]["total_pnl"]):
+            lines.append(f"- `{name}` — {v['trades']} trades, {v['win_rate']}% win, avg {v['avg_pnl_pct']}%, ${v['total_pnl']}")
+        lines.append("\n## Worst setups (stop-doing candidates)")
         for name, v in self.worst_setups():
             lines.append(f"- `{name}` — {v['trades']} trades, {v['win_rate']}% win, avg {v['avg_pnl_pct']}%, ${v['total_pnl']}")
         lines.append("\n## All setups")
@@ -291,6 +297,22 @@ class TradeMemory:
             logger.warning(f"dashboard write failed: {exc}")
 
     # ── backfill from fills.jsonl (FIFO round-trip reconstruction) ───────────
+
+    def _load_watchlist_sources(self, path: str = "data/watchlist.json") -> Dict[str, str]:
+        """Map SYMBOL -> watchlist source (tradingbot / scanner / squeeze / ...).
+
+        Best-effort attribution: the watchlist evolves over time, so this maps a
+        traded symbol to its CURRENT source. Good enough to see which feed is
+        carrying the lab; precise per-trade tagging would tag at entry time.
+        """
+        try:
+            items = json.loads(Path(path).read_text(encoding="utf-8"))
+            return {
+                str(i.get("symbol", "")).strip().upper(): str(i.get("source", "") or "unknown").lower()
+                for i in items if isinstance(i, dict) and i.get("symbol")
+            }
+        except Exception:
+            return {}
 
     def backfill_from_fills(self, fills_path: str = "data/fills.jsonl", use_llm: bool = False) -> int:
         """Reconstruct closed long round-trips from the append-only fills log by
@@ -320,6 +342,7 @@ class TradeMemory:
             except Exception:
                 continue
         fills.sort(key=lambda f: str(f.get("timestamp", "")))
+        source_map = self._load_watchlist_sources()
 
         open_lots: Dict[str, Deque[Dict[str, Any]]] = defaultdict(deque)
         records: List[TradeMemoryRecord] = []
@@ -348,17 +371,22 @@ class TradeMemory:
                     cost = lot["price"] * matched
                     pnl_pct = (pnl / cost * 100.0) if cost else 0.0
                     seq += 1
+                    # Attribute to the ENTRY strategy (what opened the trade),
+                    # not the exit mechanism on the sell fill — that's what we
+                    # want to learn from. Exit mechanism is kept as exit_reason.
+                    entry_strat = str(lot["strategy"] or "unknown")
+                    src = source_map.get(sym, "unknown")
                     rec = TradeMemoryRecord(
                         id=f"{f.get('order_id','x')}-{seq}",
                         symbol=sym,
-                        strategy=str(f.get("strategy_id") or lot["strategy"] or "unknown"),
+                        strategy=entry_strat,
                         entry_time=str(lot["ts"]), exit_time=str(ts),
                         entry_price=lot["price"], exit_price=price, qty=matched,
                         pnl=pnl, pnl_pct=pnl_pct, holding_minutes=hold_min,
                         outcome=_outcome(pnl_pct),
                         exit_reason=_exit_reason(str(f.get("strategy_id") or "")),
-                        tags=[sym, str(f.get("strategy_id") or lot["strategy"] or "unknown"),
-                              _outcome(pnl_pct), _hold_bucket(hold_min)],
+                        tags=[sym, entry_strat, _outcome(pnl_pct), _hold_bucket(hold_min), f"src:{src}"],
+                        context={"source": src, "exit_strategy_id": str(f.get("strategy_id") or "")},
                     )
                     records.append(rec)
                     lot["qty"] -= matched
