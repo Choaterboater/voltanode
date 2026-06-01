@@ -143,8 +143,19 @@ class BacktestRunner:
                     pos["unrealized_pnl"] = (pos["entry_price"] - current_price) * pos["size"]
                 pos["current_price"] = current_price
 
-            # Generate signal
+            # Generate signal, then apply the same opt-in gates the live engine
+            # runs in BaseStrategy.on_tick — so a backtest reflects live gating
+            # (paper-to-live fidelity). These are pure signal transforms; each
+            # is default-OFF (no config block => unchanged behavior), so a
+            # backtest with no gate config is byte-identical to before. When a
+            # bot's config enables a gate, its backtest now shows the effect.
             signal = strategy.generate_signal(current_bar, current_price)
+            try:
+                signal = strategy._apply_volatility_target(signal, current_bar)
+                signal = strategy._apply_cost_gate(signal, current_price)
+                signal = strategy._apply_funding_gate(signal, signal.symbol)
+            except Exception:
+                pass  # never let a gate transform abort the backtest
 
             if signal.signal_type == SignalType.BUY:
                 self._execute_signal(

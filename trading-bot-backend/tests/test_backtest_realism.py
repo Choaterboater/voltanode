@@ -105,6 +105,43 @@ def test_buy_capped_to_cash_bounds_drawdown_under_100pct():
     assert result.metrics.max_drawdown_pct <= 60.0   # ~50% (fully invested, price halves)
 
 
+class _BuyTightTP(BaseStrategy):
+    """BUYs every bar with a tight (20 bps) take-profit — probes the cost gate."""
+    name = "buy_tight_tp"
+
+    def generate_signal(self, data: pd.DataFrame, current_price: float) -> Signal:
+        return Signal(
+            strategy_id=self.strategy_id,
+            symbol=data.attrs.get("symbol", "BTC"),
+            signal_type=SignalType.BUY,
+            confidence=1.0,
+            timestamp=pd.Timestamp.now(),
+            suggested_size=0.5,
+            take_profit=current_price * 1.002,  # 20 bps — below a 45 bps cost bar
+        )
+
+
+def test_cost_gate_applies_in_backtest_when_enabled():
+    """Paper-to-live fidelity: the on_tick cost gate now runs in the backtest.
+    Off -> trades happen; on (tight TP can't clear round-trip cost) -> blocked."""
+    closes = np.linspace(100.0, 110.0, 30)
+    df = pd.DataFrame({
+        "timestamp": pd.date_range("2025-01-01", periods=30, freq="D"),
+        "open": closes, "high": closes * 1.001, "low": closes * 0.999,
+        "close": closes, "volume": np.full(30, 1000.0),
+    })
+    cfg = BacktestConfig(initial_balance={"USDT": 10_000.0}, fee_rate=0.001, slippage_bps=5.0, allow_short=False)
+
+    off = BacktestRunner(_BuyTightTP("off", {}), df.copy(), cfg).run().metrics.to_dict()
+    on = BacktestRunner(
+        _BuyTightTP("on", {"cost_gate": {"enabled": True, "round_trip_bps": 30.0, "margin": 1.5}}),
+        df.copy(), cfg,
+    ).run().metrics.to_dict()
+
+    assert off["total_trades"] > 0    # without the gate it trades
+    assert on["total_trades"] == 0    # gate blocks every BUY (TP 20bps < 45bps bar)
+
+
 def test_win_rate_empty_and_all_entries_is_zero():
     eq = pd.DataFrame({"timestamp": pd.date_range("2025-01-01", periods=2), "equity": [10000.0, 10000.0], "drawdown": [0.0, 0.0]})
     assert BacktestMetrics(eq, []).win_rate == 0.0
