@@ -109,6 +109,10 @@ class BacktestRequest(BaseModel):
     timeframe: str = "1d"
     initial_balance: Dict[str, float] = Field(default_factory=lambda: {"USDT": 10000.0})
     config: Dict[str, Any] | None = None
+    # Long-only by default — most VoltaNode strategies are long-biased and the
+    # brokers don't short crypto. Opening shorts on a SELL-while-flat was the
+    # source of the impossible >100% drawdowns in the baseline sweep.
+    allow_short: bool = False
 
 
 class BacktestResponse(BaseModel):

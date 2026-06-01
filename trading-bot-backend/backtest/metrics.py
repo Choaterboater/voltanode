@@ -12,12 +12,19 @@ import pandas as pd
 
 @dataclass
 class TradeRecord:
-    """Simplified trade record for metrics calculation."""
+    """Simplified trade record for metrics calculation.
+
+    ``is_entry`` marks position-opening fills (which carry realized_pnl=0).
+    Win-rate and per-trade averages must denominate over CLOSING round-trips
+    only — counting entries as zero-P&L "trades" otherwise crushes win-rate
+    toward 0 (a profitable momentum bot with 8 entries / 1 close showed 0%).
+    """
     timestamp: pd.Timestamp
     realized_pnl: float
     side: str
     quantity: float
     price: float
+    is_entry: bool = False
 
 
 class BacktestMetrics:
@@ -95,12 +102,18 @@ class BacktestMetrics:
         return max_duration
 
     @property
+    def _closes(self) -> List["TradeRecord"]:
+        """Closing round-trips only (exclude zero-P&L position-opening entries)."""
+        return [t for t in self._trades if not getattr(t, "is_entry", False)]
+
+    @property
     def win_rate(self) -> float:
-        """Percentage of winning trades."""
-        if not self._trades:
+        """Percentage of winning CLOSED round-trips (entries excluded)."""
+        closes = self._closes
+        if not closes:
             return 0.0
-        wins = sum(1 for t in self._trades if t.realized_pnl > 0)
-        return wins / len(self._trades) * 100
+        wins = sum(1 for t in closes if t.realized_pnl > 0)
+        return wins / len(closes) * 100
 
     @property
     def profit_factor(self) -> float:
@@ -113,10 +126,11 @@ class BacktestMetrics:
 
     @property
     def avg_trade_return(self) -> float:
-        """Average return per trade."""
-        if not self._trades:
+        """Average realized P&L per CLOSED round-trip (entries excluded)."""
+        closes = self._closes
+        if not closes:
             return 0.0
-        return sum(t.realized_pnl for t in self._trades) / len(self._trades)
+        return sum(t.realized_pnl for t in closes) / len(closes)
 
     @property
     def avg_win(self) -> float:
@@ -175,6 +189,7 @@ class BacktestMetrics:
             "calmar_ratio": round(self.calmar_ratio, 4),
             "trades_per_month": round(self.trades_per_month, 2),
             "total_trades": len(self._trades),
+            "closed_trades": len(self._closes),
         }
 
 

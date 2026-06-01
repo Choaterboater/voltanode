@@ -72,7 +72,7 @@ async def run_backtest(request: BacktestRequest) -> Dict[str, Any]:
             initial_balance=request.initial_balance,
             fee_rate=bot_config.risk.fee_rate,
             slippage_bps=bot_config.risk.slippage_bps,
-            allow_short=True,
+            allow_short=request.allow_short,
         )
 
         runner = BacktestRunner(strategy, df, config)

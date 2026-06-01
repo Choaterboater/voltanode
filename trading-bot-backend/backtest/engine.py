@@ -155,10 +155,19 @@ class BacktestRunner:
                     signal, current_price, portfolio, positions, quote_asset
                 )
 
-            # Record equity
+            # Record equity = cash + signed position MARKET VALUE. Previously
+            # this added unrealized_pnl instead of market value, which omitted
+            # the cost basis already withdrawn from cash on the BUY — so every
+            # entry made equity instantly drop by the position cost and produced
+            # impossible >100% drawdowns. Longs add +mv, shorts subtract their
+            # buy-back liability (proceeds are already credited to cash).
+            total_position_value = 0.0
+            for p in positions.values():
+                mv = p["size"] * p["current_price"]
+                total_position_value += mv if p["side"] == "long" else -mv
             total_unrealized = sum(p["unrealized_pnl"] for p in positions.values())
             total_realized = sum(t.realized_pnl for t in self._trades)
-            equity = sum(portfolio.get_all_balances().values()) + total_unrealized
+            equity = sum(portfolio.get_all_balances().values()) + total_position_value
             peak = max(
                 (e["equity"] for e in self._equity_curve), default=equity
             )
@@ -215,7 +224,17 @@ class BacktestRunner:
             )
         size = max(size, 0.0)
 
-        if size == 0:
+        # No margin in the backtest: cap a BUY to available cash so a repeat
+        # dip-buyer (e.g. mean_reversion) can't accumulate a LEVERAGED long on
+        # negative cash — that was the source of the impossible >100% long-only
+        # drawdowns. SELL closes are unaffected by this long-side cap.
+        if is_buy and current_price > 0:
+            avail = float(portfolio.get_all_balances().get(quote_asset, 0.0))
+            fee_rate = float(getattr(self.execution, "fee_rate", 0.0) or 0.0)
+            max_qty = avail / (current_price * (1.0 + fee_rate))
+            size = min(size, max(0.0, max_qty))
+
+        if size <= 0:
             return
 
         # Create order
@@ -264,7 +283,8 @@ class BacktestRunner:
                             "unrealized_pnl": 0.0,
                         }
                     # Log the entry as a trade so total_trades reflects activity.
-                    # Realized P&L is 0 for entries; closes will record their own.
+                    # Realized P&L is 0 for entries; closes record their own.
+                    # is_entry=True so win-rate denominates over closes, not opens.
                     self._trades.append(
                         TradeRecord(
                             timestamp=fill.timestamp,
@@ -272,12 +292,16 @@ class BacktestRunner:
                             side="buy",
                             quantity=fill.filled_qty,
                             price=fill.filled_price,
+                            is_entry=True,
                         )
                     )
             else:
-                # Sell
-                portfolio.deposit(quote_asset, fill.filled_qty * fill.filled_price - fill.fee)
+                # Sell. Only credit cash when a real position action happens —
+                # the old unconditional deposit injected free cash on a SELL
+                # while flat (with shorting off), silently inflating equity.
+                proceeds = fill.filled_qty * fill.filled_price - fill.fee
                 if symbol in positions and positions[symbol]["side"] == "long":
+                    portfolio.deposit(quote_asset, proceeds)
                     pos = positions[symbol]
                     realized = (fill.filled_price - pos["entry_price"]) * min(fill.filled_qty, pos["size"])
                     if fill.filled_qty >= pos["size"]:
@@ -296,7 +320,8 @@ class BacktestRunner:
                         )
                     )
                 elif self.config.allow_short:
-                    # Open or add to short
+                    # Open or add to short — credit the short proceeds here.
+                    portfolio.deposit(quote_asset, proceeds)
                     if symbol in positions and positions[symbol]["side"] == "short":
                         pos = positions[symbol]
                         total_cost = pos["entry_price"] * pos["size"] + fill.filled_price * fill.filled_qty
@@ -311,7 +336,7 @@ class BacktestRunner:
                             "current_price": fill.filled_price,
                             "unrealized_pnl": 0.0,
                         }
-                    # Log short entry as a trade for accurate total_trades count.
+                    # Log short entry; is_entry=True so it's excluded from win-rate.
                     self._trades.append(
                         TradeRecord(
                             timestamp=fill.timestamp,
@@ -319,6 +344,7 @@ class BacktestRunner:
                             side="sell",
                             quantity=fill.filled_qty,
                             price=fill.filled_price,
+                            is_entry=True,
                         )
                     )
 
