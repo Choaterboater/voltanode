@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from bot.config import OrderSide
 from bot.orders import FillResult, Order
-from bot.portfolio import Portfolio
+from bot.portfolio import Portfolio, lookup_price
 
 
 class SafetyValidationError(Exception):
@@ -129,6 +129,7 @@ class SafetyValidator:
         config: Any | None = None,
         daily_pnl: float = 0.0,
         broker_balances: Optional[Dict[str, float]] = None,
+        current_price: float | None = None,
     ) -> None:
         """Validate an order. Raises SafetyValidationError if rejected.
 
@@ -137,6 +138,8 @@ class SafetyValidator:
             portfolio: Current portfolio state.
             config: Optional config override (from BotConfig).
             daily_pnl: Current day's realized P&L.
+            broker_balances: Optional broker cash/equity payload.
+            current_price: Live mark used to validate market orders.
 
         Raises:
             SafetyValidationError: If any rule is violated.
@@ -170,24 +173,26 @@ class SafetyValidator:
 
         # 3. Position size check — use canonical equity (cash + positions or broker EQUITY)
         total_equity = compute_portfolio_equity(portfolio, broker_balances)
-        # For price, prefer the order price; if missing (market order), look
-        # up the live price from the existing position's mark — falling back
-        # to 1.0 makes sub-dollar tokens (SHIB at $0.0000064) look like
-        # 39,000% position-size violations. Last resort: skip the check.
-        price = order.price
+        # Market orders do not carry a limit price. Validate them against the
+        # live tick mark; otherwise a fresh BUY with no existing position has
+        # notional=0 and silently bypasses position/exposure checks.
+        price = order.price or current_price
         if not price or price <= 0:
             try:
-                pos = portfolio.get_position(order.symbol)
-                price = float(getattr(pos, "current_price", 0) or getattr(pos, "entry_price", 0) or 0)
+                price = lookup_price(portfolio, order.symbol) or 0
             except Exception:
                 price = 0
+        _side_val = getattr(order.side, "value", str(order.side)).lower()
+        if _side_val != "sell" and (not price or price <= 0):
+            raise SafetyValidationError(
+                f"No market price available to validate BUY for {order.symbol}."
+            )
         order_notional = order.quantity * price if price > 0 else 0
         # Skip position-size cap on SELL orders — they're closing exposure,
         # not opening it. Without this, an already-oversized position (ETH
         # at 28% when cap is 20%) can't be trimmed because the trim itself
         # would temporarily look like "opening a 28% position." Same logic
         # as the exposure check below; mirror it here.
-        _side_val = getattr(order.side, "value", str(order.side)).lower()
         if _side_val != "sell" and order_notional > 0:
             position_size_pct = (order_notional / total_equity) * 100.0 if total_equity > 0 else 0.0
             if position_size_pct > cfg.max_position_size_pct:
@@ -218,11 +223,17 @@ class SafetyValidator:
                 f"Exposure {exposure_pct:.2f}% exceeds limit {cfg.max_exposure_pct}%."
             )
 
-        # 5. Soft daily loss check (engine has the hard check after fill)
-        if daily_pnl < -cfg.max_daily_loss_pct:
-            raise SafetyValidationError(
-                f"Daily loss {daily_pnl:.2f}% already exceeds limit {cfg.max_daily_loss_pct}%."
-            )
+        # 5. Soft daily loss check (engine has the hard check after fill).
+        # ``daily_pnl`` arrives in DOLLARS (realized P&L from DailyPnlTracker);
+        # ``max_daily_loss_pct`` is a PERCENT. Comparing them directly tripped
+        # at a $5 loss (or never, depending on account size). Convert the loss
+        # to a percent of equity first.
+        if daily_pnl < 0 and total_equity > 0:
+            daily_loss_pct = (-daily_pnl / total_equity) * 100.0
+            if daily_loss_pct > cfg.max_daily_loss_pct:
+                raise SafetyValidationError(
+                    f"Daily loss {daily_loss_pct:.2f}% exceeds limit {cfg.max_daily_loss_pct}%."
+                )
 
     def get_status(self) -> dict:
         """Return validator status."""

@@ -7,7 +7,7 @@ import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from news.models import NewsArticle, SentimentResult, SymbolSentiment
 
@@ -204,6 +204,48 @@ class NewsStorage:
             sentiment_label=label,
             latest_headlines=[a.headline for a in articles],
         )
+
+    def get_trading_sentiment(
+        self, hours: int = 6, min_articles: int = 1
+    ) -> Dict[str, Dict[str, float]]:
+        """Per-symbol aggregated sentiment for the live trading cache.
+
+        Returns ``{SYMBOL: {"compound", "confidence", "count"}}`` over the last
+        ``hours``, restricted to symbols with at least ``min_articles`` scored
+        articles. Keys are upper-cased to match engine tick symbols. This is the
+        bridge the news loop pushes into ``NewsSentimentStrategy`` — without it
+        the registered news bots read an empty cache and HOLD forever.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        out: Dict[str, Dict[str, float]] = {}
+        with self._connection() as conn:
+            # Normalize both sides with datetime(): rows written via the
+            # CURRENT_TIMESTAMP default are "YYYY-MM-DD HH:MM:SS" while cutoff
+            # is ISO ("...T...+00:00"); a raw string compare mismatches the
+            # separator/offset and silently drops fresh rows.
+            rows = conn.execute(
+                """
+                SELECT symbol,
+                       COUNT(*) AS count,
+                       AVG(compound_score) AS avg_compound,
+                       AVG(confidence) AS avg_confidence
+                FROM sentiment
+                WHERE datetime(analyzed_at) > datetime(?)
+                GROUP BY symbol
+                HAVING count >= ?
+                """,
+                (cutoff, min_articles),
+            ).fetchall()
+        for r in rows:
+            sym = (r["symbol"] or "").strip().upper()
+            if not sym:
+                continue
+            out[sym] = {
+                "compound": float(r["avg_compound"] or 0.0),
+                "confidence": float(r["avg_confidence"] or 0.0),
+                "count": int(r["count"] or 0),
+            }
+        return out
 
     def get_trending_symbols(self, hours: int = 24, min_articles: int = 3) -> List[SymbolSentiment]:
         """Get symbols with significant news volume."""

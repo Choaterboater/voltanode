@@ -162,6 +162,68 @@ class BaseStrategy(ABC):
             return [str(sym).strip().upper()]
         return []
 
+    def _size_from_equity_pct(self, current_price: float, default_pct: float = 0.03) -> float:
+        """Return quantity for a configurable percent-of-equity position.
+
+        Older strategies used a hardcoded $1k notional, which leaves most of
+        a paper account idle. ``position_pct`` is a decimal fraction here
+        (0.05 = 5%) to match auto_discovery / squeeze.
+        """
+        if current_price <= 0:
+            return 0.0
+        pct = float(self.config.get("position_pct", default_pct) or default_pct)
+        pct = max(0.0, min(pct, 0.20))
+        equity = float(getattr(self, "_equity", 100_000.0) or 100_000.0)
+        return (equity * pct) / current_price
+
+    def _apply_volatility_target(self, signal: "Signal | None", ohlcv_data: Any) -> "Signal | None":
+        """Scale a BUY's suggested size to a volatility target (opt-in).
+
+        Enabled per-bot via ``config['volatility_target']``::
+
+            {"enabled": true, "daily_vol": 0.03, "lookback": 20,
+             "scale_min": 0.3, "scale_max": 2.5}
+
+        ``scale = clamp(daily_vol / realized_daily_vol, scale_min, scale_max)``.
+        Default off — when the block is absent the signal is returned unchanged,
+        so existing bots behave exactly as before. The engine's
+        ``max_position_size_pct`` cap still bounds the up-scaled size.
+        """
+        try:
+            vt = self.config.get("volatility_target") or {}
+            if not vt.get("enabled"):
+                return signal
+            if signal is None or signal.signal_type != SignalType.BUY:
+                return signal
+            if not signal.suggested_size or signal.suggested_size <= 0:
+                return signal
+            if ohlcv_data is None or "close" not in getattr(ohlcv_data, "columns", []):
+                return signal
+            lookback = int(vt.get("lookback", 20))
+            closes = ohlcv_data["close"].astype(float).tail(lookback + 1)
+            if len(closes) < 5:
+                return signal
+            rets = closes.pct_change().dropna()
+            realized = float(rets.std())
+            if realized <= 0:
+                return signal
+            target = float(vt.get("daily_vol", 0.03))
+            lo = float(vt.get("scale_min", 0.3))
+            hi = float(vt.get("scale_max", 2.5))
+            scale = max(lo, min(target / realized, hi))
+            meta = signal.metadata if isinstance(signal.metadata, dict) else {}
+            meta["vol_target"] = {
+                "realized_daily": round(realized, 5),
+                "target_daily": target,
+                "scale": round(scale, 3),
+                "size_before": signal.suggested_size,
+            }
+            signal.suggested_size = signal.suggested_size * scale
+            signal.metadata = meta
+        except Exception:
+            return signal
+        return signal
+
     def _matches_symbol(self, tick_symbol: str) -> bool:
         """True when the tick's symbol is in this strategy's scope."""
         configured = self.configured_symbols()
@@ -222,6 +284,12 @@ class BaseStrategy(ABC):
             except Exception:
                 self._equity = 100_000.0
             signal = self.generate_signal(ohlcv_data, tick.price)
+            # Volatility-target overlay (opt-in, default off). Scales a BUY's
+            # suggested size inversely to recent realized volatility so calm
+            # names get more capital and choppy names less — equalizing risk
+            # per position. The downstream max_position_size_pct cap still
+            # bounds the result.
+            signal = self._apply_volatility_target(signal, ohlcv_data)
             # Position-aware BUY gate: if the strategy proposes to open a
             # long but the portfolio already has an open long position on
             # the same symbol, downgrade to HOLD. This kills the "every
@@ -289,9 +357,26 @@ class BaseStrategy(ABC):
                             "original_trigger": (signal.metadata or {}).get("trigger"),
                         },
                     )
-                if signal.suggested_size is not None and signal.suggested_size > held:
+                # Agentic exit: a strategy SELL on a symbol we hold is a
+                # directional exit (trend flip / stop / score decay), not a
+                # scale-out. Close the FULL held quantity by default — otherwise
+                # a flip signal sized at e.g. 3%-of-equity notional leaves most
+                # of the position open against the freshly-confirmed adverse
+                # trend (the agentic-exit leak across momentum/macd/MR/bband/
+                # swing/news bots, all of which size SELLs off equity, not the
+                # held position). Strategies wanting a partial scale-out set
+                # metadata['partial']=True; engine-managed take-profit trims use
+                # a separate path and never reach this gate.
+                _meta = signal.metadata if isinstance(signal.metadata, dict) else {}
+                if not _meta.get("partial"):
+                    if signal.suggested_size is None or abs(signal.suggested_size - held) > 1e-9:
+                        _meta["exit_full_close_from"] = signal.suggested_size
+                        signal.suggested_size = held
+                        signal.metadata = _meta
+                elif signal.suggested_size is not None and signal.suggested_size > held:
                     signal.suggested_size = held
-                    (signal.metadata or {})["sell_clamped_from"] = "oversize"
+                    _meta["sell_clamped_from"] = "oversize"
+                    signal.metadata = _meta
                 # Final dust check — qty=0 (post-clamp rounding) should not
                 # leave the strategy; let the engine treat as HOLD.
                 if signal.suggested_size is not None and signal.suggested_size <= 1e-9:

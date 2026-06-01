@@ -27,6 +27,7 @@ import {
 import Layout from '@/components/Layout';
 import Badge from '@/components/Badge';
 import { useAdvisor, lookupSymbol, type IndicatorReading, type PriceTarget, type LLMCommentary, type SymbolLookupHit } from '@/hooks/useAdvisor';
+import { useWatchlist } from '@/hooks/useWatchlist';
 import { Brain } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -539,6 +540,7 @@ export default function Advisor() {
   const [advanced, setAdvanced] = useState<boolean>(false);
   const [researchMode, setResearchMode] = useState<boolean>(false);
   const { result, research, loading, researchLoading, error, analyze, fetchResearch } = useAdvisor();
+  const { items: watchItems } = useWatchlist();
 
   // Typeahead state — populated by /api/advisor/lookup as the user types
   const [lookupHits, setLookupHits] = useState<SymbolLookupHit[]>([]);
@@ -806,6 +808,75 @@ export default function Advisor() {
             ))}
           </div>
         </motion.div>
+
+        {/* Empty state — fill the space below the search card with a real
+            launchpad (watchlist quick-analyze) + what the analysis covers,
+            instead of a blank void. Only when there's nothing to show yet. */}
+        {!result && !loading && !error && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="space-y-5"
+          >
+            {watchItems.length > 0 && (
+              <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-5">
+                <div className="mb-3 flex items-center gap-2">
+                  <Target className="h-4 w-4 text-accent-cyan" />
+                  <h3 className="text-sm font-semibold text-text-primary">Your Watchlist</h3>
+                  <span className="ml-auto text-xs text-text-muted">tap to analyze</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+                  {watchItems.slice(0, 12).map((it) => (
+                    <button
+                      key={`${it.asset_type}-${it.symbol}`}
+                      onClick={() => {
+                        setSymbol(it.symbol);
+                        setAssetType(it.asset_type);
+                        runAnalyze(
+                          it.symbol,
+                          it.asset_type,
+                          rangeToDays(timeRange),
+                          advanced,
+                        ).catch(() => {});
+                      }}
+                      className="group flex items-center justify-between gap-2 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-left transition-colors hover:border-accent-cyan/50"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-mono text-sm font-semibold text-text-primary group-hover:text-accent-cyan">
+                          {it.symbol.toUpperCase()}
+                        </p>
+                        <p className="truncate text-[10px] uppercase tracking-wider text-text-muted">
+                          {it.source}
+                        </p>
+                      </div>
+                      <span className="shrink-0 rounded bg-bg-surface px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-text-muted">
+                        {it.asset_type}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* What the analysis covers */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {[
+                { icon: <Activity className="h-4 w-4 text-accent-cyan" />, title: 'Technical', desc: 'RSI, MACD, moving averages & Bollinger bands, with concrete price targets and stops.' },
+                { icon: <Target className="h-4 w-4 text-accent-cyan" />, title: 'Fundamental', desc: 'Valuation, earnings, analyst targets and sector context — flagged when data is missing.' },
+                { icon: <Brain className="h-4 w-4 text-accent-cyan" />, title: 'Sentiment + AI', desc: 'News-driven sentiment with an LLM second opinion that can agree, disagree, or flag risk.' },
+              ].map((c) => (
+                <div key={c.title} className="rounded-[10px] border border-border-subtle bg-bg-surface p-4">
+                  <div className="mb-1.5 flex items-center gap-2">
+                    {c.icon}
+                    <span className="text-sm font-semibold text-text-primary">{c.title}</span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-text-secondary">{c.desc}</p>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
 
         {/* Error */}
         {error && (
