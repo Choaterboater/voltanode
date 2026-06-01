@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("volta.funding")
 
@@ -204,3 +206,74 @@ def funding_signal(symbol: str, *, use_cache: bool = True) -> Optional[FundingSi
     _CACHE[key] = sig
     _CACHE_TS[key] = time.time()
     return sig
+
+
+# ── Historical funding (for backtesting a funding strategy) ────────────────
+
+def fetch_funding_history(symbol: str, limit: int = 1000, timeout: float = 10.0) -> List[Tuple[int, float]]:
+    """Best-effort historical 8h funding from Binance perps.
+
+    Returns ``[(funding_time_ms, rate), ...]`` oldest→newest, or ``[]`` on any
+    failure. ``limit`` up to 1000 (~333 days of 8h funding). Never raises.
+    """
+    try:
+        import requests
+
+        perp = _to_binance_perp(symbol)
+        r = requests.get(
+            "https://fapi.binance.com/fapi/v1/fundingRate",
+            params={"symbol": perp, "limit": min(int(limit), 1000)},
+            timeout=timeout,
+        )
+        if r.status_code >= 400:
+            return []
+        rows = r.json() or []
+        out = []
+        for x in rows:
+            try:
+                out.append((int(x["fundingTime"]), float(x["fundingRate"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        out.sort(key=lambda t: t[0])
+        return out
+    except Exception as exc:  # pragma: no cover - network path
+        logger.debug(f"funding history fetch failed for {symbol}: {exc}")
+        return []
+
+
+def daily_funding(symbol: str, limit: int = 1000) -> Dict[str, float]:
+    """Map ``YYYY-MM-DD`` -> summed funding for that day (the day's carry).
+
+    Funding pays ~3×/day (8h); summing gives the daily funding cost/credit,
+    the natural per-(daily-)bar feature. ``{}`` if unavailable.
+    """
+    out: Dict[str, float] = defaultdict(float)
+    for ts_ms, rate in fetch_funding_history(symbol, limit):
+        day = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d")
+        out[day] += rate
+    return dict(out)
+
+
+def attach_funding_to_ohlcv(df: Any, symbol: str) -> Any:
+    """Add a forward-filled, date-aligned ``funding_rate`` column to a daily
+    OHLCV DataFrame. Returns the df unchanged (no column) if funding data is
+    unavailable — so a funding strategy degrades to HOLD rather than erroring.
+    """
+    fmap = daily_funding(symbol)
+    if not fmap:
+        return df
+    try:
+        import numpy as np
+        import pandas as pd
+
+        if "timestamp" in df.columns:
+            dates = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+        else:
+            dates = pd.to_datetime(df.index, utc=True, errors="coerce")
+        keys = [d.strftime("%Y-%m-%d") if d is not None and not pd.isna(d) else None for d in dates]
+        col = pd.Series([fmap.get(k, np.nan) for k in keys], index=df.index)
+        df = df.copy()
+        df["funding_rate"] = col.ffill().fillna(0.0)
+    except Exception as exc:
+        logger.debug(f"attach_funding_to_ohlcv failed for {symbol}: {exc}")
+    return df
