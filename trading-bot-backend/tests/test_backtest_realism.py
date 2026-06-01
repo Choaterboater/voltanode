@@ -142,6 +142,22 @@ def test_cost_gate_applies_in_backtest_when_enabled():
     assert on["total_trades"] == 0    # gate blocks every BUY (TP 20bps < 45bps bar)
 
 
+def test_position_aware_rebuy_suppressed_in_backtest():
+    """Mirror live on_tick: while already long, repeated BUYs are suppressed
+    (one entry, no adds) — instead of the old add-on-every-bar that inflated
+    trade counts and returns."""
+    closes = np.linspace(100.0, 110.0, 20)
+    df = pd.DataFrame({
+        "timestamp": pd.date_range("2025-01-01", periods=20, freq="D"),
+        "open": closes, "high": closes, "low": closes, "close": closes,
+        "volume": np.full(20, 1000.0),
+    })
+    cfg = BacktestConfig(initial_balance={"USDT": 10_000.0}, fee_rate=0.0, slippage_bps=0.0, allow_short=False)
+    r = BacktestRunner(_AlwaysBuyHuge("rb", {}), df, cfg).run().metrics.to_dict()
+    assert r["total_trades"] == 1    # one entry; further BUYs suppressed while long
+    assert r["closed_trades"] == 0   # never sold
+
+
 def test_win_rate_empty_and_all_entries_is_zero():
     eq = pd.DataFrame({"timestamp": pd.date_range("2025-01-01", periods=2), "equity": [10000.0, 10000.0], "drawdown": [0.0, 0.0]})
     assert BacktestMetrics(eq, []).win_rate == 0.0

@@ -157,6 +157,23 @@ class BacktestRunner:
             except Exception:
                 pass  # never let a gate transform abort the backtest
 
+            # Position-aware gates mirroring BaseStrategy.on_tick so the backtest
+            # matches live: suppress a re-BUY while already long this symbol
+            # (live downgrades to HOLD), and full-close on a SELL exit (live
+            # sets suggested_size = held qty). Without this the backtest lets a
+            # dip-buyer add to its position every bar — inflating trade counts
+            # and returns vs what the live engine would actually do.
+            held = positions.get(signal.symbol)
+            held_open = bool(held and held.get("side") == "long" and held.get("size", 0) > 1e-9)
+            if signal.signal_type == SignalType.BUY and held_open:
+                signal.signal_type = SignalType.HOLD
+            elif (
+                signal.signal_type == SignalType.SELL
+                and held_open
+                and not (signal.metadata or {}).get("partial")
+            ):
+                signal.suggested_size = held["size"]
+
             if signal.signal_type == SignalType.BUY:
                 self._execute_signal(
                     signal, current_price, portfolio, positions, quote_asset
