@@ -210,12 +210,66 @@ def funding_signal(symbol: str, *, use_cache: bool = True) -> Optional[FundingSi
 
 # ── Historical funding (for backtesting a funding strategy) ────────────────
 
-def fetch_funding_history(symbol: str, limit: int = 1000, timeout: float = 10.0) -> List[Tuple[int, float]]:
-    """Best-effort historical 8h funding from Binance perps.
+def _to_hl_coin(symbol: str) -> str:
+    """Bare coin ticker for Hyperliquid (BTCUSDT/bitcoin/BTC-USD -> BTC)."""
+    s = str(symbol).strip().upper()
+    s = _CG_ALIASES_HL.get(s, s)
+    for suf in ("-USDT", "USDT", "-USD", "/USD", "/USDT", "USD"):
+        if s.endswith(suf) and len(s) > len(suf):
+            return s[: -len(suf)]
+    return s
 
-    Returns ``[(funding_time_ms, rate), ...]`` oldest→newest, or ``[]`` on any
-    failure. ``limit`` up to 1000 (~333 days of 8h funding). Never raises.
+
+_CG_ALIASES_HL = {
+    "BITCOIN": "BTC", "ETHEREUM": "ETH", "SOLANA": "SOL", "CARDANO": "ADA",
+    "RIPPLE": "XRP", "DOGECOIN": "DOGE", "POLKADOT": "DOT", "CHAINLINK": "LINK",
+}
+
+
+def fetch_hyperliquid_funding_history(symbol: str, days: int = 365, max_pages: int = 25,
+                                      timeout: float = 12.0) -> List[Tuple[int, float]]:
+    """Historical HOURLY funding from Hyperliquid — FREE, no key, US-accessible.
+
+    Paginates the /info ``fundingHistory`` endpoint (500 records/request) back
+    ``days``. Returns ``[(time_ms, rate), ...]`` oldest→newest, ``[]`` on error.
     """
+    try:
+        import requests
+
+        coin = _to_hl_coin(symbol)
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        start = now_ms - int(days) * 86_400_000
+        out: List[Tuple[int, float]] = []
+        for _ in range(max_pages):
+            r = requests.post(
+                "https://api.hyperliquid.xyz/info",
+                json={"type": "fundingHistory", "coin": coin, "startTime": start},
+                timeout=timeout,
+            )
+            if r.status_code >= 400:
+                break
+            rows = r.json() or []
+            if not rows:
+                break
+            for x in rows:
+                try:
+                    out.append((int(x["time"]), float(x["fundingRate"])))
+                except (KeyError, TypeError, ValueError):
+                    continue
+            last_t = int(rows[-1]["time"])
+            if len(rows) < 500 or last_t >= now_ms:
+                break
+            start = last_t + 1
+        out.sort(key=lambda t: t[0])
+        return out
+    except Exception as exc:  # pragma: no cover - network path
+        logger.debug(f"hyperliquid funding history failed for {symbol}: {exc}")
+        return []
+
+
+def _fetch_binance_funding_history(symbol: str, limit: int = 1000, timeout: float = 10.0) -> List[Tuple[int, float]]:
+    """Historical 8h funding from Binance perps. Returns ``[]`` on failure
+    (incl. HTTP 451 — Binance is geo-blocked in the US)."""
     try:
         import requests
 
@@ -237,8 +291,18 @@ def fetch_funding_history(symbol: str, limit: int = 1000, timeout: float = 10.0)
         out.sort(key=lambda t: t[0])
         return out
     except Exception as exc:  # pragma: no cover - network path
-        logger.debug(f"funding history fetch failed for {symbol}: {exc}")
+        logger.debug(f"binance funding history failed for {symbol}: {exc}")
         return []
+
+
+def fetch_funding_history(symbol: str, limit: int = 1000, timeout: float = 10.0) -> List[Tuple[int, float]]:
+    """Best-effort historical funding, oldest→newest. Tries Hyperliquid first
+    (free + US-accessible), falls back to Binance (works outside the US).
+    ``[]`` if both fail. Never raises."""
+    hl = fetch_hyperliquid_funding_history(symbol, timeout=timeout)
+    if hl:
+        return hl
+    return _fetch_binance_funding_history(symbol, limit=limit, timeout=timeout)
 
 
 def daily_funding(symbol: str, limit: int = 1000) -> Dict[str, float]:
