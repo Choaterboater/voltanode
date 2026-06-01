@@ -78,6 +78,40 @@ class RiskConfig(BaseModel):
     slippage_bps: float = 5.0
 
 
+class CapitalDeploymentConfig(BaseModel):
+    """Paper-mode capital allocator settings."""
+    enabled: bool = True
+    target_exposure_pct: float = 95.0
+    max_cash_pct: float = 20.0
+    min_cash_reserve_pct: float = 5.0
+    position_pct: float = 5.0
+    max_new_positions_per_cycle: int = 2
+    deploy_interval_minutes: float = 30.0
+    min_score: float = 48.0
+    min_source_count: int = 2
+    max_open_positions: int = 28
+    initial_stop_loss_pct: float = 0.07
+    initial_take_profit_pct: float = 0.20
+    asset_class: str = "stock"
+    min_order_notional: float = 25.0
+
+
+class PromotionGateSettings(BaseModel):
+    """CPCV + Deflated-Sharpe gate on apply-hyperopt / go-live. Default OFF.
+
+    When ``enabled``, applying hyperopt params requires the candidate to clear
+    combinatorial purged cross-validation with a Deflated Sharpe Ratio above
+    ``min_dsr`` — the discipline that blocks promoting a curve-fit edge.
+    """
+    enabled: bool = False
+    n_groups: int = 6
+    n_test_groups: int = 2
+    embargo_pct: float = 0.01
+    min_dsr: float = 0.5
+    min_oos_sharpe: float = 0.0
+    min_trades_per_fold: int = 3
+
+
 class CoinGeckoConfig(BaseModel):
     """CoinGecko API configuration."""
     enabled: bool = True
@@ -206,6 +240,8 @@ class BotConfig(BaseSettings):
     engine: EngineConfig = EngineConfig()
     market_data: MarketDataConfig = MarketDataConfig()
     risk: RiskConfig = RiskConfig()
+    capital_deployment: CapitalDeploymentConfig = CapitalDeploymentConfig()
+    promotion_gate: PromotionGateSettings = PromotionGateSettings()
     api: APIConfig = APIConfig()
     backtest: BacktestConfigSection = BacktestConfigSection()
     strategies: Dict[str, Any] = Field(default_factory=dict)

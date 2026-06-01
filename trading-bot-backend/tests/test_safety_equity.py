@@ -76,3 +76,26 @@ def test_broker_equity_override_used_for_validation() -> None:
         portfolio,
         broker_balances={"EQUITY": 100_000.0, "USD": 1_000.0},
     )
+
+
+def test_market_buy_uses_current_price_for_position_cap() -> None:
+    """A market BUY without order.price must still be checked by notional."""
+    portfolio = Portfolio("default", {"USDT": 100_000.0})
+    validator = SafetyValidator(
+        SafetyConfig(max_exposure_pct=300.0, max_position_size_pct=20.0)
+    )
+    order = Order.market("BTC", OrderSide.BUY, 1.0)
+
+    with pytest.raises(SafetyValidationError, match="Position size"):
+        validator.validate_order(order, portfolio, current_price=50_000.0)
+
+
+def test_market_buy_without_price_is_rejected_not_skipped() -> None:
+    portfolio = Portfolio("default", {"USDT": 100_000.0})
+    validator = SafetyValidator(
+        SafetyConfig(max_exposure_pct=300.0, max_position_size_pct=20.0)
+    )
+    order = Order.market("BTC", OrderSide.BUY, 0.1)
+
+    with pytest.raises(SafetyValidationError, match="No market price"):
+        validator.validate_order(order, portfolio)

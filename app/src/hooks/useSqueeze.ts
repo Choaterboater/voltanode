@@ -177,6 +177,7 @@ export function useSqueeze() {
           params.set('sector_blocklist', opts.sectorBlocklist);
         if (opts.concurrency !== undefined)
           params.set('concurrency', String(opts.concurrency));
+        if (options.force) params.set('nocache', 'true');
 
         const res = await fetch(
           `${API_BASE}/advisor/squeeze?${params.toString()}`,

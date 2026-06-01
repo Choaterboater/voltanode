@@ -27,6 +27,7 @@ class MeanReversionStrategy(BaseStrategy):
         "bb_period": 20,
         "bb_std": 1.5,
         "touch_tolerance": 0.02,  # within 2% of band counts as a touch
+        "position_pct": 0.03,
     }
 
     @classmethod
@@ -131,7 +132,7 @@ class MeanReversionStrategy(BaseStrategy):
                     "bb_sma": current_sma,
                     "price_vs_lower": current_price / current_lower if current_lower > 0 else 1.0,
                 },
-                suggested_size=1000.0 / current_price if current_price > 0 else 0.0,
+                suggested_size=self._size_from_equity_pct(current_price, default_pct=0.03),
                 stop_loss=current_price * 0.97,
                 take_profit=current_price * 1.05,
             )
@@ -155,7 +156,7 @@ class MeanReversionStrategy(BaseStrategy):
                     "bb_sma": current_sma,
                     "price_vs_upper": current_price / current_upper if current_upper > 0 else 1.0,
                 },
-                suggested_size=1000.0 / current_price if current_price > 0 else 0.0,
+                suggested_size=self._size_from_equity_pct(current_price, default_pct=0.03),
                 stop_loss=current_price * 0.97,
                 take_profit=current_price * 1.05,
             )

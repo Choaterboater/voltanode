@@ -12,7 +12,7 @@ AI-powered paper trading platform. React + Vite + Tailwind frontend, FastAPI bac
 cd trading-bot-backend && python run.py --mode api --host 127.0.0.1 --port 8000
 
 # Frontend
-cd app && npm run dev          # serves http://localhost:3002
+cd app && npm run dev          # serves http://localhost:3001
 
 # One-click
 ./start.bat                    # spins up backend + frontend
@@ -23,7 +23,7 @@ Type-check the frontend: `cd app && npx tsc --noEmit`.
 
 ## Worktrees & Vite — important gotcha
 
-The harness sometimes operates from `.claude/worktrees/<name>/`. **Vite is normally running from the main repo at `D:\VoltaNode\app`, not the worktree.** Edits made inside a worktree won't appear on `:3002` until you either:
+The harness sometimes operates from `.claude/worktrees/<name>/`. **Vite is normally running from the main repo at `D:\VoltaNode\app`, not the worktree.** Edits made inside a worktree won't appear on `:3001` until you either:
 
 1. Restart Vite from the worktree, or
 2. Mirror the edit into `D:\VoltaNode\app\src\...`, or
@@ -88,7 +88,7 @@ _None tracked at the moment — file issues in GitHub as they surface._
 
 ## Frontend conventions
 
-- Routing: HashRouter. URLs look like `http://localhost:3002/#/watchlist`.
+- Routing: HashRouter. URLs look like `http://localhost:3001/#/watchlist`.
 - `app/src/components/Layout.tsx` is the shell — sidebar + top bar + main. `title` prop is optional; pages with their own in-body hero (Watchlist, Advisor, Squeeze, About) should omit it to avoid a duplicate page title.
 - The flex column in Layout needs `min-w-0` or the inner `max-w-[1600px]` main forces horizontal scroll. Don't remove it.
 - Mono font (`font-mono tabular-nums`) on every numeric value. Hero numbers use `text-2xl font-semibold`.

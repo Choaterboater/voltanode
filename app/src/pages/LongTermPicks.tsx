@@ -59,7 +59,7 @@ export default function LongTermPicks() {
   // has enough candidates to surface meaningful picks. The full S&P 500
   // is 503 names — 250 covers half alphabetically and still finishes in
   // ~30-60s.
-  const [limitUniverse, setLimitUniverse] = useState(250);
+  const [limitUniverse, setLimitUniverse] = useState(100);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [wFund, setWFund] = useState(0.5);
   const [wTrend, setWTrend] = useState(0.3);

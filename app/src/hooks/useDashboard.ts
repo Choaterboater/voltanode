@@ -5,6 +5,7 @@ import {
   getStrategies,
   getTrades,
   getEquityHistory,
+  getPortfolioStats,
   type ApiPortfolio,
   type ApiPrice,
   type ApiStrategy,
@@ -201,12 +202,13 @@ export function useDashboardData() {
       // Only show the full-page spinner on the very first load. Background
       // polls keep stale data on screen so the dashboard doesn't flash.
       if (!hasLoadedRef.current) setLoading(true);
-      const [portRes, priceRes, stratRes, tradeRes, equityRes] = await Promise.all([
+      const [portRes, priceRes, stratRes, tradeRes, equityRes, statsRes] = await Promise.all([
         getPortfolio(),
         getPrices(CRYPTO_SYMBOLS),
         getStrategies(),
         getTrades(),
         getEquityHistory('default', '30D').catch(() => ({ points: [] as EquityPoint[] })),
+        getPortfolioStats('default', '30D').catch(() => null),
       ]);
       if (cancelledRef.current) return;
       setPortfolio(mapPortfolio(portRes));
@@ -217,7 +219,15 @@ export function useDashboardData() {
       setTrades(mapped);
       setEquityHistory(equityRes.points || []);
       setAllocation(deriveAllocation(portRes));
-      setPerf(derivePerformance(mapped));
+      const basePerf = derivePerformance(mapped);
+      setPerf({
+        ...basePerf,
+        winRate: statsRes?.win_rate ?? basePerf.winRate,
+        sharpeRatio: statsRes?.sharpe_ratio ?? basePerf.sharpeRatio,
+        maxDrawdownPercent: statsRes?.max_drawdown_pct ?? basePerf.maxDrawdownPercent,
+        profitFactor: statsRes?.profit_factor ?? basePerf.profitFactor,
+        totalTrades: statsRes?.total_trades ?? basePerf.totalTrades,
+      });
       setError(null);
       hasLoadedRef.current = true;
     } catch (e) {

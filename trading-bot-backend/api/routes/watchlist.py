@@ -81,7 +81,7 @@ async def list_watchlist(asset_type: Optional[str] = None) -> List[Dict[str, Any
 
 
 _ENRICHED_CACHE: Dict[str, Any] = {}  # key: asset_type filter, value: (ts, payload)
-_ENRICHED_TTL_SECONDS = 60.0
+_ENRICHED_TTL_SECONDS = 300.0
 
 
 @router.get("/enriched")

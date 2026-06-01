@@ -34,6 +34,7 @@ from data.sec_edgar import Filing as SecFiling, fetch_recent_filings
 from data.cache import DataCache
 from data.fetcher import MarketData
 from bot.config import BotConfig
+from api.scan_cache import cache_get, cache_set, make_key
 
 logger = logging.getLogger("volta.advisor")
 
@@ -575,14 +576,16 @@ async def market_scanner(
     asset_class: str = Query(default="crypto", description="'crypto' or 'stock'"),
     top: int = Query(default=20, ge=1, le=200, description="Max ranked results to return"),
     min_score: float = Query(default=0.0, ge=0.0, le=100.0, description="Drop entries below this composite score"),
-    limit_universe: int = Query(default=50, ge=5, le=600, description="Cap universe size before scoring"),
+    limit_universe: int = Query(default=30, ge=5, le=600, description="Cap universe size before scoring"),
     symbols: Optional[str] = Query(default=None, description="Comma-separated explicit symbol list (overrides auto-universe)"),
     direction: Optional[str] = Query(default=None, description="Filter to 'long' or 'short' only"),
-    concurrency: int = Query(default=5, ge=1, le=20, description="Parallel OHLCV fetches"),
+    concurrency: int = Query(default=10, ge=1, le=20, description="Parallel OHLCV fetches"),
     crypto_days: int = Query(default=60, ge=30, le=365, description="Days of crypto OHLCV history"),
     stock_period: str = Query(default="3mo", description="yfinance period string for stocks"),
     include_sp500: bool = Query(default=False, description="(stock only) Merge full S&P 500 list into the universe"),
     include_movers: bool = Query(default=True, description="(stock only) Merge Yahoo day_gainers + most_actives so unknown movers (e.g. RXT) get scored"),
+    fast: bool = Query(default=False, description="Fast mode: cap universe at 25, higher concurrency, shorter crypto history"),
+    nocache: bool = Query(default=False, description="Bypass the 5-minute scan response cache"),
     # ── Pairlist filters (freqtrade-style quality gates) ───────────────────
     enable_pairlist: bool = Query(default=True, description="Apply quality gates (volume/age/price/spread/volatility/blacklist) before scoring"),
     min_quote_volume_usd: float = Query(default=1_000_000.0, ge=0, description="Min 24h dollar-volume to keep a symbol (0 = disabled)"),
@@ -608,14 +611,55 @@ async def market_scanner(
     (raises ``limit_universe`` if you want them all scored).
 
     Pass ``symbols=BTC,ETH,DOGE`` to override the auto-universe with a specific list.
+
+    Pass ``fast=true`` for a lighter pass (smaller universe, higher concurrency).
+    Repeat identical queries within 5 minutes are served from an in-memory cache
+    unless ``nocache=true``.
     """
+    if fast:
+        limit_universe = min(limit_universe, 25)
+        crypto_days = min(crypto_days, 30)
+        concurrency = max(concurrency, 12)
+
+    effective_pl_min_price = (
+        pl_min_price if pl_min_price is not None
+        else (0.0 if asset_class == "crypto" else 1.0)
+    )
+
+    cache_key = make_key(
+        "scanner",
+        asset_class=asset_class,
+        top=top,
+        min_score=min_score,
+        limit_universe=limit_universe,
+        symbols=symbols,
+        direction=direction,
+        concurrency=concurrency,
+        crypto_days=crypto_days,
+        stock_period=stock_period,
+        include_sp500=include_sp500,
+        include_movers=include_movers,
+        fast=fast,
+        enable_pairlist=enable_pairlist,
+        min_quote_volume_usd=min_quote_volume_usd,
+        min_bars=min_bars,
+        pl_min_price=effective_pl_min_price,
+        pl_max_price=pl_max_price,
+        max_spread_pct=max_spread_pct,
+        min_atr_pct=min_atr_pct,
+        max_atr_pct=max_atr_pct,
+        blacklist=blacklist,
+    )
+    cached = cache_get(cache_key, nocache=nocache)
+    if cached is not None:
+        return cached
+
     cache = DataCache(cache_dir="./data/cache")
     market_data = MarketData(cache=cache, config=BotConfig())
 
     # Asset-class-aware default for the price floor — $1 sensibly drops US
     # penny stocks but wrongly nukes liquid sub-$1 crypto (DOGE, SHIB, TRX).
-    if pl_min_price is None:
-        pl_min_price = 0.0 if asset_class == "crypto" else 1.0
+    pl_min_price = effective_pl_min_price
 
     universe = await _scanner_universe(
         asset_class,
@@ -696,7 +740,7 @@ async def market_scanner(
         if s.error and not s.error.startswith("filtered:")
     ]
 
-    return {
+    payload = {
         "asset_class": asset_class,
         "scanned_at": started.isoformat(),
         "elapsed_ms": elapsed_ms,
@@ -709,11 +753,14 @@ async def market_scanner(
             "direction": direction,
             "top": top,
             "pairlist_enabled": enable_pairlist,
+            "fast": fast,
         },
         "results": payload_results,
         "filtered": filtered[:20],  # which symbols the pairlist gates dropped
         "failed": fetch_failed[:20],
     }
+    cache_set(cache_key, payload)
+    return payload
 
 
 # ── Evaluator-chain scanner (Phase 5 pattern) ──────────────────────────
@@ -918,11 +965,11 @@ async def long_term_screener(
     asset_class: str = Query(default="stock", description="'stock' or 'crypto'"),
     top: int = Query(default=25, ge=1, le=200),
     min_score: float = Query(default=0.0, ge=0.0, le=100.0),
-    limit_universe: int = Query(default=100, ge=5, le=600),
+    limit_universe: int = Query(default=50, ge=5, le=600),
     symbols: Optional[str] = Query(default=None,
         description="Comma-separated explicit symbol list (overrides default universe)"),
-    concurrency: int = Query(default=4, ge=1, le=10,
-        description="Parallel fetches. Low default because yfinance + CoinGecko both rate-limit."),
+    concurrency: int = Query(default=6, ge=1, le=12,
+        description="Parallel fetches. yfinance + CoinGecko both rate-limit."),
     stock_period: str = Query(default="2y",
         description="yfinance period for stocks — need >= 1y for the 200dma + 1y-return signal"),
     crypto_days: int = Query(default=730, ge=365, le=1095),
@@ -935,6 +982,7 @@ async def long_term_screener(
         description="Drop picks above this share price (e.g. 50 for sub-$50 names). Applied after scoring."),
     min_price: Optional[float] = Query(default=None, ge=0.0,
         description="Drop penny stocks below this share price."),
+    nocache: bool = Query(default=False, description="Bypass the 5-minute scan response cache"),
 ) -> Dict[str, Any]:
     """Long-term (year+) holding candidates.
 
@@ -950,6 +998,27 @@ async def long_term_screener(
     forgetting about" filter. Use /advisor/research on the top picks for
     LLM-driven per-symbol deep dives.
     """
+    cache_key = make_key(
+        "long_term",
+        asset_class=asset_class,
+        top=top,
+        min_score=min_score,
+        limit_universe=limit_universe,
+        symbols=symbols,
+        concurrency=concurrency,
+        stock_period=stock_period,
+        crypto_days=crypto_days,
+        weight_fundamentals=weight_fundamentals,
+        weight_trend=weight_trend,
+        weight_low_volatility=weight_low_volatility,
+        sector=sector,
+        max_price=max_price,
+        min_price=min_price,
+    )
+    cached = cache_get(cache_key, nocache=nocache)
+    if cached is not None:
+        return cached
+
     cache = DataCache(cache_dir="./data/cache")
     market_data = MarketData(cache=cache, config=BotConfig())
 
@@ -1045,7 +1114,7 @@ async def long_term_screener(
         if r.error not in (None, "insufficient_history_for_trend_or_vol")
     ]
 
-    return {
+    payload = {
         "asset_class": asset_class,
         "scanned_at": started.isoformat(),
         "elapsed_ms": elapsed_ms,
@@ -1055,6 +1124,8 @@ async def long_term_screener(
         "results": [r.to_dict() for r in valid],
         "failed": failed[:20],
     }
+    cache_set(cache_key, payload)
+    return payload
 
 
 # ── Squeeze screener ────────────────────────────────────────────────────
@@ -1083,107 +1154,107 @@ async def _squeeze_score_one(
     async with sem:
         fund = await fetch_fundamentals(ticker)
 
-    base = {
-        "ticker": ticker.upper(),
-        "name": fund.name,
-        "sector": fund.sector,
-        "industry": fund.industry,
-        "market_cap": fund.market_cap,
-        "float_shares": fund.float_shares,
-        "current_price": fund.current_price,
-        "avg_daily_volume_10d": fund.avg_daily_volume_10d,
-        "short_pct_of_float": fund.short_pct_of_float,
-        "days_to_cover": fund.short_ratio_days_to_cover,
-        "earnings_qoq_growth": fund.earnings_qoq_growth,
-        "earnings_growth_yoy": fund.earnings_growth_yoy,
-        # Distinguish "yfinance returned no data" from "EPS is literally
-        # flat 0%". UI should render "—" when has_earnings_data=false
-        # instead of "+0.0%" which is misleading on a missing field.
-        "has_earnings_data": fund.has_earnings_growth_data,
-        "next_earnings_date": fund.next_earnings_date,
-        "has_recent_13d_filing": has_recent_13d,
-        "quarterly_eps": [
-            {
-                "period_end": q.period_end,
-                "eps": q.eps,
-                "estimate": q.estimate,
-                "surprise_pct": q.surprise_pct,
-            }
-            for q in (fund.quarterly_eps or [])
-        ],
-    }
-
-    passes, reject_reason = passes_structural_filters(
-        fund,
-        min_market_cap=min_market_cap,
-        max_market_cap=max_market_cap,
-        max_float_shares=max_float_shares,
-        min_price=min_price,
-        max_price=max_price,
-        min_avg_daily_volume=min_avg_daily_volume,
-        sector_blocklist=sector_blocklist,
-    )
-    if not passes:
-        return {**base, "passes_filters": False, "reject_reason": reject_reason}
-
-    # Technical breakout score (optional — can disable for speed on large scans).
-    scanner_score: Optional[float] = None
-    day_pct_change: Optional[float] = None
-    sparkline: Optional[List[float]] = None
-    if fetch_technical:
-        try:
-            df = await asyncio.to_thread(
-                market_data.get_stock_ohlcv, ticker, "3mo", "1d"
-            )
-            if df is not None and not df.empty:
-                df = df.copy()
-                df.columns = [str(c).lower() for c in df.columns]
-                if "volume" not in df.columns:
-                    df["volume"] = 0.0
-                tech = score_symbol(ticker, df)
-                if tech.error is None:
-                    scanner_score = tech.score
-                # Day % change: latest vs prior close.
-                if len(df) >= 2 and df["close"].iloc[-2] > 0:
-                    day_pct_change = float(
-                        (df["close"].iloc[-1] - df["close"].iloc[-2])
-                        / df["close"].iloc[-2]
-                    )
-                # Sparkline: last 20 daily closes for the inline chart.
-                tail = df["close"].tail(20).tolist()
-                sparkline = [float(x) for x in tail if x is not None and x == x]
-        except Exception as exc:
-            logger.debug("squeeze: technical fetch failed for %s: %s", ticker, exc)
-
-    off_ex_pct = finra_snap.off_exchange_short_pct if finra_snap else None
-
-    sq = score_squeeze(
-        ticker,
-        fund,
-        has_recent_13d_filing=has_recent_13d,
-        scanner_score=scanner_score,
-        off_exchange_short_pct=off_ex_pct,
-    )
-
-    payload: Dict[str, Any] = {
-        **base,
-        "passes_filters": True,
-        "scanner_score": scanner_score,
-        "day_pct_change": day_pct_change,
-        "sparkline": sparkline,
-        **sq.to_dict(),
-    }
-    if finra_snap is not None:
-        payload["finra"] = {
-            "trade_date": finra_snap.trade_date,
-            "short_volume_total": finra_snap.short_volume_total,
-            "total_volume": finra_snap.total_volume,
-            "short_pct_total": round(finra_snap.short_pct_total, 2),
-            "off_exchange_short_volume": finra_snap.off_exchange_short_volume,
-            "off_exchange_total_volume": finra_snap.off_exchange_total_volume,
-            "off_exchange_short_pct": round(finra_snap.off_exchange_short_pct, 2),
+        base = {
+            "ticker": ticker.upper(),
+            "name": fund.name,
+            "sector": fund.sector,
+            "industry": fund.industry,
+            "market_cap": fund.market_cap,
+            "float_shares": fund.float_shares,
+            "current_price": fund.current_price,
+            "avg_daily_volume_10d": fund.avg_daily_volume_10d,
+            "short_pct_of_float": fund.short_pct_of_float,
+            "days_to_cover": fund.short_ratio_days_to_cover,
+            "earnings_qoq_growth": fund.earnings_qoq_growth,
+            "earnings_growth_yoy": fund.earnings_growth_yoy,
+            # Distinguish "yfinance returned no data" from "EPS is literally
+            # flat 0%". UI should render "—" when has_earnings_data=false
+            # instead of "+0.0%" which is misleading on a missing field.
+            "has_earnings_data": fund.has_earnings_growth_data,
+            "next_earnings_date": fund.next_earnings_date,
+            "has_recent_13d_filing": has_recent_13d,
+            "quarterly_eps": [
+                {
+                    "period_end": q.period_end,
+                    "eps": q.eps,
+                    "estimate": q.estimate,
+                    "surprise_pct": q.surprise_pct,
+                }
+                for q in (fund.quarterly_eps or [])
+            ],
         }
-    return payload
+
+        passes, reject_reason = passes_structural_filters(
+            fund,
+            min_market_cap=min_market_cap,
+            max_market_cap=max_market_cap,
+            max_float_shares=max_float_shares,
+            min_price=min_price,
+            max_price=max_price,
+            min_avg_daily_volume=min_avg_daily_volume,
+            sector_blocklist=sector_blocklist,
+        )
+        if not passes:
+            return {**base, "passes_filters": False, "reject_reason": reject_reason}
+
+        # Technical breakout score (optional — can disable for speed on large scans).
+        scanner_score: Optional[float] = None
+        day_pct_change: Optional[float] = None
+        sparkline: Optional[List[float]] = None
+        if fetch_technical:
+            try:
+                df = await asyncio.to_thread(
+                    market_data.get_stock_ohlcv, ticker, "3mo", "1d"
+                )
+                if df is not None and not df.empty:
+                    df = df.copy()
+                    df.columns = [str(c).lower() for c in df.columns]
+                    if "volume" not in df.columns:
+                        df["volume"] = 0.0
+                    tech = score_symbol(ticker, df)
+                    if tech.error is None:
+                        scanner_score = tech.score
+                    # Day % change: latest vs prior close.
+                    if len(df) >= 2 and df["close"].iloc[-2] > 0:
+                        day_pct_change = float(
+                            (df["close"].iloc[-1] - df["close"].iloc[-2])
+                            / df["close"].iloc[-2]
+                        )
+                    # Sparkline: last 20 daily closes for the inline chart.
+                    tail = df["close"].tail(20).tolist()
+                    sparkline = [float(x) for x in tail if x is not None and x == x]
+            except Exception as exc:
+                logger.debug("squeeze: technical fetch failed for %s: %s", ticker, exc)
+
+        off_ex_pct = finra_snap.off_exchange_short_pct if finra_snap else None
+
+        sq = score_squeeze(
+            ticker,
+            fund,
+            has_recent_13d_filing=has_recent_13d,
+            scanner_score=scanner_score,
+            off_exchange_short_pct=off_ex_pct,
+        )
+
+        payload: Dict[str, Any] = {
+            **base,
+            "passes_filters": True,
+            "scanner_score": scanner_score,
+            "day_pct_change": day_pct_change,
+            "sparkline": sparkline,
+            **sq.to_dict(),
+        }
+        if finra_snap is not None:
+            payload["finra"] = {
+                "trade_date": finra_snap.trade_date,
+                "short_volume_total": finra_snap.short_volume_total,
+                "total_volume": finra_snap.total_volume,
+                "short_pct_total": round(finra_snap.short_pct_total, 2),
+                "off_exchange_short_volume": finra_snap.off_exchange_short_volume,
+                "off_exchange_total_volume": finra_snap.off_exchange_total_volume,
+                "off_exchange_short_pct": round(finra_snap.off_exchange_short_pct, 2),
+            }
+        return payload
 
 
 @router.get("/squeeze")
@@ -1201,8 +1272,10 @@ async def squeeze_screener(
     min_avg_daily_volume: float = Query(default=100_000, ge=0),
     sector_blocklist: str = Query(default="utilities,reit", description="Comma-separated sector substrings to exclude"),
     fetch_technical: bool = Query(default=True, description="Score technical breakout via /scanner internals (slower)"),
-    concurrency: int = Query(default=6, ge=1, le=20),
+    concurrency: int = Query(default=8, ge=1, le=20),
     max_results: int = Query(default=40, ge=1, le=200),
+    max_candidates: int = Query(default=80, ge=1, le=300, description="Cap tickers scored per scan (filings + extras)"),
+    nocache: bool = Query(default=False, description="Bypass the 5-minute scan response cache"),
 ) -> Dict[str, Any]:
     """Squeeze screener — GME / CAR / RXT-shape setups.
 
@@ -1227,6 +1300,33 @@ async def squeeze_screener(
     started = datetime.now(timezone.utc)
     blocklist = [s.strip().lower() for s in sector_blocklist.split(",") if s.strip()]
 
+    effective_max_price: Optional[float] = (
+        None if (max_price is None or max_price <= 0) else max_price
+    )
+
+    cache_key = make_key(
+        "squeeze",
+        days_back=days_back,
+        min_score=min_score,
+        tier=tier,
+        extra_symbols=extra_symbols,
+        only_filings=only_filings,
+        min_market_cap=min_market_cap,
+        max_market_cap=max_market_cap,
+        max_float_shares=max_float_shares,
+        min_price=min_price,
+        max_price=effective_max_price,
+        min_avg_daily_volume=min_avg_daily_volume,
+        sector_blocklist=blocklist,
+        fetch_technical=fetch_technical,
+        concurrency=concurrency,
+        max_results=max_results,
+        max_candidates=max_candidates,
+    )
+    cached = cache_get(cache_key, nocache=nocache)
+    if cached is not None:
+        return cached
+
     # 1. Pull recent 13D/13G filings.
     filings: List[SecFiling] = await fetch_recent_filings(days_back=days_back, max_results=300)
     filing_tickers: List[str] = [f.ticker for f in filings]
@@ -1242,6 +1342,8 @@ async def squeeze_screener(
                 if s and s not in candidates:
                     candidates.append(s)
 
+    candidates = candidates[:max_candidates]
+
     # 3. Score each candidate (fundamentals → filter → squeeze score).
     market_data = MarketData(cache=DataCache(cache_dir="./data/cache"), config=BotConfig())
     sem = asyncio.Semaphore(concurrency)
@@ -1253,12 +1355,6 @@ async def squeeze_screener(
         next(iter(finra_map.values())).trade_date
         if finra_map
         else None
-    )
-
-    # Treat max_price=0 (or absent) as "no ceiling" — convenient for clients that
-    # default the param to 0 to mean "disable".
-    effective_max_price: Optional[float] = (
-        None if (max_price is None or max_price <= 0) else max_price
     )
 
     score_tasks = [
@@ -1315,7 +1411,7 @@ async def squeeze_screener(
 
     elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
 
-    return {
+    payload = {
         "scanned_at": started.isoformat(),
         "elapsed_ms": elapsed_ms,
         "filters": {
@@ -1329,6 +1425,8 @@ async def squeeze_screener(
             "max_price": effective_max_price,
             "min_avg_daily_volume": min_avg_daily_volume,
             "sector_blocklist": blocklist,
+            "fetch_technical": fetch_technical,
+            "max_candidates": max_candidates,
         },
         "filings_count": len(filings),
         "candidates_scored": len(candidates),
@@ -1345,3 +1443,5 @@ async def squeeze_screener(
             "Cash-settled swaps don't show in 13D headers — read the doc for activist filings.",
         ],
     }
+    cache_set(cache_key, payload)
+    return payload

@@ -31,7 +31,22 @@ def set_equity_history(store: Any) -> None:
     _equity_history = store
 
 
-def _portfolio_to_response(portfolio: Portfolio) -> PortfolioResponse:
+def _portfolio_source_meta(eng: Any | None) -> tuple[str, bool]:
+    """Return (source, broker_connected) for portfolio API responses."""
+    if eng is None:
+        return "paper", False
+    broker = getattr(eng, "broker", None)
+    connected = bool(
+        broker is not None
+        and broker.is_connected()
+        and getattr(broker, "name", "mock") != "mock"
+    )
+    if getattr(eng, "live_mode", False) and connected:
+        return str(getattr(broker, "name", "alpaca")), True
+    return "paper", connected
+
+
+def _portfolio_to_response(portfolio: Portfolio, eng: Any | None = None) -> PortfolioResponse:
     """Convert Portfolio to response model."""
     positions = [
         PositionResponse(
@@ -49,6 +64,7 @@ def _portfolio_to_response(portfolio: Portfolio) -> PortfolioResponse:
     ]
     total_balance = sum(portfolio.get_all_balances().values())
     total_position_value = sum(p.market_value for p in portfolio.get_all_positions())
+    source, broker_connected = _portfolio_source_meta(eng)
     return PortfolioResponse(
         account_id=portfolio.account_id,
         balances=portfolio.get_all_balances(),
@@ -57,6 +73,8 @@ def _portfolio_to_response(portfolio: Portfolio) -> PortfolioResponse:
         unrealized_pnl=portfolio.total_unrealized_pnl,
         realized_pnl=portfolio.total_realized_pnl,
         timestamp=portfolio.snapshot().timestamp,
+        source=source,
+        broker_connected=broker_connected,
     )
 
 
@@ -89,7 +107,7 @@ def _live_broker_to_response(account_id: str, eng: Any) -> PortfolioResponse | N
     # (the engine's Position object carries them in memory).
     engine_pos_by_sym: Dict[str, Any] = {}
     try:
-        engine_portfolio = engine.get_portfolio(account_id)
+        engine_portfolio = eng.get_portfolio(account_id)
         for ep in engine_portfolio.get_all_positions():
             if getattr(ep, "status", "") != "open":
                 continue
@@ -162,6 +180,7 @@ def _live_broker_to_response(account_id: str, eng: Any) -> PortfolioResponse | N
     unrealized = sum(pos.unrealized_pnl for pos in positions)
 
     from datetime import datetime, timezone
+    source, broker_connected = _portfolio_source_meta(eng)
     return PortfolioResponse(
         account_id=account_id,
         balances=balances or {},
@@ -170,6 +189,8 @@ def _live_broker_to_response(account_id: str, eng: Any) -> PortfolioResponse | N
         unrealized_pnl=unrealized,
         realized_pnl=0.0,  # Broker-reported realized P&L not standardized across adapters
         timestamp=datetime.now(timezone.utc),
+        source=source,
+        broker_connected=broker_connected,
     )
 
 
@@ -190,7 +211,7 @@ async def get_portfolio(account_id: str) -> PortfolioResponse:
 
     try:
         portfolio = engine.get_portfolio(account_id)
-        return _portfolio_to_response(portfolio)
+        return _portfolio_to_response(portfolio, engine)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
 
@@ -535,6 +556,83 @@ async def get_snapshots(account_id: str) -> Dict[str, Any]:
     if engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
     return {"account_id": account_id, "snapshots": []}
+
+
+@router.get("/{account_id}/stats")
+async def get_portfolio_stats(account_id: str, range: str = "30D") -> Dict[str, Any]:
+    """Return equity curve + performance stats for an account.
+
+    Range: '1H', '24H', '7D', '30D', or 'ALL'.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    import numpy as np
+    import pandas as pd
+
+    from backtest.metrics import calculate_max_drawdown, calculate_profit_factor, calculate_sharpe
+
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+
+    history = _equity_history
+    delta_map = {
+        "1H": timedelta(hours=1),
+        "24H": timedelta(hours=24),
+        "7D": timedelta(days=7),
+        "30D": timedelta(days=30),
+        "ALL": None,
+    }
+    delta = delta_map.get(range.upper(), timedelta(days=30))
+    since = (datetime.now(timezone.utc) - delta) if delta is not None else None
+
+    points: List[Dict[str, Any]] = []
+    if history is not None:
+        for ts, eq in history.query(account_id, since=since):
+            points.append({"ts": ts.isoformat(), "equity": eq})
+
+    equity_values = [float(p["equity"]) for p in points]
+    total_return_pct = 0.0
+    sharpe_ratio = 0.0
+    max_drawdown_pct = 0.0
+    if len(equity_values) >= 2:
+        start = equity_values[0]
+        end = equity_values[-1]
+        if start > 0:
+            total_return_pct = (end - start) / start * 100.0
+        series = pd.Series(equity_values)
+        returns = series.pct_change().dropna()
+        if len(returns) >= 2:
+            sharpe_ratio = calculate_sharpe(returns)
+        max_drawdown_pct, _, _ = calculate_max_drawdown(series)
+
+    closed_trades: List[Any] = []
+    try:
+        for trade in engine.get_trade_history(account_id):
+            side = getattr(getattr(trade, "side", None), "value", str(getattr(trade, "side", ""))).lower()
+            pnl = getattr(trade, "realized_pnl", None)
+            if side == "sell" and pnl is not None:
+                closed_trades.append(float(pnl))
+    except KeyError:
+        pass
+
+    wins = sum(1 for p in closed_trades if p > 0)
+    total_trades = len(closed_trades)
+    win_rate = (wins / total_trades * 100.0) if total_trades else 0.0
+    profits = sum(p for p in closed_trades if p > 0)
+    losses = abs(sum(p for p in closed_trades if p < 0))
+    profit_factor = (profits / losses) if losses > 0 else (float("inf") if profits > 0 else 0.0)
+
+    return {
+        "account_id": account_id,
+        "range": range.upper(),
+        "equity_curve": points,
+        "total_return_pct": round(total_return_pct, 4),
+        "sharpe_ratio": round(float(sharpe_ratio), 4),
+        "max_drawdown_pct": round(float(max_drawdown_pct), 4),
+        "win_rate": round(win_rate, 2),
+        "profit_factor": round(profit_factor, 4) if np.isfinite(profit_factor) else None,
+        "total_trades": total_trades,
+    }
 
 
 @router.get("/{account_id}/equity-history")

@@ -20,7 +20,7 @@ npm install
 npm run dev
 ```
 
-The dev server will start at `http://localhost:3000` by default (configured in `vite.config.ts`).
+The dev server will start at `http://localhost:3001` by default (configured in `vite.config.ts`).
 
 ### Build for Production
 
@@ -86,7 +86,7 @@ Create a `.env` file in the backend root or set these directly:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `BOT_APP__LOG_LEVEL` | Logging level | `INFO` |
-| `BOT_API__CORS_ORIGINS` | CORS allowed origins | `["http://localhost:3000"]` |
+| `BOT_API__CORS_ORIGINS` | CORS allowed origins | `["http://localhost:3001"]` |
 | `BOT_API__PORT` | API server port | `8000` |
 | `BOT_MARKET_DATA__COINGECKO__ENABLED` | Enable CoinGecko | `true` |
 | `BOT_RISK__MAX_DRAWDOWN_PCT` | Max drawdown limit | `0.10` |
@@ -105,7 +105,7 @@ No environment variables are required for local development. The frontend uses `
 |-------|----------|
 | `npm install` fails | Delete `node_modules` and `package-lock.json`, then run `npm install` again |
 | Build fails with TS errors | Run `npx tsc --noEmit -p tsconfig.app.json` to isolate errors |
-| Port 3000 in use | Change the port in `vite.config.ts` or run `npm run dev -- --port 3001` |
+| Port 3001 in use | Change the port in `vite.config.ts` or run `npm run dev -- --port 3002` |
 | Tailwind styles not applied | Ensure `index.css` has `@tailwind` directives and `tailwind.config.js` content paths are correct |
 
 ### Backend Issues
@@ -121,6 +121,6 @@ No environment variables are required for local development. The frontend uses `
 ### Cross-Origin (CORS) Errors
 
 If the frontend cannot reach the backend:
-1. Verify `BOT_API__CORS_ORIGINS` includes your frontend URL (e.g., `http://localhost:3000`)
+1. Verify `BOT_API__CORS_ORIGINS` includes your frontend URL (e.g., `http://localhost:3001`)
 2. Check that the backend is actually running (`curl http://localhost:8000/health`)
 3. Ensure the frontend is using the correct API base URL

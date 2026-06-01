@@ -87,6 +87,23 @@ export const getEquityHistory = (
     `/portfolio/${accountId}/equity-history?range=${range}`,
   );
 
+export interface PortfolioStats {
+  account_id: string;
+  range: string;
+  equity_curve: EquityPoint[];
+  total_return_pct: number;
+  sharpe_ratio: number;
+  max_drawdown_pct: number;
+  win_rate: number;
+  profit_factor: number | null;
+  total_trades: number;
+}
+
+export const getPortfolioStats = (
+  accountId = 'default',
+  range: '1H' | '24H' | '7D' | '30D' | 'ALL' = '24H',
+) => fetchJson<PortfolioStats>(`/portfolio/${accountId}/stats?range=${range}`);
+
 // ── Signals (macro / sentiment / catalysts) ──
 
 export interface FearGreedSignal {

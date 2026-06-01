@@ -10,6 +10,36 @@ from typing import Any, Dict, List, Optional
 from bot.config import PositionSide
 
 
+def symbol_lookup_keys(symbol: str) -> List[str]:
+    """Return bare + quote-suffixed variants for price/order matching.
+
+    Strategies and ticks use bare crypto tickers (``BTC``) while broker-synced
+    positions are stored as ``BTCUSD``. Both forms must resolve to the same
+    price and pending-order poll target.
+    """
+    s = str(symbol).strip().upper()
+    keys: List[str] = [s]
+    for suf in ("USD", "USDT"):
+        if s.endswith(suf) and len(s) > len(suf):
+            keys.append(s[: -len(suf)])
+        else:
+            keys.append(f"{s}{suf}")
+    return list(dict.fromkeys(keys))
+
+
+def symbols_equivalent(a: str, b: str) -> bool:
+    """True when two symbols refer to the same instrument."""
+    return bool(set(symbol_lookup_keys(a)) & set(symbol_lookup_keys(b)))
+
+
+def lookup_price(prices: Dict[str, float], symbol: str) -> float | None:
+    """Look up a mark price using bare or suffixed symbol keys."""
+    for key in symbol_lookup_keys(symbol):
+        if key in prices:
+            return prices[key]
+    return None
+
+
 @dataclass
 class Position:
     """Represents an open trading position."""
@@ -25,6 +55,9 @@ class Position:
     status: str = "open"
     stop_loss: float | None = None
     take_profit: float | None = None
+    high_water_price: float | None = None
+    low_water_price: float | None = None
+    partial_profit_taken: bool = False
 
     @property
     def market_value(self) -> float:
@@ -75,6 +108,9 @@ class Position:
             "status": self.status,
             "stop_loss": self.stop_loss,
             "take_profit": self.take_profit,
+            "high_water_price": self.high_water_price,
+            "low_water_price": self.low_water_price,
+            "partial_profit_taken": self.partial_profit_taken,
         }
 
 
@@ -180,6 +216,8 @@ class Portfolio:
             current_price=price,
             stop_loss=stop_loss,
             take_profit=take_profit,
+            high_water_price=price,
+            low_water_price=price,
         )
         self._positions[symbol] = position
         return position

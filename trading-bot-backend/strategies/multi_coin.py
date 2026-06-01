@@ -37,7 +37,8 @@ class MultiCoinMomentumStrategy(BaseStrategy):
         "trend_ema": 100,
         "min_score": 0.30,       # minimum momentum score to enter a position
         "rotation_gap": 0.50,    # new coin must beat current by this much to rotate
-        "position_usd": 1000.0,  # dollar size per entry
+        "position_pct": 0.03,    # percent-of-equity per entry
+        "position_usd": None,    # optional fixed-dollar override
     }
 
     def __init__(self, strategy_id: str, config: Dict[str, Any]) -> None:
@@ -124,7 +125,11 @@ class MultiCoinMomentumStrategy(BaseStrategy):
             and best_score >= self.config["min_score"]
         ):
             self._current_symbol = symbol
-            size = self.config["position_usd"] / tick.price if tick.price > 0 else 0.0
+            fixed_usd = self.config.get("position_usd")
+            if fixed_usd:
+                size = float(fixed_usd) / tick.price if tick.price > 0 else 0.0
+            else:
+                size = self._size_from_equity_pct(tick.price, default_pct=0.03)
             return Signal(
                 strategy_id=self.strategy_id,
                 symbol=symbol,

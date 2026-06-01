@@ -87,7 +87,7 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 
 # Frontend
 cd app
-npm run dev -- --port 3000
+npm run dev
 ```
 
 ## Testing

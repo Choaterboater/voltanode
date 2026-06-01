@@ -54,6 +54,13 @@ async def list_orders(account_id: str = "default") -> List[Dict[str, Any]]:
     if engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
     orders = engine.get_orders(account_id)
+    if isinstance(engine, LiveTradingEngine):
+        for order in orders:
+            if order.status == OrderStatus.PENDING:
+                try:
+                    engine.get_order_status(order.id, account_id)
+                except Exception:
+                    pass
     return [
         {
             "id": o.id,
