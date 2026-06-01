@@ -11,9 +11,8 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from strategies.base import BaseStrategy, Signal, TickData
+from strategies.base import BaseStrategy, Signal
 from bot.config import SignalType
-from bot.portfolio import Portfolio
 
 logger = logging.getLogger("volta.strategies")
 
@@ -32,7 +31,7 @@ class NewsSentimentStrategy(BaseStrategy):
     name = "news_sentiment"
     DEFAULT_CONFIG: Dict[str, Any] = {
         "sentiment_threshold": 0.3,
-        "confidence_threshold": 0.6,
+        "confidence_threshold": 0.45,
         "lookback_hours": 6,
         "position_size_pct": 5.0,
         "require_trend_confirmation": True,
@@ -52,7 +51,7 @@ class NewsSentimentStrategy(BaseStrategy):
             # Try to infer from column or index name
             symbol = str(data.columns[0]) if len(data.columns) > 0 else ""
 
-        sentiment = self._symbol_sentiment.get(symbol, {})
+        sentiment = self._symbol_sentiment.get(str(symbol).strip().upper(), {})
         if not sentiment:
             return Signal(
                 strategy_id=self.strategy_id,
@@ -117,7 +116,7 @@ class NewsSentimentStrategy(BaseStrategy):
         # Determine position size
         suggested_size = None
         try:
-            notional = 1000.0 * (self.config.get("position_size_pct", 5.0) / 100.0)
+            notional = getattr(self, "_equity", 100_000.0) * (self.config.get("position_size_pct", 5.0) / 100.0)
             suggested_size = notional / current_price if current_price > 0 else 0.1
         except Exception:
             pass
@@ -139,28 +138,35 @@ class NewsSentimentStrategy(BaseStrategy):
         self._record_signal(signal)
         return signal
 
-    def on_tick(self, tick: TickData, portfolio: Portfolio, **kwargs: Any) -> Signal | None:
-        """Override to clear stale sentiment and avoid over-trading.
-
-        When ``ohlcv_data`` is passed from the engine tick loop we forward it
-        to :meth:`generate_signal` so the strategy can act on cached sentiment.
-        """
-        ohlcv_data = kwargs.get("ohlcv_data")
-        if ohlcv_data is not None and len(ohlcv_data) > 0:
-            ohlcv_data = ohlcv_data.copy()
-            ohlcv_data.attrs["symbol"] = tick.symbol
-            return self.generate_signal(ohlcv_data, tick.price)
-        return None
+    # NOTE: this strategy intentionally does NOT override ``on_tick``. It
+    # inherits ``BaseStrategy.on_tick`` so it gets the shared protections the
+    # old override silently skipped: the live-equity snapshot (``_equity``,
+    # used for position sizing below — without it sizing fell back to a
+    # hardcoded $100k), the position-aware BUY gate, the agentic full-close
+    # SELL gate, and the macro/earnings signal-context gates.
 
     @classmethod
     def update_sentiment(cls, symbol: str, compound: float, confidence: float) -> None:
-        """Update the sentiment cache for a symbol.
-
-        Called by the news pipeline when new sentiment is available.
-        """
-        cls._symbol_sentiment[symbol] = {
+        """Update the sentiment cache for a single symbol (upper-cased)."""
+        cls._symbol_sentiment[str(symbol).strip().upper()] = {
             "compound": compound,
             "confidence": confidence,
+        }
+
+    @classmethod
+    def set_sentiment_bulk(cls, mapping: Dict[str, Dict[str, Any]]) -> None:
+        """Atomically replace the whole sentiment cache.
+
+        Called by the news loop each cycle so symbols whose news has aged out
+        of the lookback window drop from the cache (decay) instead of trading
+        on stale sentiment forever. Single reference swap = tick-loop safe.
+        """
+        cls._symbol_sentiment = {
+            str(k).strip().upper(): {
+                "compound": float(v.get("compound", 0.0)),
+                "confidence": float(v.get("confidence", 0.0)),
+            }
+            for k, v in (mapping or {}).items()
         }
 
     @classmethod

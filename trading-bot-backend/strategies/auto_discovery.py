@@ -60,7 +60,7 @@ class AutoDiscoveryStrategy(BaseStrategy):
         "asset_class": "crypto",
         "symbols": [],
         # Composite-score thresholds (0–100).
-        "entry_score": 60.0,
+        "entry_score": 52.0,
         "exit_score": 30.0,
         # Position sizing — same convention as SimpleTrendStrategy.
         "position_pct": 0.05,
@@ -79,7 +79,7 @@ class AutoDiscoveryStrategy(BaseStrategy):
         # short_only) gets a sanity-check from the OpenRouter Haiku chain
         # before submission. Cached 60s per (symbol, side); fails OPEN so
         # an LLM outage never blocks trading.
-        "enable_llm_gate": True,
+        "enable_llm_gate": False,
         # Watchlist auto-include — merge symbols from data/watchlist.json
         # whose ``source`` is in ``watchlist_source_allowlist`` into the
         # universe each tick. Lets external apps (e.g. an alerts pipeline
@@ -256,6 +256,19 @@ class AutoDiscoveryStrategy(BaseStrategy):
             # latch so a future tick can re-attempt once cache expires.
             if self.config.get("enable_llm_gate", True):
                 try:
+                    # Opt-in RAG: feed the LLM gate this setup's trade-memory
+                    # so it can veto a setup that has repeatedly lost. Default
+                    # off; only reads the small memory file on entry attempts
+                    # (rare), behind the already-slow LLM gate.
+                    mem_brief = None
+                    if self.config.get("memory_aware"):
+                        try:
+                            from learning.trade_memory import TradeMemory
+                            if not hasattr(self, "_trade_memory"):
+                                self._trade_memory = TradeMemory()
+                            mem_brief = self._trade_memory.recall_brief(symbol, self.name) or None
+                        except Exception:
+                            mem_brief = None
                     verdict = pretrade_check(
                         symbol=symbol,
                         side="BUY" if signal_type == SignalType.BUY else "SELL",
@@ -267,6 +280,7 @@ class AutoDiscoveryStrategy(BaseStrategy):
                             "breakout": metadata.get("breakout_signal"),
                         },
                         current_price=current_price,
+                        memory_brief=mem_brief,
                     )
                     if verdict.get("verdict") == "veto":
                         self._last_side[symbol] = last_side  # release latch
@@ -297,7 +311,7 @@ class AutoDiscoveryStrategy(BaseStrategy):
                 confidence=confidence,
                 timestamp=pd.Timestamp.now(),
                 metadata=metadata,
-                suggested_size=(pos_pct * 1000.0) / current_price if current_price > 0 else 0.0,
+                suggested_size=(pos_pct * getattr(self, "_equity", 100_000.0)) / current_price if current_price > 0 else 0.0,
                 stop_loss=current_price * (1 - sl_pct) if signal_type == SignalType.BUY else current_price * (1 + sl_pct),
                 take_profit=current_price * (1 + tp_pct) if signal_type == SignalType.BUY else current_price * (1 - tp_pct),
             )
@@ -333,7 +347,7 @@ class AutoDiscoveryStrategy(BaseStrategy):
                 },
                 # Engine clamps SELL suggested_size to held quantity — pass a
                 # generous size and let the engine layer figure the right qty.
-                suggested_size=(pos_pct * 1000.0) / current_price if current_price > 0 else 0.0,
+                suggested_size=(pos_pct * getattr(self, "_equity", 100_000.0)) / current_price if current_price > 0 else 0.0,
                 stop_loss=None,
                 take_profit=None,
             )

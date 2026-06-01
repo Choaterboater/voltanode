@@ -12,7 +12,7 @@ AI-powered paper trading platform. React + Vite + Tailwind frontend, FastAPI bac
 cd trading-bot-backend && python run.py --mode api --host 127.0.0.1 --port 8000
 
 # Frontend
-cd app && npm run dev          # serves http://localhost:3002
+cd app && npm run dev          # serves http://localhost:3001
 
 # One-click
 ./start.bat                    # spins up backend + frontend
@@ -23,7 +23,7 @@ Type-check the frontend: `cd app && npx tsc --noEmit`.
 
 ## Worktrees & Vite — important gotcha
 
-The harness sometimes operates from `.claude/worktrees/<name>/`. **Vite is normally running from the main repo at `D:\VoltaNode\app`, not the worktree.** Edits made inside a worktree won't appear on `:3002` until you either:
+The harness sometimes operates from `.claude/worktrees/<name>/`. **Vite is normally running from the main repo at `D:\VoltaNode\app`, not the worktree.** Edits made inside a worktree won't appear on `:3001` until you either:
 
 1. Restart Vite from the worktree, or
 2. Mirror the edit into `D:\VoltaNode\app\src\...`, or
@@ -46,11 +46,11 @@ Base: `http://localhost:8000`
 - `GET /portfolio/default/stats?range=1H|24H|7D|30D|ALL` — equity curve, Sharpe, drawdown, win rate.
 - `GET /settings/live-mode` — `{live_mode, broker_name, broker_connected, confirmation_required}`.
 - `GET /settings/safety-status` — current safety limits + kill switch + daily tracker.
-- `POST /settings/safety` — update safety limits *(see Known Bugs)*.
+- `POST /settings/safety` — update safety limits (persists YAML + pushes live `SafetyValidator` when engine is live).
 - `POST /settings/kill-switch` body `{"action":"deactivate"}` — clear a latched kill switch.
 - `POST /portfolio/{id}/flatten?symbols=SOL,BTC&trim_pct=0.4` — trim or close positions. `trim_pct=1.0` = full close, `0.4` = close 40%, keep 60%.
 - `POST /strategies/auto-deploy?max_positions=N` — run the 12-coin scan + bot deploy.
-- `GET /trades/?limit=200` — **returns chronological (oldest first)**, sort client-side for newest-first.
+- `GET /trades/?limit=200` — newest-first (reversed from append-only engine history).
 - `GET /advisor/scanner` — RSI + breakout + relative-volume composite scorer.
 - `GET /advisor/squeeze` — 7-factor squeeze screener (SI%, float, DTC, off-ex short, etc.).
 - `GET /watchlist/`, `POST /watchlist/`, `DELETE /watchlist/{symbol}` — persistent watchlist.
@@ -84,13 +84,11 @@ SELL signals bypass exposure checks (closing a position can't add exposure).
 
 ## Known bugs (small, worth fixing)
 
-- **`POST /settings/safety` doesn't propagate.** Updates the persisted config but doesn't push to the running `SafetyValidator`. `/settings/safety-status` keeps reporting old limits. Workaround: restart the backend.
-- **`/portfolio/{id}/flatten` orders bypass the `/trades/` ledger.** Position state updates correctly, but the trade row never lands. Means `daily_tracker.trade_count` doesn't reflect operator-initiated trims.
-- **`/trades/` returns oldest-first.** Most callers want newest-first — easy to forget.
+_None tracked at the moment — file issues in GitHub as they surface._
 
 ## Frontend conventions
 
-- Routing: HashRouter. URLs look like `http://localhost:3002/#/watchlist`.
+- Routing: HashRouter. URLs look like `http://localhost:3001/#/watchlist`.
 - `app/src/components/Layout.tsx` is the shell — sidebar + top bar + main. `title` prop is optional; pages with their own in-body hero (Watchlist, Advisor, Squeeze, About) should omit it to avoid a duplicate page title.
 - The flex column in Layout needs `min-w-0` or the inner `max-w-[1600px]` main forces horizontal scroll. Don't remove it.
 - Mono font (`font-mono tabular-nums`) on every numeric value. Hero numbers use `text-2xl font-semibold`.

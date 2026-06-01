@@ -38,6 +38,7 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import Layout from '@/components/Layout';
+import IdleStateBanner from '@/components/IdleStateBanner';
 import MetricCard from '@/components/MetricCard';
 import Badge from '@/components/Badge';
 import StatusDot from '@/components/StatusDot';
@@ -418,6 +419,7 @@ export default function Home() {
         </div>
       )}
       <div className="space-y-5">
+        <IdleStateBanner />
         {/* Signals Strip — macro / sentiment / catalysts at a glance */}
         <SignalsStrip signals={signals} />
 
@@ -727,6 +729,8 @@ export default function Home() {
                 const fallback = agg[bot.strategy_id];
                 const pnl = Number(metrics?.total_pnl ?? fallback?.pnl ?? 0);
                 const tradeCount = metrics?.total_trades ?? fallback?.trades ?? 0;
+                const winRateRaw = metrics?.win_rate ?? (fallback as Record<string, number> | undefined)?.win_rate;
+                const winRate = winRateRaw != null && Number(tradeCount) > 0 ? Number(winRateRaw) : null;
                 const cfg = (bot.config as Record<string, unknown>) || {};
                 // Multi-symbol bots store symbols in ``config.symbols`` (array);
                 // single-symbol legacy bots use ``config.symbol``. Show first 3
@@ -749,7 +753,7 @@ export default function Home() {
                       delay: 0.6 + index * 0.1,
                       ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
                     }}
-                    className="rounded-[10px] border border-border-subtle bg-bg-surface p-5 transition-all hover:-translate-y-0.5 hover:border-accent-cyan/20"
+                    className="rounded-[10px] border border-border-subtle bg-bg-surface p-4 transition-all hover:-translate-y-0.5 hover:border-accent-cyan/20"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
@@ -773,18 +777,28 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <div className="mt-3">
-                      <p
-                        className={`font-mono text-base font-medium tabular-nums ${
-                          pnl >= 0 ? 'text-success-green' : 'text-danger-red'
-                        }`}
-                      >
-                        {pnl >= 0 ? '+' : ''}
-                        {formatCurrency(pnl)}
-                      </p>
-                      <p className="text-xs text-text-muted">
-                        {tradeCount > 0 ? `${tradeCount} trade${tradeCount === 1 ? '' : 's'}` : 'No trades yet'}
-                      </p>
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[10px] uppercase tracking-wider text-text-muted">P&amp;L</p>
+                        <p
+                          className={`truncate font-mono text-sm font-medium tabular-nums ${
+                            pnl >= 0 ? 'text-success-green' : 'text-danger-red'
+                          }`}
+                        >
+                          {pnl >= 0 ? '+' : ''}
+                          {formatCurrency(pnl)}
+                        </p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] uppercase tracking-wider text-text-muted">Trades</p>
+                        <p className="font-mono text-sm tabular-nums text-text-primary">{tradeCount}</p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] uppercase tracking-wider text-text-muted">Win</p>
+                        <p className="font-mono text-sm tabular-nums text-text-primary">
+                          {winRate != null ? `${winRate.toFixed(0)}%` : '—'}
+                        </p>
+                      </div>
                     </div>
 
                     <div className="mt-3 flex items-center gap-2">

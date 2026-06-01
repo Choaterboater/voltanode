@@ -27,6 +27,26 @@ export const restartBackend = () =>
     { method: 'POST' },
   );
 
+export interface ApiSafetyStatus {
+  live_mode: boolean;
+  broker_connected: boolean;
+  kill_switch: {
+    activated: boolean;
+    reason?: string | null;
+    activated_at?: string | null;
+  };
+  daily_tracker: Record<string, unknown>;
+  safety_limits: {
+    max_exposure_pct?: number;
+    max_position_size_pct?: number;
+    max_orders_per_minute?: number;
+    orders_remaining_this_minute?: number;
+    [key: string]: unknown;
+  };
+}
+
+export const getSafetyStatus = () => fetchJson<ApiSafetyStatus>('/settings/safety-status');
+
 // ── Portfolio ──
 export interface ApiPortfolio {
   account_id: string;
@@ -66,6 +86,23 @@ export const getEquityHistory = (
   fetchJson<{ account_id: string; range: string; points: EquityPoint[] }>(
     `/portfolio/${accountId}/equity-history?range=${range}`,
   );
+
+export interface PortfolioStats {
+  account_id: string;
+  range: string;
+  equity_curve: EquityPoint[];
+  total_return_pct: number;
+  sharpe_ratio: number;
+  max_drawdown_pct: number;
+  win_rate: number;
+  profit_factor: number | null;
+  total_trades: number;
+}
+
+export const getPortfolioStats = (
+  accountId = 'default',
+  range: '1H' | '24H' | '7D' | '30D' | 'ALL' = '24H',
+) => fetchJson<PortfolioStats>(`/portfolio/${accountId}/stats?range=${range}`);
 
 // ── Signals (macro / sentiment / catalysts) ──
 
@@ -258,7 +295,8 @@ export interface ApiTrade {
   strategy_id: string | null;
 }
 
-export const getTrades = () => fetchJson<ApiTrade[]>('/trades');
+export const getTrades = (limit?: number) =>
+  fetchJson<ApiTrade[]>(limit ? `/trades/?limit=${limit}` : '/trades');
 
 // ── Settings ──
 export interface LiveModeStatus {

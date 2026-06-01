@@ -9,7 +9,7 @@ import numpy as np
 from bot.config import BotConfig, OrderSide, PositionSide
 from bot.engine import PaperTradingEngine, TickData
 from bot.orders import ExecutionSimulator, Order, OrderType
-from bot.portfolio import Portfolio, Position
+from bot.portfolio import Portfolio, Position, lookup_price, symbol_lookup_keys, symbols_equivalent
 from bot.risk import DrawdownMonitor, PositionSizer, RiskManager, RiskConfig
 
 
@@ -42,7 +42,9 @@ class TestOrderExecution:
         pos = portfolio.get_position("BTC")
         assert pos is not None
         assert pos.side == PositionSide.LONG
-        assert pos.size == 0.1
+        # Market-order risk checks now use the live mark and clamp to the
+        # default 20% max-position cap instead of treating BTC as $1.
+        assert pos.size == pytest.approx(0.08)
 
     def test_limit_order_fill(self, engine: PaperTradingEngine) -> None:
         """Submit limit buy below price, verify fill when price drops."""
@@ -72,8 +74,9 @@ class TestOrderExecution:
         # Price goes to 110
         engine.on_tick(TickData(symbol="TEST", price=110.0))
         pos = portfolio.get_position("TEST")
-        # Allow for slippage on entry: expected ~100 but may be slightly less
-        assert abs(pos.unrealized_pnl - 100.0) < 5.0
+        # Profit manager takes a 40% partial at +8%, then lets the rest run.
+        assert pos.size == pytest.approx(6.0)
+        assert abs(pos.unrealized_pnl - 60.0) < 5.0
 
     def test_short_position_pnl(self, engine: PaperTradingEngine) -> None:
         """Test that selling without a position is rejected (prevents infinite money bug)."""
@@ -205,6 +208,12 @@ class TestRiskManager:
         result = risk.check_order(order, portfolio)
         assert result.allowed
 
+        # Market orders must be checked against the live mark, not a $1 fallback.
+        large = Order.market("BTC", OrderSide.BUY, 1.0, account_id="test")
+        result = risk.check_order(large, portfolio, current_price=50000.0)
+        assert result.allowed
+        assert large.quantity == pytest.approx(0.04)
+
 
 class TestEngine:
     """Test engine orchestration."""
@@ -238,3 +247,83 @@ class TestEngine:
         assert engine.cancel_order(order.id)
         from bot.orders import OrderStatus
         assert engine.get_order_status(order.id) == OrderStatus.CANCELED
+
+
+class TestSymbolNormalization:
+    """Bare vs suffixed symbol keys must resolve consistently."""
+
+    def test_symbol_lookup_keys_bare_and_suffixed(self) -> None:
+        assert "BTC" in symbol_lookup_keys("BTCUSD")
+        assert "BTCUSD" in symbol_lookup_keys("BTC")
+
+    def test_symbols_equivalent(self) -> None:
+        assert symbols_equivalent("BTC", "BTCUSD")
+        assert not symbols_equivalent("BTC", "ETH")
+
+    def test_lookup_price_across_aliases(self) -> None:
+        prices = {"BTC": 75000.0}
+        assert lookup_price(prices, "BTCUSD") == 75000.0
+
+    def test_managed_stop_sees_bare_tick_price(self, config: BotConfig) -> None:
+        """Managed stops on BTCUSD positions must fire on BTC ticks."""
+        engine = PaperTradingEngine(config)
+        portfolio = engine.get_portfolio("default")
+        portfolio._positions["BTCUSD"] = Position(
+            symbol="BTCUSD",
+            side=PositionSide.LONG,
+            size=0.1,
+            entry_price=100000.0,
+            current_price=75000.0,
+            stop_loss=80000.0,
+        )
+        engine.on_tick(TickData(symbol="BTC", price=75000.0))
+        trailing = [
+            o for o in engine.get_orders()
+            if o.strategy_id == "sltp_manager" and o.symbol == "BTCUSD"
+        ]
+        assert trailing, "expected managed stop order on BTCUSD position"
+
+
+class TestProfitAwareExits:
+    """Profit manager should improve win-rate behavior."""
+
+    def test_partial_take_profit_sells_only_part_of_winner(self, config: BotConfig) -> None:
+        engine = PaperTradingEngine(config)
+        portfolio = engine.get_portfolio("default")
+        portfolio.open_position("TEST", PositionSide.LONG, 100.0, 100.0, stop_loss=92.0, take_profit=108.0)
+
+        engine.on_tick(TickData(symbol="TEST", price=108.0))
+
+        pos = portfolio.get_position("TEST")
+        assert pos is not None
+        assert pos.status == "open"
+        assert pos.size == pytest.approx(60.0)
+        assert pos.partial_profit_taken is True
+        assert pos.take_profit is None
+        assert any(o.strategy_id == "partial_take_profit" for o in engine.get_orders())
+
+    def test_breakeven_and_delayed_trailing_stop(self, config: BotConfig) -> None:
+        engine = PaperTradingEngine(config)
+        portfolio = engine.get_portfolio("default")
+        portfolio.open_position("TEST", PositionSide.LONG, 10.0, 100.0, stop_loss=92.0, take_profit=130.0)
+
+        engine.on_tick(TickData(symbol="TEST", price=104.0))
+        pos = portfolio.get_position("TEST")
+        assert pos is not None
+        assert pos.stop_loss == pytest.approx(100.2)
+
+        engine.on_tick(TickData(symbol="TEST", price=110.0))
+        assert pos.high_water_price == pytest.approx(110.0)
+        assert pos.stop_loss == pytest.approx(105.6)
+
+    def test_no_synthetic_two_percent_trailing_stop(self, config: BotConfig) -> None:
+        engine = PaperTradingEngine(config)
+        portfolio = engine.get_portfolio("default")
+        portfolio.open_position("TEST", PositionSide.LONG, 10.0, 100.0)
+
+        engine.on_tick(TickData(symbol="TEST", price=97.0))
+
+        assert not [
+            o for o in engine.get_orders()
+            if o.strategy_id == "trailing_stop" and o.symbol == "TEST"
+        ]

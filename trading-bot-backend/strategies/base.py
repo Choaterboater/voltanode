@@ -162,6 +162,150 @@ class BaseStrategy(ABC):
             return [str(sym).strip().upper()]
         return []
 
+    def _size_from_equity_pct(self, current_price: float, default_pct: float = 0.03) -> float:
+        """Return quantity for a configurable percent-of-equity position.
+
+        Older strategies used a hardcoded $1k notional, which leaves most of
+        a paper account idle. ``position_pct`` is a decimal fraction here
+        (0.05 = 5%) to match auto_discovery / squeeze.
+        """
+        if current_price <= 0:
+            return 0.0
+        pct = float(self.config.get("position_pct", default_pct) or default_pct)
+        pct = max(0.0, min(pct, 0.20))
+        equity = float(getattr(self, "_equity", 100_000.0) or 100_000.0)
+        return (equity * pct) / current_price
+
+    def _apply_volatility_target(self, signal: "Signal | None", ohlcv_data: Any) -> "Signal | None":
+        """Scale a BUY's suggested size to a volatility target (opt-in).
+
+        Enabled per-bot via ``config['volatility_target']``::
+
+            {"enabled": true, "daily_vol": 0.03, "lookback": 20,
+             "scale_min": 0.3, "scale_max": 2.5}
+
+        ``scale = clamp(daily_vol / realized_daily_vol, scale_min, scale_max)``.
+        Default off — when the block is absent the signal is returned unchanged,
+        so existing bots behave exactly as before. The engine's
+        ``max_position_size_pct`` cap still bounds the up-scaled size.
+        """
+        try:
+            vt = self.config.get("volatility_target") or {}
+            if not vt.get("enabled"):
+                return signal
+            if signal is None or signal.signal_type != SignalType.BUY:
+                return signal
+            if not signal.suggested_size or signal.suggested_size <= 0:
+                return signal
+            if ohlcv_data is None or "close" not in getattr(ohlcv_data, "columns", []):
+                return signal
+            lookback = int(vt.get("lookback", 20))
+            closes = ohlcv_data["close"].astype(float).tail(lookback + 1)
+            if len(closes) < 5:
+                return signal
+            rets = closes.pct_change().dropna()
+            realized = float(rets.std())
+            if realized <= 0:
+                return signal
+            target = float(vt.get("daily_vol", 0.03))
+            lo = float(vt.get("scale_min", 0.3))
+            hi = float(vt.get("scale_max", 2.5))
+            scale = max(lo, min(target / realized, hi))
+            meta = signal.metadata if isinstance(signal.metadata, dict) else {}
+            meta["vol_target"] = {
+                "realized_daily": round(realized, 5),
+                "target_daily": target,
+                "scale": round(scale, 3),
+                "size_before": signal.suggested_size,
+            }
+            signal.suggested_size = signal.suggested_size * scale
+            signal.metadata = meta
+        except Exception:
+            return signal
+        return signal
+
+    def _apply_cost_gate(self, signal: "Signal | None", current_price: float) -> "Signal | None":
+        """Downgrade a BUY to HOLD when its target can't beat round-trip cost.
+
+        Enabled per-bot via ``config['cost_gate']``::
+
+            {"enabled": true, "round_trip_bps": 30.0, "margin": 1.5}
+
+        ``round_trip_bps`` should cover entry+exit fees + slippage + half-spread
+        (default 30 bps ≈ 10 bps fee + 5 bps slippage, each side). A BUY whose
+        take-profit is closer than ``round_trip_bps * margin`` is rejected.
+        Signals without a take-profit are left untouched (can't assess). Default
+        off — absent block ⇒ unchanged behavior.
+        """
+        try:
+            cg = self.config.get("cost_gate") or {}
+            if not cg.get("enabled"):
+                return signal
+            if signal is None or signal.signal_type != SignalType.BUY:
+                return signal
+            tp = signal.take_profit
+            if not tp or not current_price or current_price <= 0:
+                return signal
+            tp_bps = abs(float(tp) - current_price) / current_price * 1e4
+            round_trip_bps = float(cg.get("round_trip_bps", 30.0))
+            margin = float(cg.get("margin", 1.5))
+            required = round_trip_bps * margin
+            if tp_bps < required:
+                return Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=signal.symbol,
+                    signal_type=SignalType.HOLD,
+                    confidence=0.0,
+                    timestamp=signal.timestamp,
+                    metadata={
+                        "trigger": "cost_gate",
+                        "tp_bps": round(tp_bps, 1),
+                        "required_bps": round(required, 1),
+                        "original_trigger": (signal.metadata or {}).get("trigger"),
+                    },
+                )
+        except Exception:
+            return signal
+        return signal
+
+    def _apply_funding_gate(self, signal: "Signal | None", symbol: str) -> "Signal | None":
+        """Veto a BUY into a crowded-long perp funding regime (opt-in).
+
+        Enabled per-bot via ``config['funding_gate']``::
+
+            {"enabled": true, "max_age_s": 900}
+
+        Reads ``data.funding.cached_funding_signal`` (cache only, no network).
+        ``None`` (no/stale data) ⇒ no opinion ⇒ allow. Default off. Only crypto
+        symbols will have a funding regime; equities return ``None`` ⇒ allowed.
+        """
+        try:
+            fg = self.config.get("funding_gate") or {}
+            if not fg.get("enabled"):
+                return signal
+            if signal is None or signal.signal_type != SignalType.BUY:
+                return signal
+            from data.funding import cached_funding_signal
+
+            fsig = cached_funding_signal(symbol, max_age_s=float(fg.get("max_age_s", 900.0)))
+            if fsig is None or not fsig.blocks_new_long:
+                return signal
+            return Signal(
+                strategy_id=self.strategy_id,
+                symbol=signal.symbol,
+                signal_type=SignalType.HOLD,
+                confidence=0.0,
+                timestamp=signal.timestamp,
+                metadata={
+                    "trigger": "funding_gate",
+                    "regime": fsig.regime,
+                    "funding_rate": fsig.funding_rate,
+                    "original_trigger": (signal.metadata or {}).get("trigger"),
+                },
+            )
+        except Exception:
+            return signal
+
     def _matches_symbol(self, tick_symbol: str) -> bool:
         """True when the tick's symbol is in this strategy's scope."""
         configured = self.configured_symbols()
@@ -197,7 +341,46 @@ class BaseStrategy(ABC):
             ohlcv_data = ohlcv_data.copy()
             ohlcv_data.attrs["symbol"] = tick.symbol
             self._signal_context = sig_ctx  # available to generate_signal subclasses
+            # Snapshot live equity so pct-based sizing (auto_discovery,
+            # squeeze, simple_trend, news_sentiment) scales against the
+            # actual account, not a hardcoded $1k baseline.
+            #
+            # Broker syncs (Alpaca) populate _balances with overlapping
+            # ledger keys: USD (cash), EQUITY (already cash+positions),
+            # BUYING_POWER (margin). Summing all keys double-counts wildly,
+            # so we mirror api/routes/portfolio.py:152-160's picker:
+            # prefer an explicit EQUITY key if present, else sum just the
+            # cash keys + position market values.
+            try:
+                bal = portfolio.get_all_balances() if portfolio else {}
+                positions = portfolio.get_all_positions() if portfolio else []
+                if bal and any(k.upper() == "EQUITY" for k in bal):
+                    eq_key = next(k for k in bal if k.upper() == "EQUITY")
+                    _eq = float(bal[eq_key])
+                else:
+                    cash_keys = {"USD", "USDT", "CASH"}
+                    cash = sum(v for k, v in bal.items() if k.upper() in cash_keys)
+                    mv = sum(p.market_value or 0.0 for p in positions)
+                    _eq = float(cash + mv)
+                self._equity = _eq if _eq > 0 else 100_000.0
+            except Exception:
+                self._equity = 100_000.0
             signal = self.generate_signal(ohlcv_data, tick.price)
+            # Volatility-target overlay (opt-in, default off). Scales a BUY's
+            # suggested size inversely to recent realized volatility so calm
+            # names get more capital and choppy names less — equalizing risk
+            # per position. The downstream max_position_size_pct cap still
+            # bounds the result.
+            signal = self._apply_volatility_target(signal, ohlcv_data)
+            # Cost-aware entry gate (opt-in, default off): reject a BUY whose
+            # take-profit target can't clear estimated round-trip cost with
+            # margin. At minutes cadence, turnover cost dominates PnL — this
+            # stops deploying trades that are net-negative before they start.
+            signal = self._apply_cost_gate(signal, tick.price)
+            # Funding-regime gate (opt-in, default off): veto BUYs into a
+            # crowded-long perp funding regime. Reads a cache populated by the
+            # background funding loop — ZERO network I/O in the tick path.
+            signal = self._apply_funding_gate(signal, tick.symbol)
             # Position-aware BUY gate: if the strategy proposes to open a
             # long but the portfolio already has an open long position on
             # the same symbol, downgrade to HOLD. This kills the "every
@@ -265,9 +448,26 @@ class BaseStrategy(ABC):
                             "original_trigger": (signal.metadata or {}).get("trigger"),
                         },
                     )
-                if signal.suggested_size is not None and signal.suggested_size > held:
+                # Agentic exit: a strategy SELL on a symbol we hold is a
+                # directional exit (trend flip / stop / score decay), not a
+                # scale-out. Close the FULL held quantity by default — otherwise
+                # a flip signal sized at e.g. 3%-of-equity notional leaves most
+                # of the position open against the freshly-confirmed adverse
+                # trend (the agentic-exit leak across momentum/macd/MR/bband/
+                # swing/news bots, all of which size SELLs off equity, not the
+                # held position). Strategies wanting a partial scale-out set
+                # metadata['partial']=True; engine-managed take-profit trims use
+                # a separate path and never reach this gate.
+                _meta = signal.metadata if isinstance(signal.metadata, dict) else {}
+                if not _meta.get("partial"):
+                    if signal.suggested_size is None or abs(signal.suggested_size - held) > 1e-9:
+                        _meta["exit_full_close_from"] = signal.suggested_size
+                        signal.suggested_size = held
+                        signal.metadata = _meta
+                elif signal.suggested_size is not None and signal.suggested_size > held:
                     signal.suggested_size = held
-                    (signal.metadata or {})["sell_clamped_from"] = "oversize"
+                    _meta["sell_clamped_from"] = "oversize"
+                    signal.metadata = _meta
                 # Final dust check — qty=0 (post-clamp rounding) should not
                 # leave the strategy; let the engine treat as HOLD.
                 if signal.suggested_size is not None and signal.suggested_size <= 1e-9:
@@ -289,8 +489,8 @@ class BaseStrategy(ABC):
     RESPECTS_SIGNAL_CONTEXT: bool = True
 
     #: Per-strategy thresholds — override in subclasses to tune.
-    VIX_PANIC_THRESHOLD: float = 30.0
-    EARNINGS_BLOCK_DAYS: int = 2
+    VIX_PANIC_THRESHOLD: float = 35.0
+    EARNINGS_BLOCK_DAYS: int = 1
 
     def _signal_gate_check(self, sig_ctx: Any, symbol: str) -> bool:
         """Return True when strategy should skip this tick due to global signals.

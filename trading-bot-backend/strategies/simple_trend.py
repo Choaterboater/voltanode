@@ -38,9 +38,9 @@ class SimpleTrendStrategy(BaseStrategy):
         "take_profit_pct": 0.08,
         # Hysteresis: price must clear EMA band by this fraction before flip.
         # 0.005 = 0.5% buffer kills "barely above EMA" noise oscillation.
-        "hysteresis_pct": 0.005,
+        "hysteresis_pct": 0.003,
         # Minimum hold time after a fire before allowing the opposite side.
-        "min_hold_minutes": 30,
+        "min_hold_minutes": 15,
     }
 
     def __init__(self, *args, **kwargs):
@@ -146,7 +146,7 @@ class SimpleTrendStrategy(BaseStrategy):
                     "slow_ema": float(ema_slow),
                     "trigger": "price_above_emas",
                 },
-                suggested_size=(pos_pct * 1000.0) / current_price if current_price > 0 else 0.0,
+                suggested_size=(pos_pct * getattr(self, "_equity", 100_000.0)) / current_price if current_price > 0 else 0.0,
                 stop_loss=current_price * (1 - sl_pct),
                 take_profit=current_price * (1 + tp_pct),
             )
@@ -187,7 +187,7 @@ class SimpleTrendStrategy(BaseStrategy):
                     "slow_ema": float(ema_slow),
                     "trigger": "price_below_emas",
                 },
-                suggested_size=(pos_pct * 1000.0) / current_price if current_price > 0 else 0.0,
+                suggested_size=(pos_pct * getattr(self, "_equity", 100_000.0)) / current_price if current_price > 0 else 0.0,
                 stop_loss=current_price * (1 + sl_pct),
                 take_profit=current_price * (1 - tp_pct),
             )

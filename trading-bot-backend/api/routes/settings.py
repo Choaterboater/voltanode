@@ -532,7 +532,7 @@ async def get_safety_status(request: Request) -> dict:
             "safety_limits": engine.safety_validator.get_status() if hasattr(engine, "safety_validator") else {},
         }
 
-    # Fallback for paper engine
+    # Fallback for paper engine (no SafetyValidator / daily_tracker instance)
     return {
         "live_mode": False,
         "broker_connected": False,
@@ -543,6 +543,10 @@ async def get_safety_status(request: Request) -> dict:
             "max_position_size_pct": config.safety.max_position_size_pct,
             "max_exposure_pct": config.safety.max_exposure_pct,
             "max_orders_per_minute": config.safety.max_orders_per_minute,
+            "allowed_symbols": list(config.safety.allowed_symbols),
+            "blocked_symbols": list(config.safety.blocked_symbols),
+            # Paper engine has no live rate counter; surface the configured cap.
+            "orders_remaining_this_minute": config.safety.max_orders_per_minute,
         },
     }
 

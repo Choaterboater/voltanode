@@ -5,6 +5,7 @@ import {
   getStrategies,
   getTrades,
   getEquityHistory,
+  getPortfolioStats,
   type ApiPortfolio,
   type ApiPrice,
   type ApiStrategy,
@@ -154,14 +155,8 @@ function mapTickers(prices: ApiPrice[]): MarketTicker[] {
 }
 
 function mapTrades(trades: ApiTrade[]): Trade[] {
-  // /trades/ returns chronological (oldest-first). Reverse so the
-  // Dashboard's "Recent Trades" panel shows newest-first as the label
-  // implies. Sort by timestamp explicitly in case the backend ever
-  // changes its ordering — this is the canonical client-side sort.
-  const sorted = [...trades].sort(
-    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-  );
-  return sorted.map((t) => {
+  // /trades/ is newest-first from the API; map in response order.
+  return trades.map((t) => {
     // Backend ``OrderSide`` enum serializes lowercase ('buy'/'sell'); the
     // older comparison against 'BUY' bucketed everything as 'short'.
     const sideRaw = String(t.side ?? '').toLowerCase();
@@ -207,12 +202,13 @@ export function useDashboardData() {
       // Only show the full-page spinner on the very first load. Background
       // polls keep stale data on screen so the dashboard doesn't flash.
       if (!hasLoadedRef.current) setLoading(true);
-      const [portRes, priceRes, stratRes, tradeRes, equityRes] = await Promise.all([
+      const [portRes, priceRes, stratRes, tradeRes, equityRes, statsRes] = await Promise.all([
         getPortfolio(),
         getPrices(CRYPTO_SYMBOLS),
         getStrategies(),
         getTrades(),
         getEquityHistory('default', '30D').catch(() => ({ points: [] as EquityPoint[] })),
+        getPortfolioStats('default', '30D').catch(() => null),
       ]);
       if (cancelledRef.current) return;
       setPortfolio(mapPortfolio(portRes));
@@ -223,7 +219,15 @@ export function useDashboardData() {
       setTrades(mapped);
       setEquityHistory(equityRes.points || []);
       setAllocation(deriveAllocation(portRes));
-      setPerf(derivePerformance(mapped));
+      const basePerf = derivePerformance(mapped);
+      setPerf({
+        ...basePerf,
+        winRate: statsRes?.win_rate ?? basePerf.winRate,
+        sharpeRatio: statsRes?.sharpe_ratio ?? basePerf.sharpeRatio,
+        maxDrawdownPercent: statsRes?.max_drawdown_pct ?? basePerf.maxDrawdownPercent,
+        profitFactor: statsRes?.profit_factor ?? basePerf.profitFactor,
+        totalTrades: statsRes?.total_trades ?? basePerf.totalTrades,
+      });
       setError(null);
       hasLoadedRef.current = true;
     } catch (e) {

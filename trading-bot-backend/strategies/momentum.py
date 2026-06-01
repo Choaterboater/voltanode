@@ -20,6 +20,7 @@ class MomentumStrategy(BaseStrategy):
         "fast_ema": 12,
         "slow_ema": 26,
         "signal_ema": 9,
+        "position_pct": 0.03,
         # Lowered from 200 → 100: on a 1-year daily backtest (~252 bars),
         # an EMA-200 warmup eats ~80% of the available history, leaving
         # almost no bars for the strategy to actually fire on. 100 still
@@ -134,7 +135,7 @@ class MomentumStrategy(BaseStrategy):
                     "trend_ema": float(curr_trend),
                     "atr": float(atr),
                 },
-                suggested_size=1000.0 / current_price if current_price > 0 else 0.0,
+                suggested_size=self._size_from_equity_pct(current_price, default_pct=0.03),
                 stop_loss=current_price * 0.95,
                 take_profit=current_price * 1.1,
             )
@@ -157,7 +158,7 @@ class MomentumStrategy(BaseStrategy):
                     "trend_ema": float(curr_trend),
                     "atr": float(atr),
                 },
-                suggested_size=1000.0 / current_price if current_price > 0 else 0.0,
+                suggested_size=self._size_from_equity_pct(current_price, default_pct=0.03),
                 stop_loss=current_price * 0.95,
                 take_profit=current_price * 1.1,
             )

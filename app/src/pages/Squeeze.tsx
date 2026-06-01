@@ -284,11 +284,10 @@ export default function Squeeze() {
     }
   };
 
-  // Auto-run once on first load. The hook's module-level cache makes this
-  // a no-op on re-mount within ~10 minutes, so navigating away and back
-  // doesn't trigger a fresh 10-15s scan.
+  // Auto-run once on first load — skip technical OHLCV for a fast first paint.
+  // Click "Run Discovery" for the full pass with sparklines + tech scores.
   useEffect(() => {
-    runScan({ daysBack: 7, fetchTechnical: true, maxPrice: 20 }).catch(
+    runScan({ daysBack: 7, fetchTechnical: false, maxPrice: 20 }).catch(
       () => {},
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -326,13 +325,16 @@ export default function Squeeze() {
   };
 
   const handleRun = () => {
-    runScan({
-      daysBack,
-      extraSymbols: extra.trim() || undefined,
-      fetchTechnical: true,
-      maxResults: 50,
-      maxPrice,
-    }).catch(() => {});
+    runScan(
+      {
+        daysBack,
+        extraSymbols: extra.trim() || undefined,
+        fetchTechnical: true,
+        maxResults: 50,
+        maxPrice,
+      },
+      { force: true },
+    ).catch(() => {});
   };
 
   const filteredResults: SqueezeResult[] = useMemo(() => {

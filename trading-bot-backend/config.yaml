@@ -7,6 +7,7 @@ engine:
   tick_interval_seconds: 5.0
   max_accounts: 10
   auto_start_strategies: true
+  post_close_cooldown_minutes: 15.0
 market_data:
   coingecko:
     enabled: true
@@ -221,15 +222,32 @@ risk:
   default_stop_loss_pct: 0.02
   default_take_profit_pct: 0.06
   position_sizing_method: percentage
-  position_sizing_value: 0.02
+  position_sizing_value: 0.03
   fee_rate: 0.001
   slippage_model: fixed
   slippage_bps: 5.0
+capital_deployment:
+  enabled: true
+  target_exposure_pct: 95.0
+  max_cash_pct: 20.0
+  min_cash_reserve_pct: 5.0
+  position_pct: 4.0
+  max_new_positions_per_cycle: 2
+  deploy_interval_minutes: 30.0
+  min_score: 48.0
+  min_source_count: 2
+  max_open_positions: 28
+  initial_stop_loss_pct: 0.07
+  initial_take_profit_pct: 0.20
+  asset_class: stock
+  min_order_notional: 25.0
 api:
   host: 0.0.0.0
   port: 8000
   cors_origins:
   - http://localhost:3000
+  - http://localhost:3001
+  - http://127.0.0.1:3001
 backtest:
   default_initial_balance:
     USDT: 10000.0
@@ -285,8 +303,9 @@ strategies:
     symbols:
     - bitcoin
     - ethereum
-    buy_threshold: 0.6
-    sell_threshold: 0.4
+    buy_threshold: 0.45
+    sell_threshold: -0.45
+    position_pct: 0.03
     indicators:
       rsi:
         weight: 0.2

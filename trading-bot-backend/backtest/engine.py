@@ -88,8 +88,13 @@ class BacktestRunner:
         self.initial_balance = initial_balance or config.initial_balance
         self.execution = ExecutionSimulator(
             fee_rate=config.fee_rate,
-            slippage_model="fixed",
+            slippage_model=getattr(config, "slippage_model", "fixed"),
             slippage_bps=config.slippage_bps,
+            # Fixed seed by default so a backtest is reproducible run-to-run;
+            # override via config.random_seed.
+            seed=getattr(config, "random_seed", 42),
+            impact_coeff_bps=getattr(config, "impact_coeff_bps", 0.0),
+            impact_ref_notional=getattr(config, "impact_ref_notional", 10_000.0),
         )
         self._trades: List[TradeRecord] = []
         self._equity_curve: List[Dict[str, Any]] = []
@@ -138,8 +143,42 @@ class BacktestRunner:
                     pos["unrealized_pnl"] = (pos["entry_price"] - current_price) * pos["size"]
                 pos["current_price"] = current_price
 
-            # Generate signal
+            # Enforce stop-loss / take-profit intra-bar BEFORE new signals, so
+            # the backtest exits the way the live engine would (it used to
+            # ignore the strategy's risk levels entirely). Uses the bar's
+            # high/low to catch intra-bar touches.
+            self._check_stop_tp(positions, data.iloc[i], portfolio, quote_asset, timestamp)
+
+            # Generate signal, then apply the same opt-in gates the live engine
+            # runs in BaseStrategy.on_tick — so a backtest reflects live gating
+            # (paper-to-live fidelity). These are pure signal transforms; each
+            # is default-OFF (no config block => unchanged behavior), so a
+            # backtest with no gate config is byte-identical to before. When a
+            # bot's config enables a gate, its backtest now shows the effect.
             signal = strategy.generate_signal(current_bar, current_price)
+            try:
+                signal = strategy._apply_volatility_target(signal, current_bar)
+                signal = strategy._apply_cost_gate(signal, current_price)
+                signal = strategy._apply_funding_gate(signal, signal.symbol)
+            except Exception:
+                pass  # never let a gate transform abort the backtest
+
+            # Position-aware gates mirroring BaseStrategy.on_tick so the backtest
+            # matches live: suppress a re-BUY while already long this symbol
+            # (live downgrades to HOLD), and full-close on a SELL exit (live
+            # sets suggested_size = held qty). Without this the backtest lets a
+            # dip-buyer add to its position every bar — inflating trade counts
+            # and returns vs what the live engine would actually do.
+            held = positions.get(signal.symbol)
+            held_open = bool(held and held.get("side") == "long" and held.get("size", 0) > 1e-9)
+            if signal.signal_type == SignalType.BUY and held_open:
+                signal.signal_type = SignalType.HOLD
+            elif (
+                signal.signal_type == SignalType.SELL
+                and held_open
+                and not (signal.metadata or {}).get("partial")
+            ):
+                signal.suggested_size = held["size"]
 
             if signal.signal_type == SignalType.BUY:
                 self._execute_signal(
@@ -150,10 +189,19 @@ class BacktestRunner:
                     signal, current_price, portfolio, positions, quote_asset
                 )
 
-            # Record equity
+            # Record equity = cash + signed position MARKET VALUE. Previously
+            # this added unrealized_pnl instead of market value, which omitted
+            # the cost basis already withdrawn from cash on the BUY — so every
+            # entry made equity instantly drop by the position cost and produced
+            # impossible >100% drawdowns. Longs add +mv, shorts subtract their
+            # buy-back liability (proceeds are already credited to cash).
+            total_position_value = 0.0
+            for p in positions.values():
+                mv = p["size"] * p["current_price"]
+                total_position_value += mv if p["side"] == "long" else -mv
             total_unrealized = sum(p["unrealized_pnl"] for p in positions.values())
             total_realized = sum(t.realized_pnl for t in self._trades)
-            equity = sum(portfolio.get_all_balances().values()) + total_unrealized
+            equity = sum(portfolio.get_all_balances().values()) + total_position_value
             peak = max(
                 (e["equity"] for e in self._equity_curve), default=equity
             )
@@ -210,7 +258,17 @@ class BacktestRunner:
             )
         size = max(size, 0.0)
 
-        if size == 0:
+        # No margin in the backtest: cap a BUY to available cash so a repeat
+        # dip-buyer (e.g. mean_reversion) can't accumulate a LEVERAGED long on
+        # negative cash — that was the source of the impossible >100% long-only
+        # drawdowns. SELL closes are unaffected by this long-side cap.
+        if is_buy and current_price > 0:
+            avail = float(portfolio.get_all_balances().get(quote_asset, 0.0))
+            fee_rate = float(getattr(self.execution, "fee_rate", 0.0) or 0.0)
+            max_qty = avail / (current_price * (1.0 + fee_rate))
+            size = min(size, max(0.0, max_qty))
+
+        if size <= 0:
             return
 
         # Create order
@@ -257,9 +315,14 @@ class BacktestRunner:
                             "entry_price": fill.filled_price,
                             "current_price": fill.filled_price,
                             "unrealized_pnl": 0.0,
+                            # Carry the strategy's risk levels so the backtest
+                            # ENFORCES them intra-bar (it used to ignore stop/TP).
+                            "stop_loss": signal.stop_loss,
+                            "take_profit": signal.take_profit,
                         }
                     # Log the entry as a trade so total_trades reflects activity.
-                    # Realized P&L is 0 for entries; closes will record their own.
+                    # Realized P&L is 0 for entries; closes record their own.
+                    # is_entry=True so win-rate denominates over closes, not opens.
                     self._trades.append(
                         TradeRecord(
                             timestamp=fill.timestamp,
@@ -267,12 +330,16 @@ class BacktestRunner:
                             side="buy",
                             quantity=fill.filled_qty,
                             price=fill.filled_price,
+                            is_entry=True,
                         )
                     )
             else:
-                # Sell
-                portfolio.deposit(quote_asset, fill.filled_qty * fill.filled_price - fill.fee)
+                # Sell. Only credit cash when a real position action happens —
+                # the old unconditional deposit injected free cash on a SELL
+                # while flat (with shorting off), silently inflating equity.
+                proceeds = fill.filled_qty * fill.filled_price - fill.fee
                 if symbol in positions and positions[symbol]["side"] == "long":
+                    portfolio.deposit(quote_asset, proceeds)
                     pos = positions[symbol]
                     realized = (fill.filled_price - pos["entry_price"]) * min(fill.filled_qty, pos["size"])
                     if fill.filled_qty >= pos["size"]:
@@ -291,7 +358,8 @@ class BacktestRunner:
                         )
                     )
                 elif self.config.allow_short:
-                    # Open or add to short
+                    # Open or add to short — credit the short proceeds here.
+                    portfolio.deposit(quote_asset, proceeds)
                     if symbol in positions and positions[symbol]["side"] == "short":
                         pos = positions[symbol]
                         total_cost = pos["entry_price"] * pos["size"] + fill.filled_price * fill.filled_qty
@@ -306,7 +374,7 @@ class BacktestRunner:
                             "current_price": fill.filled_price,
                             "unrealized_pnl": 0.0,
                         }
-                    # Log short entry as a trade for accurate total_trades count.
+                    # Log short entry; is_entry=True so it's excluded from win-rate.
                     self._trades.append(
                         TradeRecord(
                             timestamp=fill.timestamp,
@@ -314,8 +382,48 @@ class BacktestRunner:
                             side="sell",
                             quantity=fill.filled_qty,
                             price=fill.filled_price,
+                            is_entry=True,
                         )
                     )
+
+    def _check_stop_tp(self, positions, bar, portfolio, quote_asset, timestamp) -> None:
+        """Close any long whose stop-loss or take-profit was touched this bar.
+
+        Stop is checked first (conservative when both touch the same bar). The
+        stop fills at ``min(stop, open)`` to model a gap-down through it; the
+        take-profit fills at the limit. Longs only (shorts out of scope here).
+        """
+        try:
+            hi = float(bar.get("high"))
+            lo = float(bar.get("low"))
+            op = float(bar.get("open"))
+        except Exception:
+            return
+        for symbol in list(positions.keys()):
+            pos = positions[symbol]
+            if pos.get("side") != "long" or float(pos.get("size", 0) or 0) <= 0:
+                continue
+            sl = pos.get("stop_loss")
+            tp = pos.get("take_profit")
+            if sl is not None and lo <= float(sl):
+                self._close_long(symbol, min(float(sl), op), "backtest_stop", positions, portfolio, quote_asset, timestamp)
+            elif tp is not None and hi >= float(tp):
+                self._close_long(symbol, float(tp), "backtest_take_profit", positions, portfolio, quote_asset, timestamp)
+
+    def _close_long(self, symbol, exit_price, reason, positions, portfolio, quote_asset, timestamp) -> None:
+        """Realize a long at ``exit_price`` (stop/TP fill), credit cash, record."""
+        pos = positions.get(symbol)
+        if not pos or pos.get("side") != "long":
+            return
+        qty = float(pos["size"])
+        fee_rate = float(getattr(self.execution, "fee_rate", 0.0) or 0.0)
+        fee = qty * exit_price * fee_rate
+        portfolio.deposit(quote_asset, qty * exit_price - fee)
+        realized = (exit_price - pos["entry_price"]) * qty - fee
+        self._trades.append(
+            TradeRecord(timestamp=timestamp, realized_pnl=realized, side="sell", quantity=qty, price=exit_price)
+        )
+        del positions[symbol]
 
     def walk_forward(
         self,

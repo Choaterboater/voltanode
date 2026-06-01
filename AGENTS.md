@@ -28,14 +28,13 @@ D:\VoltaNode/
 │   ├── security/           # PBKDF2 encryption
 │   └── tests/              # pytest suite (45 tests)
 ├── docs/                   # API.md, ARCHITECTURE.md, README.md, DEPLOYMENT.md, SETUP.md
-└── newbuild/               # Staging area — near-duplicates of docs and app. NOT the source of truth.
 ```
 
 ## Source of Truth
 
-- **Frontend code**: `app/src/` (NOT `newbuild/app/src/`)
-- **Backend code**: `trading-bot-backend/` (NOT `newbuild/trading-bot-backend/`)
-- **Documentation**: `docs/` and root `.md` files (NOT `newbuild/docs/`)
+- **Frontend code**: `app/src/`
+- **Backend code**: `trading-bot-backend/`
+- **Documentation**: `docs/` and root `.md` files
 
 ## Tech Stack
 
@@ -88,7 +87,7 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 
 # Frontend
 cd app
-npm run dev -- --port 3000
+npm run dev
 ```
 
 ## Testing
@@ -108,12 +107,12 @@ npm run build
 - Do NOT commit `__pycache__/`, `.db` files, `.env`, or `node_modules/`.
 - Do NOT commit the ZIP file at root.
 - The `data/cache/` directory is gitignored but may show up as untracked.
-- `newbuild/` is a staging area — do not treat it as source of truth.
+- `newbuild/` was removed from the repo (gitignored if recreated locally).
 
 ## Common Gotchas
 
 1. **Ollama does not need an API key** — `LLM_API_KEY` can be empty for local Ollama.
 2. **VADER is bad at financial text** — it scores financial headlines as neutral. The hybrid system falls back to LLM automatically.
-3. **Two frontend copies exist** — `app/` is the working directory, `newbuild/app/` is a stale snapshot.
+3. **Single frontend tree** — `app/` is the only React source tree in the repo.
 4. **Backend runs on `:8000`**, frontend dev server proxies `/api` to it via `vite.config.ts`.
 5. **News fetch requires Alpaca keys** — without them, `/news/fetch` returns 0 articles, but `/news/analyze` works with any headline.

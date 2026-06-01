@@ -14,7 +14,7 @@ import pandas as pd
 
 from bot.config import BotConfig, OrderSide
 from bot.orders import ExecutionSimulator, FillResult, Order, OrderStatus
-from bot.portfolio import Portfolio, Position, PositionSide
+from bot.portfolio import Portfolio, Position, PositionSide, lookup_price, symbol_lookup_keys, symbols_equivalent
 from bot.risk import RiskAlert, RiskManager
 
 # Live trading imports
@@ -385,7 +385,7 @@ class PaperTradingEngine:
                 return None
 
         # Risk check
-        risk_result = self.risk_manager.check_order(order, portfolio)
+        risk_result = self.risk_manager.check_order(order, portfolio, current_price=current_price)
         if not risk_result.allowed:
             order.status = OrderStatus.REJECTED
             return None
@@ -455,7 +455,6 @@ class PaperTradingEngine:
                 else:
                     fill.realized_pnl = (fill.filled_price - pos.entry_price) * fill.filled_qty - fill.fee
                     pos.size -= fill.filled_qty
-                    pos.entry_price = (pos.cost_basis - fill.filled_qty * fill.filled_price) / pos.size
                     pos.update_price(fill.filled_price)
             elif pos and pos.side.value == "short":
                 # Increase short
@@ -505,6 +504,106 @@ class PaperTradingEngine:
 
     # ── Events ──
 
+    @staticmethod
+    def _floor_exit_quantity(quantity: float) -> float:
+        """Floor close quantities to broker-safe precision."""
+        import math as _math
+        if quantity >= 1.0:
+            return _math.floor(quantity * 1e6) / 1e6
+        return _math.floor(quantity * 1e8) / 1e8
+
+    def _profit_manager_order(
+        self,
+        pos: Position,
+        tick: TickData,
+        account_id: str,
+    ) -> Order | None:
+        """Update breakeven/trailing stops and emit one partial-profit order.
+
+        Rules for longs:
+        - Initial stop remains strategy/default stop.
+        - After +4%, move stop to slight breakeven.
+        - After +5%, trail 4% below the high-water mark.
+        - At configured take-profit or +8%, sell 40% once and let the rest run.
+        Shorts mirror the same math.
+        """
+        if pos.entry_price <= 0 or pos.size <= 0:
+            return None
+
+        # If an explicit close/reduce order is already pending for this
+        # symbol, let that order resolve before adding automated partials.
+        opposite = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
+        for order in self._orders.get(account_id, {}).values():
+            if (
+                order.status == OrderStatus.PENDING
+                and order.side == opposite
+                and symbols_equivalent(order.symbol, pos.symbol)
+            ):
+                return None
+
+        is_long = pos.side == PositionSide.LONG
+        price = tick.price
+        pos.high_water_price = max(float(pos.high_water_price or pos.entry_price), price)
+        pos.low_water_price = min(float(pos.low_water_price or pos.entry_price), price)
+
+        if is_long:
+            profit_pct = (price / pos.entry_price) - 1.0
+            if profit_pct >= 0.04:
+                breakeven = pos.entry_price * 1.002
+                pos.stop_loss = max(float(pos.stop_loss or 0.0), breakeven)
+            if profit_pct >= 0.05:
+                trailing_stop = float(pos.high_water_price) * 0.96
+                pos.stop_loss = max(float(pos.stop_loss or 0.0), trailing_stop)
+
+            partial_trigger = (
+                not pos.partial_profit_taken
+                and (
+                    (pos.take_profit is not None and price >= pos.take_profit)
+                    or profit_pct >= 0.08
+                )
+            )
+            if partial_trigger:
+                qty = self._floor_exit_quantity(pos.size * 0.40)
+                if qty > 0:
+                    pos.partial_profit_taken = True
+                    pos.take_profit = None
+                    return Order.market(
+                        symbol=pos.symbol,
+                        side=OrderSide.SELL,
+                        quantity=qty,
+                        account_id=account_id,
+                        strategy_id="partial_take_profit",
+                    )
+        else:
+            profit_pct = (pos.entry_price / price) - 1.0 if price > 0 else 0.0
+            if profit_pct >= 0.04:
+                breakeven = pos.entry_price * 0.998
+                pos.stop_loss = min(float(pos.stop_loss or float("inf")), breakeven)
+            if profit_pct >= 0.05:
+                trailing_stop = float(pos.low_water_price) * 1.04
+                pos.stop_loss = min(float(pos.stop_loss or float("inf")), trailing_stop)
+
+            partial_trigger = (
+                not pos.partial_profit_taken
+                and (
+                    (pos.take_profit is not None and price <= pos.take_profit)
+                    or profit_pct >= 0.08
+                )
+            )
+            if partial_trigger:
+                qty = self._floor_exit_quantity(pos.size * 0.40)
+                if qty > 0:
+                    pos.partial_profit_taken = True
+                    pos.take_profit = None
+                    return Order.market(
+                        symbol=pos.symbol,
+                        side=OrderSide.BUY,
+                        quantity=qty,
+                        account_id=account_id,
+                        strategy_id="partial_take_profit",
+                    )
+        return None
+
     def on_tick(self, tick: TickData, ohlcv_data: Any | None = None, signal_context: Any | None = None) -> None:
         """Process a price tick.
 
@@ -513,6 +612,8 @@ class PaperTradingEngine:
             ohlcv_data: Optional OHLCV DataFrame to pass to bar-based strategies.
         """
         self._current_prices[tick.symbol] = tick.price
+        for key in symbol_lookup_keys(tick.symbol):
+            self._current_prices[key] = tick.price
 
         # Update all portfolios with new price
         for portfolio in self._portfolios.values():
@@ -521,17 +622,39 @@ class PaperTradingEngine:
         # Check fixed stop-loss / take-profit before strategies run
         for account_id, portfolio in self._portfolios.items():
             pos = portfolio.get_position(tick.symbol)
+            if pos is None:
+                pos = next(
+                    (
+                        p for p in portfolio.get_all_positions()
+                        if symbols_equivalent(getattr(p, "symbol", ""), tick.symbol)
+                    ),
+                    None,
+                )
             if pos and pos.status == "open":
+                if pos.stop_loss is None and pos.entry_price > 0:
+                    sl_pct = 0.08
+                    tp_pct = 0.30
+                    if pos.side == PositionSide.LONG:
+                        pos.stop_loss = pos.entry_price * (1.0 - sl_pct)
+                        if pos.take_profit is None:
+                            pos.take_profit = pos.entry_price * (1.0 + tp_pct)
+                    elif pos.side == PositionSide.SHORT:
+                        pos.stop_loss = pos.entry_price * (1.0 + sl_pct)
+                        if pos.take_profit is None:
+                            pos.take_profit = pos.entry_price * (1.0 - tp_pct)
+
+                partial_order = self._profit_manager_order(pos, tick, account_id)
+                if partial_order is not None and not self._is_debounced(partial_order):
+                    self.submit_order(partial_order, account_id)
+                    self.execute_order(partial_order, tick.price)
+                    continue
+
                 close_side: OrderSide | None = None
                 if pos.side == PositionSide.LONG:
                     if pos.stop_loss is not None and tick.price <= pos.stop_loss:
                         close_side = OrderSide.SELL
-                    elif pos.take_profit is not None and tick.price >= pos.take_profit:
-                        close_side = OrderSide.SELL
                 elif pos.side == PositionSide.SHORT:
                     if pos.stop_loss is not None and tick.price >= pos.stop_loss:
-                        close_side = OrderSide.BUY
-                    elif pos.take_profit is not None and tick.price <= pos.take_profit:
                         close_side = OrderSide.BUY
 
                 if close_side is not None:
@@ -543,20 +666,9 @@ class PaperTradingEngine:
                     # with code 40310000 "insufficient balance". Clamping
                     # to 6 decimals (or 0 for large lots) is well within
                     # broker precision and never asks for more than held.
-                    _q = pos.size
-                    if _q >= 1.0:
-                        # >= 1 unit: floor to 6 decimals (covers ETH/BTC
-                        # fractional lots, kills float ε for large
-                        # whole-share holdings like SHIB).
-                        import math as _math
-                        _q = _math.floor(_q * 1e6) / 1e6
-                    else:
-                        # Sub-unit lots (BTC fractions, fees in dust):
-                        # 8 decimals matches Alpaca's broker precision.
-                        import math as _math
-                        _q = _math.floor(_q * 1e8) / 1e8
+                    _q = self._floor_exit_quantity(pos.size)
                     close_order = Order.market(
-                        symbol=tick.symbol,
+                        symbol=pos.symbol,
                         side=close_side,
                         quantity=_q,
                         account_id=account_id,
@@ -606,10 +718,12 @@ class PaperTradingEngine:
         # cooldown gives the price action time to confirm before the bot
         # gets back in.
         from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        eng_cfg = getattr(self.config, "engine", None)
         cooldown_min = float(
-            getattr(self.config, "post_close_cooldown_minutes", None)
-            or (self.config.get("post_close_cooldown_minutes") if isinstance(self.config, dict) else 60)
-            or 60
+            getattr(eng_cfg, "post_close_cooldown_minutes", None)
+            or getattr(self.config, "post_close_cooldown_minutes", None)
+            or (self.config.get("post_close_cooldown_minutes") if isinstance(self.config, dict) else None)
+            or 15
         )
         cooldown_cut = _dt.now(_tz.utc) - _td(minutes=cooldown_min)
         recent_close_symbols: set = set()
@@ -722,7 +836,7 @@ class PaperTradingEngine:
         # re-execute orders that haven't been broker-submitted yet.
         for account_id, orders in self._orders.items():
             for order in list(orders.values()):
-                if order.status != OrderStatus.PENDING or order.symbol != tick.symbol:
+                if order.status != OrderStatus.PENDING or not symbols_equivalent(order.symbol, tick.symbol):
                     continue
                 broker_ids = getattr(self, "_broker_order_ids", None)
                 if broker_ids is not None and order.id in broker_ids:
@@ -746,7 +860,7 @@ class PaperTradingEngine:
                 if self._is_debounced(stop_order):
                     continue
                 self.submit_order(stop_order, stop_order.account_id)
-                if tick.price and stop_order.symbol == tick.symbol:
+                if tick.price and symbols_equivalent(stop_order.symbol, tick.symbol):
                     self.execute_order(stop_order, tick.price)
 
         # Risk alerts
@@ -999,7 +1113,7 @@ class LiveTradingEngine(PaperTradingEngine):
             # what we hold is below that floor, treat it as already closed
             # and skip the broker call to avoid endless reject loops.
             try:
-                last_price = self._current_prices.get(order.symbol) or 0.0
+                last_price = lookup_price(self._current_prices, order.symbol) or 0.0
             except Exception:
                 last_price = 0.0
             if last_price > 0 and order.quantity * last_price < 10.0:
@@ -1036,6 +1150,19 @@ class LiveTradingEngine(PaperTradingEngine):
         # tagged with ``strategy_id == "manual_flatten"`` bypass safety —
         # they're an operator-initiated cleanup and shouldn't be blocked
         # by the per-minute rate budget that strategy traffic shares.
+        broker_balances: Dict[str, float] | None = None
+        if self.broker.is_connected() and self.broker.name != "mock":
+            try:
+                broker_balances = self.broker.get_balance()
+            except Exception:
+                broker_balances = None
+        price_hint = current_price or lookup_price(portfolio, order.symbol)
+        if not price_hint or price_hint <= 0:
+            try:
+                price_hint = lookup_price(getattr(self, "_current_prices", {}) or {}, order.symbol)
+            except Exception:
+                price_hint = None
+
         try:
             if (order.strategy_id or "") != "manual_flatten":
                 self.safety_validator.validate_order(
@@ -1043,6 +1170,8 @@ class LiveTradingEngine(PaperTradingEngine):
                     portfolio,
                     self.config,
                     self.daily_tracker.daily_pnl,
+                    broker_balances=broker_balances,
+                    current_price=price_hint,
                 )
         except SafetyValidationError as sv_exc:
             order.status = OrderStatus.REJECTED
@@ -1198,12 +1327,22 @@ class LiveTradingEngine(PaperTradingEngine):
 
     def _check_safety_after_fill(self) -> None:
         """Check safety limits after a fill and activate kill switch if needed."""
+        from safety.limits import compute_portfolio_equity
+
         max_loss = getattr(self.config.safety, "max_daily_loss_pct", 5.0)
-        if self.daily_tracker.daily_pnl < -max_loss:
-            self.kill_switch.activate(f"Daily loss limit exceeded: {self.daily_tracker.daily_pnl:.2f}%")
+        # daily_tracker.daily_pnl is in DOLLARS; max_daily_loss_pct is a PERCENT.
+        # Convert the loss to a percent of total equity before comparing —
+        # otherwise the kill switch trips at a $5 loss (or never).
+        try:
+            equity = sum(compute_portfolio_equity(p) for p in self._portfolios.values())
+        except Exception:
+            equity = 0.0
+        daily_loss_pct = (self.daily_tracker.daily_pnl / equity) * 100.0 if equity > 0 else 0.0
+        if daily_loss_pct < -max_loss:
+            self.kill_switch.activate(f"Daily loss limit exceeded: {daily_loss_pct:.2f}%")
             self.notifier.alert(
                 "critical",
-                f"Kill switch activated: daily loss {self.daily_tracker.daily_pnl:.2f}% exceeds limit {max_loss}%",
+                f"Kill switch activated: daily loss {daily_loss_pct:.2f}% exceeds limit {max_loss}%",
             )
 
     def get_live_status(self) -> dict:

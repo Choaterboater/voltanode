@@ -92,6 +92,24 @@ async def _run_news_loop(app: FastAPI) -> None:
                             f"News loop: fetched={len(articles)} new={new_count} "
                             f"analyzed={analyzed_count}"
                         )
+
+                    # Bridge: push aggregated recent sentiment into the live
+                    # NewsSentimentStrategy cache so the registered news bots
+                    # actually trade on it. Runs every cycle (even with no new
+                    # articles) so the cache refreshes and stale symbols decay
+                    # out of the lookback window. Before this, update_sentiment
+                    # was never called and every news bot HOLD'd forever while
+                    # we collected an 11MB news.db of unused alpha.
+                    try:
+                        from strategies.news_sentiment import NewsSentimentStrategy
+                        agg = await asyncio.to_thread(storage.get_trading_sentiment, 6, 1)
+                        NewsSentimentStrategy.set_sentiment_bulk(agg)
+                        if agg:
+                            logger.info(
+                                f"News loop: sentiment cache updated for {len(agg)} symbols"
+                            )
+                    except Exception as exc:
+                        logger.warning(f"News loop: failed to update sentiment cache: {exc}")
             except Exception as exc:
                 logger.warning(f"News loop iteration failed: {exc}")
 
@@ -101,6 +119,81 @@ async def _run_news_loop(app: FastAPI) -> None:
         except Exception as exc:
             logger.exception(f"Unexpected error in news loop: {exc}")
             await asyncio.sleep(300)
+
+
+async def _run_funding_loop(app: FastAPI) -> None:
+    """Background task: refresh perp funding-rate/OI regimes into the cache.
+
+    Public Binance data (no keys). Populates ``data/funding.py``'s cache so the
+    opt-in per-bot funding gate (``strategies/base.py``) can read regimes with
+    ZERO I/O inside the tick loop — wiring it synchronously into on_tick would
+    reintroduce the sync-I/O wedge. Self-skips gracefully when Binance is
+    unreachable; bots only act on this when ``config['funding_gate'].enabled``.
+    """
+    for _ in range(30):
+        if hasattr(app.state, "engine"):
+            break
+        await asyncio.sleep(1)
+
+    while True:
+        try:
+            try:
+                from data.funding import refresh_funding, _to_binance_perp
+
+                cfg = getattr(app.state, "config", None)
+                crypto = []
+                if cfg is not None:
+                    crypto = (getattr(cfg.market_data, "symbols", {}) or {}).get("crypto", []) or []
+                # Config mixes CoinGecko ids + tickers; dedupe by perp symbol
+                # and cap so we don't hammer Binance with 100+ calls per cycle.
+                seen, syms = set(), []
+                for s in crypto:
+                    perp = _to_binance_perp(s)
+                    if perp not in seen:
+                        seen.add(perp)
+                        syms.append(s)
+                    if len(syms) >= 40:
+                        break
+                if syms:
+                    n = await asyncio.to_thread(refresh_funding, syms)
+                    if n:
+                        logger.info(f"Funding loop: refreshed {n}/{len(syms)} symbols")
+            except Exception as exc:
+                logger.warning(f"Funding loop iteration failed: {exc}")
+
+            await asyncio.sleep(300)  # 5 min
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.exception(f"Unexpected error in funding loop: {exc}")
+            await asyncio.sleep(300)
+
+
+async def _run_learning_loop(app: FastAPI) -> None:
+    """Background task: refresh the trade-memory store from fills every 10 min
+    so the Obsidian vault + dashboard stay current as bots trade. This is how
+    the lab FORWARD-validates strategies it can't backtest (e.g. squeeze):
+    every closed round-trip is captured + scored by entry strategy/source over
+    real (paper) time. Idempotent rebuild; degrades silently on error."""
+    for _ in range(30):
+        if hasattr(app.state, "engine"):
+            break
+        await asyncio.sleep(1)
+    while True:
+        try:
+            try:
+                from learning.trade_memory import TradeMemory
+                n = await asyncio.to_thread(TradeMemory().backfill_from_fills)
+                if n:
+                    logger.info(f"Learning loop: trade-memory refreshed ({n} round-trips)")
+            except Exception as exc:
+                logger.warning(f"Learning loop iteration failed: {exc}")
+            await asyncio.sleep(600)  # 10 min
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.exception(f"Unexpected error in learning loop: {exc}")
+            await asyncio.sleep(600)
 
 
 def _maybe_log_tick_issue(app: FastAPI, cache_key: str, kind: str, detail: str) -> None:
@@ -126,6 +219,49 @@ def _maybe_log_tick_issue(app: FastAPI, cache_key: str, kind: str, detail: str) 
             logger.warning(f"Tick timeout for {cache_key} (suppressing dupes for 5min)")
         else:
             logger.warning(f"Tick error for {cache_key}: {detail} (suppressing dupes for 5min)")
+
+
+async def _run_capital_deploy_loop(app: FastAPI) -> None:
+    """Periodically deploy idle cash when capital_deployment.enabled is true."""
+    for _ in range(60):
+        if getattr(app.state, "engine", None) is not None:
+            break
+        await asyncio.sleep(1)
+
+    while True:
+        try:
+            config: BotConfig = getattr(app.state, "config", BotConfig())
+            alloc = getattr(config, "capital_deployment", None)
+            interval_min = float(getattr(alloc, "deploy_interval_minutes", 30.0) or 30.0)
+
+            if alloc is None or not getattr(alloc, "enabled", False):
+                await asyncio.sleep(max(60.0, interval_min * 60.0))
+                continue
+            eng = getattr(app.state, "engine", None)
+            if eng is None or not getattr(eng, "is_running", False):
+                await asyncio.sleep(60.0)
+                continue
+
+            from api.routes import strategies as strategies_routes
+
+            if strategies_routes.engine is None:
+                await asyncio.sleep(60.0)
+                continue
+
+            result = await strategies_routes.execute_capital_deploy(dry_run=False)
+            deployed = result.get("deployed") or []
+            if deployed:
+                symbols = ", ".join(str(d.get("symbol", "?")) for d in deployed)
+                logger.info(
+                    f"Capital deploy cycle: {len(deployed)} order(s) — {symbols} "
+                    f"(cash {result.get('cash_pct')}%, exposure {result.get('exposure_pct')}%)"
+                )
+            await asyncio.sleep(max(60.0, interval_min * 60.0))
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning(f"Capital deploy loop error: {exc}")
+            await asyncio.sleep(60.0)
 
 
 async def _run_tick_loop(app: FastAPI) -> None:
@@ -205,6 +341,25 @@ async def _run_tick_loop(app: FastAPI) -> None:
                         else:
                             symbol_specs[cache_key] = (symbol, asset_class, needs_ohlcv)
 
+            # Capital allocator and manual buys can hold symbols no bot
+            # watches — without ticks, prices freeze at entry, stops never
+            # fire, and the profit manager never runs on those positions.
+            from api.routes.orders import _detect_asset_class
+
+            for portfolio in engine.get_all_portfolios().values():
+                for pos in portfolio.get_all_positions():
+                    if getattr(pos, "status", "") != "open" or float(getattr(pos, "size", 0) or 0) <= 0:
+                        continue
+                    sym = str(getattr(pos, "symbol", "") or "").upper()
+                    if not sym:
+                        continue
+                    pos_ac = _detect_asset_class(sym)
+                    if pos_ac == AssetClass.STOCK and not _equity_open:
+                        continue
+                    cache_key = f"{sym}_{pos_ac.value}"
+                    if cache_key not in symbol_specs:
+                        symbol_specs[cache_key] = (sym, pos_ac, False)
+
             # Build SignalContext once per tick cycle so per-strategy gates
             # (VIX panic, earnings imminent, insider tone) share the same data
             # rather than each strategy hitting external APIs independently.
@@ -268,19 +423,30 @@ async def _run_tick_loop(app: FastAPI) -> None:
             # per minute per account regardless of tick frequency).
             history = getattr(app.state, "equity_history", None)
             if history is not None:
+                from safety.limits import compute_portfolio_equity
                 for account_id, portfolio in engine.get_all_portfolios().items():
                     try:
-                        balances = portfolio.get_all_balances()
-                        positions = portfolio.get_all_positions()
-                        equity = sum(balances.values()) + sum(p.market_value for p in positions)
-                        # If broker is live, prefer broker-reported equity
-                        if getattr(engine, "live_mode", False) and getattr(engine, "broker", None) and engine.broker.is_connected() and engine.broker.name != "mock":
+                        # Canonical equity: prefer broker-reported EQUITY, else
+                        # cash keys + position market value. The old
+                        # ``sum(balances.values()) + MV`` double-counted broker-
+                        # synced ledgers — Alpaca returns overlapping USD +
+                        # EQUITY + BUYING_POWER keys, so summing them all (plus
+                        # MV) wrote ~5x spikes (~510k on a ~100k book). Those
+                        # spikes corrupted the equity chart's y-axis and inflated
+                        # max-drawdown to a bogus 80%+. compute_portfolio_equity
+                        # mirrors the picker used everywhere else.
+                        broker_bal = None
+                        if (
+                            getattr(engine, "live_mode", False)
+                            and getattr(engine, "broker", None)
+                            and engine.broker.is_connected()
+                            and engine.broker.name != "mock"
+                        ):
                             try:
                                 broker_bal = engine.get_broker_balance()
-                                if broker_bal and "EQUITY" in broker_bal:
-                                    equity = float(broker_bal["EQUITY"])
                             except Exception:
-                                pass
+                                broker_bal = None
+                        equity = compute_portfolio_equity(portfolio, broker_bal)
                         history.append_throttled(account_id, equity)
                     except Exception as exc:
                         logger.warning(f"Equity snapshot failed for {account_id}: {exc}")
@@ -340,6 +506,18 @@ def create_app() -> FastAPI:
                 synced += 1
         if synced:
             logger.info(f"Synced {synced} broker position(s) into engine portfolio")
+        # Mirror broker cash/equity into the engine ledger so safety % checks
+        # and paper-style balance gates see the real account size, not the
+        # 10k USDT seed left from engine __init__.
+        try:
+            broker_bal = await asyncio.to_thread(broker.get_balance)
+            if broker_bal:
+                for asset, amount in broker_bal.items():
+                    if amount is None:
+                        continue
+                    portfolio_obj._balances[str(asset).upper()] = float(amount)
+        except Exception as exc:
+            logger.debug(f"Broker balance sync skipped: {exc}")
         # Auto-attach default stops/TPs so restored positions get
         # downside protection without an operator calling /attach-stops
         # manually. Skips anything that already has a stop set; uses
@@ -537,13 +715,24 @@ def create_app() -> FastAPI:
         tick_task = asyncio.create_task(_run_tick_loop(app))
         # Start background news fetcher (Alpaca + sentiment)
         news_task = asyncio.create_task(_run_news_loop(app))
+        capital_deploy_task = asyncio.create_task(_run_capital_deploy_loop(app))
+        # Background perp funding-rate/OI refresher (public Binance data).
+        # Populates the cache the opt-in funding gate reads; harmless until a
+        # bot enables config['funding_gate'].
+        funding_task = asyncio.create_task(_run_funding_loop(app))
+        # Background learning loop: refresh trade-memory/Obsidian vault from
+        # fills so the lab forward-validates strategies over (paper) time.
+        learning_task = asyncio.create_task(_run_learning_loop(app))
 
         yield
 
         # Shutdown
         tick_task.cancel()
         news_task.cancel()
-        for task in (tick_task, news_task):
+        capital_deploy_task.cancel()
+        funding_task.cancel()
+        learning_task.cancel()
+        for task in (tick_task, news_task, capital_deploy_task, funding_task, learning_task):
             try:
                 await task
             except asyncio.CancelledError:

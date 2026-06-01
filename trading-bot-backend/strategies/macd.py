@@ -20,6 +20,7 @@ class MACDStrategy(BaseStrategy):
         "fast": 12,
         "slow": 26,
         "signal": 9,
+        "position_pct": 0.03,
     }
 
     @classmethod
@@ -117,7 +118,7 @@ class MACDStrategy(BaseStrategy):
                     "histogram": curr_histogram,
                     "crossover": "up",
                 },
-                suggested_size=1000.0 / current_price if current_price > 0 else 0.0,
+                suggested_size=self._size_from_equity_pct(current_price, default_pct=0.03),
                 stop_loss=current_price * 0.95,
                 take_profit=current_price * 1.08,
             )
@@ -140,7 +141,7 @@ class MACDStrategy(BaseStrategy):
                     "histogram": curr_histogram,
                     "crossover": "down",
                 },
-                suggested_size=1000.0 / current_price if current_price > 0 else 0.0,
+                suggested_size=self._size_from_equity_pct(current_price, default_pct=0.03),
                 stop_loss=current_price * 0.95,
                 take_profit=current_price * 1.08,
             )

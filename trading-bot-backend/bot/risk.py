@@ -10,7 +10,8 @@ import numpy as np
 
 from bot.config import OrderSide, RiskConfig, SizingMethod
 from bot.orders import Order
-from bot.portfolio import Portfolio
+from bot.portfolio import Portfolio, lookup_price
+from safety.limits import compute_portfolio_equity
 
 
 @dataclass
@@ -228,9 +229,7 @@ class RiskManager:
         Returns:
             Recommended position size.
         """
-        # Get base equity (use first balance)
-        balances = portfolio.get_all_balances()
-        equity = sum(balances.values()) if balances else 10000.0
+        equity = compute_portfolio_equity(portfolio)
 
         if method == SizingMethod.FIXED:
             return PositionSizer.fixed(self.config.position_sizing_value)
@@ -262,6 +261,7 @@ class RiskManager:
         self,
         order: Order,
         portfolio: Portfolio,
+        current_price: float | None = None,
     ) -> RiskCheckResult:
         """Check if an order violates risk rules.
 
@@ -280,21 +280,29 @@ class RiskManager:
                 reason="Max drawdown breached — trading halted",
             )
 
-        # Check position size limit
-        notional = order.quantity * (order.price or 1.0)
-        balances = portfolio.get_all_balances()
-        equity = sum(balances.values()) if balances else 10000.0
+        # Check position size limit. Market orders need the live mark;
+        # ``order.price or 1.0`` made BTC-sized market orders look tiny and
+        # let them bypass paper risk checks.
+        price = order.price or current_price
+        if not price or price <= 0:
+            try:
+                price = lookup_price(portfolio, order.symbol) or 0
+            except Exception:
+                price = 0
+        notional = order.quantity * price if price > 0 else 0.0
+        equity = compute_portfolio_equity(portfolio)
         max_notional = equity * self.config.max_position_size_pct
 
         if notional > max_notional:
             # Reduce order size in-place so caller's reference stays valid
-            if order.price and order.price > 0:
-                reduced_qty = max_notional / order.price
+            if price > 0:
+                original_qty = order.quantity
+                reduced_qty = max_notional / price
                 order.quantity = reduced_qty
                 return RiskCheckResult(
                     allowed=True,
                     order=order,
-                    reason=f"Order size reduced from {order.quantity:.4f} to {reduced_qty:.4f} due to position limit",
+                    reason=f"Order size reduced from {original_qty:.4f} to {reduced_qty:.4f} due to position limit",
                 )
             return RiskCheckResult(
                 allowed=False,
@@ -316,10 +324,16 @@ class RiskManager:
         alerts: List[RiskAlert] = []
         now = datetime.now(timezone.utc)
 
-        # Check drawdown
-        balances = portfolio.get_all_balances()
-        equity = sum(balances.values()) if balances else 10000.0
-        if self.drawdown_monitor.update(equity):
+        # Check drawdown against canonical equity (cash + position market value,
+        # or broker-reported EQUITY). Summing balance values alone counts only
+        # cash, so a book that's mostly in open positions never registers a real
+        # drawdown and the halt below never fires. compute_portfolio_equity
+        # mirrors the picker used everywhere else (safety/limits.py,
+        # strategies/base.py).
+        equity = compute_portfolio_equity(portfolio)
+        # compute_portfolio_equity floors to 1.0 for an empty/unfunded book —
+        # don't let that read as a ~100% drawdown off a stale peak.
+        if equity > 1.0 and self.drawdown_monitor.update(equity):
             alerts.append(
                 RiskAlert(
                     level="critical",
@@ -349,16 +363,17 @@ class RiskManager:
         """
         stops: List[Order] = []
         for pos in portfolio.get_all_positions():
-            price = current_prices.get(pos.symbol)
+            price = lookup_price(current_prices, pos.symbol)
             if price is None:
                 continue
-            # Simple trailing stop: fixed percentage below/above entry.
-            # Tag with strategy_id="trailing_stop" so the engine debounce
-            # collapses repeats — without this, every tick where price is
-            # past the stop generates a new manual-tagged duplicate that
-            # bypasses dedup.
+            # Profit management lives in the engine and writes the active
+            # stop onto Position.stop_loss. Do not synthesize a fresh 2%
+            # stop from entry here; that was cutting positions before they
+            # had room to work. This method now only fires the managed stop.
             if pos.side.value == "long":
-                stop_price = pos.entry_price * (1.0 - self.config.default_stop_loss_pct)
+                stop_price = pos.stop_loss
+                if stop_price is None:
+                    continue
                 if price <= stop_price:
                     stops.append(
                         Order.market(
@@ -370,7 +385,9 @@ class RiskManager:
                         )
                     )
             else:
-                stop_price = pos.entry_price * (1.0 + self.config.default_stop_loss_pct)
+                stop_price = pos.stop_loss
+                if stop_price is None:
+                    continue
                 if price >= stop_price:
                     stops.append(
                         Order.market(

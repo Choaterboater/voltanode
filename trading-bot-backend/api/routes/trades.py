@@ -192,6 +192,8 @@ async def get_trades(
     trades = engine.get_trade_history(account_id)
     if strategy_id:
         trades = [t for t in trades if t.strategy_id == strategy_id]
+    # Append-only in-memory list is oldest-first; callers expect newest-first.
+    trades = list(reversed(trades))
     return [
         {
             "id": t.id,

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from bot.config import OrderSide
 from bot.orders import FillResult, Order
-from bot.portfolio import Portfolio
+from bot.portfolio import Portfolio, lookup_price
 
 
 class SafetyValidationError(Exception):
@@ -25,12 +25,62 @@ class SafetyConfig:
     """Runtime safety configuration (mirrors config.SafetyConfig)."""
     max_daily_loss_pct: float = 5.0
     max_position_size_pct: float = 20.0
-    max_exposure_pct: float = 50.0
+    max_exposure_pct: float = 300.0
     require_confirmation: bool = True
     kill_switch_on_disconnect: bool = True
-    max_orders_per_minute: int = 10
+    max_orders_per_minute: int = 300
     allowed_symbols: List[str] = field(default_factory=list)
     blocked_symbols: List[str] = field(default_factory=list)
+
+
+def compute_portfolio_equity(
+    portfolio: Portfolio,
+    broker_balances: Optional[Dict[str, float]] = None,
+) -> float:
+    """Canonical total equity for exposure / position-size % checks.
+
+    Mirrors ``api/routes/portfolio.py`` and ``strategies/base.py``: prefer
+    broker-reported EQUITY when available, else cash keys + position MV.
+    Using ``sum(balances.values())`` alone breaks live mode — the engine
+    keeps a small seed cash balance while broker-synced positions carry
+    most of the book, which made exposure look 800%+ and blocked every BUY.
+    """
+    if broker_balances:
+        for key, val in broker_balances.items():
+            if str(key).upper() == "EQUITY" and val and float(val) > 0:
+                return float(val)
+    balances = portfolio.get_all_balances()
+    positions = portfolio.get_all_positions()
+    if balances and any(str(k).upper() == "EQUITY" for k in balances):
+        eq_key = next(k for k in balances if str(k).upper() == "EQUITY")
+        eq = float(balances[eq_key])
+        if eq > 0:
+            return eq
+    cash_keys = {"USD", "USDT", "CASH"}
+    cash = sum(
+        float(v) for k, v in (balances or {}).items() if str(k).upper() in cash_keys
+    )
+    mv = sum(float(getattr(p, "market_value", 0) or 0) for p in positions)
+    total = cash + mv
+    return total if total > 0 else 1.0
+
+
+def _coerce_safety_config(config: Any | None) -> SafetyConfig:
+    """Normalize Pydantic ``bot.config.SafetyConfig`` or dataclass into runtime config."""
+    if config is None:
+        return SafetyConfig()
+    if isinstance(config, SafetyConfig):
+        return config
+    return SafetyConfig(
+        max_daily_loss_pct=float(getattr(config, "max_daily_loss_pct", 5.0)),
+        max_position_size_pct=float(getattr(config, "max_position_size_pct", 20.0)),
+        max_exposure_pct=float(getattr(config, "max_exposure_pct", 300.0)),
+        require_confirmation=bool(getattr(config, "require_confirmation", True)),
+        kill_switch_on_disconnect=bool(getattr(config, "kill_switch_on_disconnect", True)),
+        max_orders_per_minute=int(getattr(config, "max_orders_per_minute", 300)),
+        allowed_symbols=list(getattr(config, "allowed_symbols", []) or []),
+        blocked_symbols=list(getattr(config, "blocked_symbols", []) or []),
+    )
 
 
 class RateLimiter:
@@ -68,8 +118,8 @@ class SafetyValidator:
         5. Daily loss limit (soft check — engine has hard check)
     """
 
-    def __init__(self, config: Optional[SafetyConfig] = None) -> None:
-        self.config = config or SafetyConfig()
+    def __init__(self, config: Any | None = None) -> None:
+        self.config = _coerce_safety_config(config)
         self.rate_limiter = RateLimiter(self.config.max_orders_per_minute)
 
     def validate_order(
@@ -78,6 +128,8 @@ class SafetyValidator:
         portfolio: Portfolio,
         config: Any | None = None,
         daily_pnl: float = 0.0,
+        broker_balances: Optional[Dict[str, float]] = None,
+        current_price: float | None = None,
     ) -> None:
         """Validate an order. Raises SafetyValidationError if rejected.
 
@@ -86,6 +138,8 @@ class SafetyValidator:
             portfolio: Current portfolio state.
             config: Optional config override (from BotConfig).
             daily_pnl: Current day's realized P&L.
+            broker_balances: Optional broker cash/equity payload.
+            current_price: Live mark used to validate market orders.
 
         Raises:
             SafetyValidationError: If any rule is violated.
@@ -117,27 +171,28 @@ class SafetyValidator:
                 f"Rate limit exceeded: max {cfg.max_orders_per_minute} orders/minute."
             )
 
-        # 3. Position size check
-        # Portfolio doesn't have total_equity as property; compute from balances
-        total_equity = sum(portfolio.get_all_balances().values()) or 1.0
-        # For price, prefer the order price; if missing (market order), look
-        # up the live price from the existing position's mark — falling back
-        # to 1.0 makes sub-dollar tokens (SHIB at $0.0000064) look like
-        # 39,000% position-size violations. Last resort: skip the check.
-        price = order.price
+        # 3. Position size check — use canonical equity (cash + positions or broker EQUITY)
+        total_equity = compute_portfolio_equity(portfolio, broker_balances)
+        # Market orders do not carry a limit price. Validate them against the
+        # live tick mark; otherwise a fresh BUY with no existing position has
+        # notional=0 and silently bypasses position/exposure checks.
+        price = order.price or current_price
         if not price or price <= 0:
             try:
-                pos = portfolio.get_position(order.symbol)
-                price = float(getattr(pos, "current_price", 0) or getattr(pos, "entry_price", 0) or 0)
+                price = lookup_price(portfolio, order.symbol) or 0
             except Exception:
                 price = 0
+        _side_val = getattr(order.side, "value", str(order.side)).lower()
+        if _side_val != "sell" and (not price or price <= 0):
+            raise SafetyValidationError(
+                f"No market price available to validate BUY for {order.symbol}."
+            )
         order_notional = order.quantity * price if price > 0 else 0
         # Skip position-size cap on SELL orders — they're closing exposure,
         # not opening it. Without this, an already-oversized position (ETH
         # at 28% when cap is 20%) can't be trimmed because the trim itself
         # would temporarily look like "opening a 28% position." Same logic
         # as the exposure check below; mirror it here.
-        _side_val = getattr(order.side, "value", str(order.side)).lower()
         if _side_val != "sell" and order_notional > 0:
             position_size_pct = (order_notional / total_equity) * 100.0 if total_equity > 0 else 0.0
             if position_size_pct > cfg.max_position_size_pct:
@@ -168,11 +223,17 @@ class SafetyValidator:
                 f"Exposure {exposure_pct:.2f}% exceeds limit {cfg.max_exposure_pct}%."
             )
 
-        # 5. Soft daily loss check (engine has the hard check after fill)
-        if daily_pnl < -cfg.max_daily_loss_pct:
-            raise SafetyValidationError(
-                f"Daily loss {daily_pnl:.2f}% already exceeds limit {cfg.max_daily_loss_pct}%."
-            )
+        # 5. Soft daily loss check (engine has the hard check after fill).
+        # ``daily_pnl`` arrives in DOLLARS (realized P&L from DailyPnlTracker);
+        # ``max_daily_loss_pct`` is a PERCENT. Comparing them directly tripped
+        # at a $5 loss (or never, depending on account size). Convert the loss
+        # to a percent of equity first.
+        if daily_pnl < 0 and total_equity > 0:
+            daily_loss_pct = (-daily_pnl / total_equity) * 100.0
+            if daily_loss_pct > cfg.max_daily_loss_pct:
+                raise SafetyValidationError(
+                    f"Daily loss {daily_loss_pct:.2f}% exceeds limit {cfg.max_daily_loss_pct}%."
+                )
 
     def get_status(self) -> dict:
         """Return validator status."""
