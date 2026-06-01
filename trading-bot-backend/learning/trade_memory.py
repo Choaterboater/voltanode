@@ -214,6 +214,60 @@ class TradeMemory:
             bits.append("Fast loss — entry likely premature / into chop; consider stricter entry filter.")
         return " ".join(bits)
 
+    def llm_reflect(
+        self,
+        rec: TradeMemoryRecord,
+        setup_stats: Optional[Dict[str, Any]] = None,
+        timeout: float = 20.0,
+    ) -> str:
+        """LLM-written lesson via the shared OpenRouter chain. ALWAYS safe to
+        call — falls back to the rule-based ``reflect()`` on no key / any error,
+        so it never blocks. Pass through ``reflect`` output as the seed so the
+        model sharpens a grounded baseline rather than hallucinating."""
+        base = self.reflect(rec, setup_stats)
+        try:
+            import os
+            api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY", "")
+            if not api_key:
+                return base
+            from advisor.llm_advisor import _call_openai_compat, _openrouter_model_chain
+            prompt = (
+                "You are a trading coach. In ONE or TWO sentences, give a concrete, "
+                "actionable lesson from this closed paper trade. No fluff, no hedging.\n\n"
+                f"Trade: {rec.outcome.upper()} {round(rec.pnl_pct, 2)}% on {rec.symbol} "
+                f"via {rec.strategy}; held {round(rec.holding_minutes)}m; exit={rec.exit_reason}.\n"
+                f"Setup record: {setup_stats or 'n/a'}\n"
+                f"Baseline note: {base}\n\n"
+                "Lesson:"
+            )
+            for model in _openrouter_model_chain(heavy=False):
+                raw = _call_openai_compat(prompt, model, "https://openrouter.ai/api/v1", api_key, timeout=timeout)
+                if raw and raw.strip():
+                    return raw.strip()[:400]
+            return base
+        except Exception:
+            return base
+
+    def recall_brief(self, symbol: str, strategy: Optional[str] = None, k: int = 3) -> str:
+        """Compact memory string for prompt injection / a pre-trade gate — the
+        retrieval half of the RAG loop. Returns '' when nothing is recalled."""
+        lines: List[str] = []
+        by = self.stats()["by_setup"]
+        if strategy:
+            v = by.get(f"{strategy}/{symbol.upper()}")
+            if v:
+                lines.append(
+                    f"{strategy}/{symbol.upper()}: {v['trades']} past trades, "
+                    f"{v['win_rate']}% win, avg {v['avg_pnl_pct']}%, ${v['total_pnl']}."
+                )
+        for r in self.recall(symbol=symbol, k=k):
+            lesson = (r.get("lesson") or "")[:140]
+            lines.append(
+                f"- {r.get('outcome')} {round(float(r.get('pnl_pct', 0)), 1)}% "
+                f"({r.get('strategy')}, exit={r.get('exit_reason')}): {lesson}"
+            )
+        return ("PAST TRADES on this symbol (memory):\n" + "\n".join(lines)) if lines else ""
+
     def write_dashboard(self) -> None:
         """Roll up the lab's progress + worst setups into vault/_dashboard.md."""
         s = self.stats()
@@ -238,7 +292,7 @@ class TradeMemory:
 
     # ── backfill from fills.jsonl (FIFO round-trip reconstruction) ───────────
 
-    def backfill_from_fills(self, fills_path: str = "data/fills.jsonl") -> int:
+    def backfill_from_fills(self, fills_path: str = "data/fills.jsonl", use_llm: bool = False) -> int:
         """Reconstruct closed long round-trips from the append-only fills log by
         FIFO-matching SELLs against prior BUYs per symbol. Returns count recorded.
         Unmatched SELLs (pre-existing positions / shorts) are skipped — no entry
@@ -326,7 +380,7 @@ class TradeMemory:
                 "win_rate": round(wins / n * 100, 1) if n else 0.0,
                 "avg_pnl_pct": round(sum(x.pnl_pct for x in grp) / n, 3) if n else 0.0,
             }
-            r.lesson = self.reflect(r, setup_stats)
+            r.lesson = self.llm_reflect(r, setup_stats) if use_llm else self.reflect(r, setup_stats)
             self.record(r)
             count += 1
         self.write_dashboard()

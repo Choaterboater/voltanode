@@ -86,3 +86,48 @@ def test_recall_stats_and_worst_setups(tmp_path):
     assert s["by_setup"]["mean_reversion/SOL"]["win_rate"] == 0.0
     worst = tm.worst_setups(min_trades=2)
     assert worst[0][0] == "mean_reversion/SOL"  # the bleeding setup surfaces first
+
+
+def _rec(**kw):
+    base = dict(
+        id="x", symbol="SOL", strategy="mean_reversion",
+        entry_time="2026-01-01T00:00:00+00:00", exit_time="2026-01-01T00:30:00+00:00",
+        entry_price=100.0, exit_price=98.0, qty=1.0, pnl=-2.0, pnl_pct=-2.0,
+        holding_minutes=30.0, outcome="loss", exit_reason="stop",
+    )
+    base.update(kw)
+    return TradeMemoryRecord(**base)
+
+
+def test_llm_reflect_falls_back_without_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    tm = TradeMemory(memory_path=str(tmp_path / "m.jsonl"), vault_dir=str(tmp_path / "v"))
+    lesson = tm.llm_reflect(_rec())
+    assert "LOST" in lesson  # rule-based fallback, never blocks
+
+
+def test_llm_reflect_uses_llm_when_available(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    import advisor.llm_advisor as la
+    monkeypatch.setattr(la, "_openrouter_model_chain", lambda heavy=False: ["m1"])
+    monkeypatch.setattr(la, "_call_openai_compat", lambda *a, **k: "Cut SOL chop losers faster.")
+    tm = TradeMemory(memory_path=str(tmp_path / "m.jsonl"), vault_dir=str(tmp_path / "v"))
+    assert tm.llm_reflect(_rec()) == "Cut SOL chop losers faster."
+
+
+def test_recall_brief(tmp_path):
+    tm = TradeMemory(memory_path=str(tmp_path / "m.jsonl"), vault_dir=str(tmp_path / "v"))
+    tm.record(_rec(id="a", lesson="premature entry into chop"))
+    tm.record(_rec(id="b", pnl=-3.0, pnl_pct=-3.0))
+    brief = tm.recall_brief("SOL", "mean_reversion")
+    assert "PAST TRADES" in brief and "mean_reversion/SOL" in brief
+    assert tm.recall_brief("DOGE") == ""  # nothing recalled => empty (no injection)
+
+
+def test_pretrade_prompt_injects_memory():
+    from advisor.llm_advisor import _pretrade_prompt
+    with_mem = _pretrade_prompt("SOL", "BUY", 0.7, {}, 100.0, memory_brief="PAST TRADES: lost 3x here")
+    assert "PAST TRADES: lost 3x here" in with_mem
+    without = _pretrade_prompt("SOL", "BUY", 0.7, {}, 100.0)
+    assert "PAST TRADES" not in without

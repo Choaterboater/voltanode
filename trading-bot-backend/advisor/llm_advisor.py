@@ -617,11 +617,12 @@ _PRETRADE_CACHE: Dict[tuple, Dict[str, Any]] = {}
 _PRETRADE_TTL_SECONDS: float = 60.0
 
 
-def _pretrade_prompt(symbol: str, side: str, confidence: float, indicators: Dict[str, Any], current_price: float) -> str:
+def _pretrade_prompt(symbol: str, side: str, confidence: float, indicators: Dict[str, Any], current_price: float, memory_brief: Optional[str] = None) -> str:
     rsi = indicators.get("rsi")
     breakout = indicators.get("breakout")
     rel_vol = indicators.get("rel_volume")
     score = indicators.get("score")
+    memory_block = f"\n\n{memory_brief}\n(Weigh this history — if this setup has repeatedly lost, lean veto.)" if memory_brief else ""
     return f"""You are a risk reviewer for an automated trading bot. The bot wants to {side} {symbol} based on a technical setup. Decide if there is anything OBVIOUSLY wrong with this trade right now.
 
 SETUP:
@@ -633,7 +634,7 @@ SETUP:
   - composite_score: {score}
   - rsi: {rsi}
   - breakout_position: {breakout}
-  - relative_volume: {rel_vol}
+  - relative_volume: {rel_vol}{memory_block}
 
 Reply with ONE LINE of valid JSON, no markdown:
 {{"verdict":"proceed"|"veto","reason":"<one short phrase>"}}
@@ -673,6 +674,7 @@ def pretrade_check(
     current_price: float,
     timeout: float = 3.0,
     ttl: float = _PRETRADE_TTL_SECONDS,
+    memory_brief: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Synchronous LLM sanity check for a pending trade. Returns dict with
     keys ``verdict`` (proceed|veto), ``reason``, ``cached``, ``model``.
@@ -680,10 +682,14 @@ def pretrade_check(
     Cached for ``ttl`` seconds per (symbol, side). Fails open on any error:
     if the LLM is unreachable or times out, returns proceed so the bot is
     never blocked by an LLM outage.
+
+    ``memory_brief`` (opt-in): a recall string from TradeMemory.recall_brief()
+    injected into the prompt so the reviewer weighs how this setup has actually
+    performed — the RAG half of the learning loop. Default None = unchanged.
     """
     import time
 
-    key = (str(symbol).upper(), str(side).upper())
+    key = (str(symbol).upper(), str(side).upper(), bool(memory_brief))
     now = time.monotonic()
     cached = _PRETRADE_CACHE.get(key)
     if cached and cached["expires_at"] > now:
@@ -694,7 +700,7 @@ def pretrade_check(
     if not api_key:
         return {"verdict": "proceed", "reason": "no_llm_key", "cached": False, "model": ""}
 
-    prompt = _pretrade_prompt(symbol, side, confidence, indicators, current_price)
+    prompt = _pretrade_prompt(symbol, side, confidence, indicators, current_price, memory_brief)
     raw: Optional[str] = None
     model_name = ""
     # Fast chain only — pretrade is hot path, no heavy frontier models.

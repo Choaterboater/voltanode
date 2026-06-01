@@ -256,6 +256,19 @@ class AutoDiscoveryStrategy(BaseStrategy):
             # latch so a future tick can re-attempt once cache expires.
             if self.config.get("enable_llm_gate", True):
                 try:
+                    # Opt-in RAG: feed the LLM gate this setup's trade-memory
+                    # so it can veto a setup that has repeatedly lost. Default
+                    # off; only reads the small memory file on entry attempts
+                    # (rare), behind the already-slow LLM gate.
+                    mem_brief = None
+                    if self.config.get("memory_aware"):
+                        try:
+                            from learning.trade_memory import TradeMemory
+                            if not hasattr(self, "_trade_memory"):
+                                self._trade_memory = TradeMemory()
+                            mem_brief = self._trade_memory.recall_brief(symbol, self.name) or None
+                        except Exception:
+                            mem_brief = None
                     verdict = pretrade_check(
                         symbol=symbol,
                         side="BUY" if signal_type == SignalType.BUY else "SELL",
@@ -267,6 +280,7 @@ class AutoDiscoveryStrategy(BaseStrategy):
                             "breakout": metadata.get("breakout_signal"),
                         },
                         current_price=current_price,
+                        memory_brief=mem_brief,
                     )
                     if verdict.get("verdict") == "veto":
                         self._last_side[symbol] = last_side  # release latch
