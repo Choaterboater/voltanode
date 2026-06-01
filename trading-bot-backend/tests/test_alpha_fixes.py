@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from bot.config import OrderSide, SignalType
-from bot.orders import Order
+from bot.orders import Order, ExecutionSimulator
 from bot.portfolio import Portfolio, PositionSide
 from safety.limits import SafetyConfig, SafetyValidationError, SafetyValidator
 from strategies.base import BaseStrategy, Signal, TickData
@@ -331,3 +331,35 @@ def test_cost_gate_disabled_leaves_buy() -> None:
     strat = _BuyWithTPStrategy("cg3", {}, tp_mult=1.002)
     out = strat.on_tick(TickData(symbol="BTC", price=100.0), portfolio, ohlcv_data=_ohlcv_from_closes([100.0] * 10))
     assert out.signal_type == SignalType.BUY
+
+
+# ── 8. Honest fees/slippage: reproducibility + size-aware impact ───────────
+
+
+def test_proportional_slippage_is_reproducible_with_seed() -> None:
+    """Same seed -> identical fills (was unseeded global np.random)."""
+    a = ExecutionSimulator(slippage_model="proportional", slippage_bps=10.0, seed=7)
+    b = ExecutionSimulator(slippage_model="proportional", slippage_bps=10.0, seed=7)
+    pa = [a.apply_slippage(100.0, OrderSide.BUY) for _ in range(5)]
+    pb = [b.apply_slippage(100.0, OrderSide.BUY) for _ in range(5)]
+    assert pa == pb
+
+
+def test_sqrt_impact_penalizes_larger_orders() -> None:
+    """With impact on, a bigger order fills at a worse price."""
+    sim = ExecutionSimulator(
+        fee_rate=0.0, slippage_model="fixed", slippage_bps=0.0,
+        impact_coeff_bps=20.0, impact_ref_notional=10_000.0,
+    )
+    small = sim.execute(Order.market("BTC", OrderSide.BUY, 1.0), current_price=100.0)
+    big = sim.execute(Order.market("BTC", OrderSide.BUY, 1000.0), current_price=100.0)
+    assert small is not None and big is not None
+    assert big.filled_price > small.filled_price > 100.0
+
+
+def test_impact_off_by_default_no_price_change() -> None:
+    """Default (coeff 0) + zero base slippage/fee -> fills at mark, unchanged."""
+    sim = ExecutionSimulator(fee_rate=0.0, slippage_model="fixed", slippage_bps=0.0)
+    f = sim.execute(Order.market("BTC", OrderSide.BUY, 1000.0), current_price=100.0)
+    assert f is not None
+    assert f.filled_price == pytest.approx(100.0)

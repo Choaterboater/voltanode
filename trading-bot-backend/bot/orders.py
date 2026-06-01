@@ -180,17 +180,35 @@ class ExecutionSimulator:
         fee_rate: float = 0.001,
         slippage_model: str = "fixed",
         slippage_bps: float = 5.0,
+        seed: int | None = None,
+        impact_coeff_bps: float = 0.0,
+        impact_ref_notional: float = 10_000.0,
     ) -> None:
         """Initialize execution simulator.
 
         Args:
-            fee_rate: Trading fee as decimal (e.g., 0.001 = 0.1%).
+            fee_rate: Trading fee as decimal (e.g., 0.001 = 0.1%). Set higher for
+                crypto (Alpaca crypto taker ≈ 0.15–0.25%) than equities.
             slippage_model: Model type - "fixed", "proportional", or "volatility".
-            slippage_bps: Slippage in basis points.
+            slippage_bps: Base slippage in basis points (each side).
+            seed: RNG seed for the "proportional" model. Pass a fixed value in
+                backtests so runs are reproducible — previously the model used
+                an unseeded global ``np.random`` so identical configs produced
+                different fills each run.
+            impact_coeff_bps: Square-root market-impact coefficient (bps). When
+                > 0, an order of ``impact_ref_notional`` adds ``impact_coeff_bps``
+                of adverse slippage, scaling with ``sqrt(notional/ref)`` — so big
+                orders cost more. Default 0 = off (no behavior change).
+            impact_ref_notional: Reference notional for the impact term.
         """
         self.fee_rate = fee_rate
         self.slippage_model = slippage_model
         self.slippage_bps = slippage_bps
+        self.impact_coeff_bps = impact_coeff_bps
+        self.impact_ref_notional = max(1.0, impact_ref_notional)
+        # Dedicated Generator so backtests are reproducible and we don't perturb
+        # the global numpy RNG state used elsewhere.
+        self._rng = np.random.default_rng(seed)
 
     def apply_slippage(
         self,
@@ -211,7 +229,7 @@ class ExecutionSimulator:
         if self.slippage_model == "fixed":
             slippage_pct = self.slippage_bps / 10000.0
         elif self.slippage_model == "proportional":
-            slippage_pct = self.slippage_bps / 10000.0 * np.random.uniform(0.5, 1.5)
+            slippage_pct = self.slippage_bps / 10000.0 * self._rng.uniform(0.5, 1.5)
         elif self.slippage_model == "volatility" and volatility is not None:
             slippage_pct = self.slippage_bps / 10000.0 * volatility * 100
         else:
@@ -300,6 +318,20 @@ class ExecutionSimulator:
                 return None
         else:
             return None
+
+        # Size-aware market-impact overlay (additive on top of base slippage).
+        # Flat bps slippage pretends a $100 and a $100k order fill at the same
+        # price; real impact grows ~sqrt(size). Off by default (coeff 0).
+        if self.impact_coeff_bps > 0 and filled_qty > 0 and current_price > 0:
+            ref = self.impact_ref_notional
+            impact_pct = (
+                self.impact_coeff_bps
+                * float(np.sqrt(max(filled_qty * current_price, 0.0) / ref))
+            ) / 10000.0
+            if order.side == OrderSide.BUY:
+                filled_price *= (1.0 + impact_pct)
+            else:
+                filled_price *= (1.0 - impact_pct)
 
         notional = filled_qty * filled_price
         fee = self.calculate_fee(notional)

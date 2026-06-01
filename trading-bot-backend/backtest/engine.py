@@ -88,8 +88,13 @@ class BacktestRunner:
         self.initial_balance = initial_balance or config.initial_balance
         self.execution = ExecutionSimulator(
             fee_rate=config.fee_rate,
-            slippage_model="fixed",
+            slippage_model=getattr(config, "slippage_model", "fixed"),
             slippage_bps=config.slippage_bps,
+            # Fixed seed by default so a backtest is reproducible run-to-run;
+            # override via config.random_seed.
+            seed=getattr(config, "random_seed", 42),
+            impact_coeff_bps=getattr(config, "impact_coeff_bps", 0.0),
+            impact_ref_notional=getattr(config, "impact_ref_notional", 10_000.0),
         )
         self._trades: List[TradeRecord] = []
         self._equity_curve: List[Dict[str, Any]] = []
