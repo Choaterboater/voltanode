@@ -158,6 +158,57 @@ def test_position_aware_rebuy_suppressed_in_backtest():
     assert r["closed_trades"] == 0   # never sold
 
 
+class _BuyOnceWithRisk(BaseStrategy):
+    """BUYs once on bar 1 with a 5% stop + 10% take-profit, then holds."""
+    name = "buy_once_risk"
+
+    def __init__(self, sid, cfg):
+        super().__init__(sid, cfg)
+        self._done = False
+
+    def generate_signal(self, data: pd.DataFrame, current_price: float) -> Signal:
+        sym = data.attrs.get("symbol", "AAPL")
+        if self._done:
+            return Signal(strategy_id=self.strategy_id, symbol=sym, signal_type=SignalType.HOLD, confidence=0.0, timestamp=pd.Timestamp.now())
+        self._done = True
+        return Signal(
+            strategy_id=self.strategy_id, symbol=sym, signal_type=SignalType.BUY,
+            confidence=1.0, timestamp=pd.Timestamp.now(), suggested_size=1.0,
+            stop_loss=current_price * 0.95, take_profit=current_price * 1.10,
+        )
+
+
+def _bars(rows):
+    df = pd.DataFrame(rows)
+    df.attrs["symbol"] = "AAPL"
+    return df
+
+
+def test_backtest_enforces_stop_loss():
+    # bar1 buy @100 (stop=95); bar2 dips to low 94 -> stop fires ~95.
+    df = _bars([
+        {"timestamp": pd.Timestamp("2025-01-01"), "open": 100, "high": 100, "low": 100, "close": 100, "volume": 1e3},
+        {"timestamp": pd.Timestamp("2025-01-02"), "open": 100, "high": 100, "low": 100, "close": 100, "volume": 1e3},
+        {"timestamp": pd.Timestamp("2025-01-03"), "open": 99, "high": 100, "low": 94, "close": 96, "volume": 1e3},
+    ])
+    cfg = BacktestConfig(initial_balance={"USDT": 10_000.0}, fee_rate=0.0, slippage_bps=0.0, allow_short=False)
+    r = BacktestRunner(_BuyOnceWithRisk("s", {}), df, cfg).run().metrics.to_dict()
+    assert r["closed_trades"] == 1               # the stop closed the position
+    assert -5.5 < r["avg_trade_return"] < -4.5   # ~ -$5 realized (stop 95 from entry 100, 1 unit)
+
+
+def test_backtest_enforces_take_profit():
+    df = _bars([
+        {"timestamp": pd.Timestamp("2025-01-01"), "open": 100, "high": 100, "low": 100, "close": 100, "volume": 1e3},
+        {"timestamp": pd.Timestamp("2025-01-02"), "open": 100, "high": 100, "low": 100, "close": 100, "volume": 1e3},
+        {"timestamp": pd.Timestamp("2025-01-03"), "open": 105, "high": 112, "low": 104, "close": 111, "volume": 1e3},
+    ])
+    cfg = BacktestConfig(initial_balance={"USDT": 10_000.0}, fee_rate=0.0, slippage_bps=0.0, allow_short=False)
+    r = BacktestRunner(_BuyOnceWithRisk("s", {}), df, cfg).run().metrics.to_dict()
+    assert r["closed_trades"] == 1
+    assert 9.5 < r["avg_trade_return"] < 10.5   # ~ +$10 realized (TP 110 from entry 100, 1 unit)
+
+
 def test_win_rate_empty_and_all_entries_is_zero():
     eq = pd.DataFrame({"timestamp": pd.date_range("2025-01-01", periods=2), "equity": [10000.0, 10000.0], "drawdown": [0.0, 0.0]})
     assert BacktestMetrics(eq, []).win_rate == 0.0

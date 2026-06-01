@@ -143,6 +143,12 @@ class BacktestRunner:
                     pos["unrealized_pnl"] = (pos["entry_price"] - current_price) * pos["size"]
                 pos["current_price"] = current_price
 
+            # Enforce stop-loss / take-profit intra-bar BEFORE new signals, so
+            # the backtest exits the way the live engine would (it used to
+            # ignore the strategy's risk levels entirely). Uses the bar's
+            # high/low to catch intra-bar touches.
+            self._check_stop_tp(positions, data.iloc[i], portfolio, quote_asset, timestamp)
+
             # Generate signal, then apply the same opt-in gates the live engine
             # runs in BaseStrategy.on_tick — so a backtest reflects live gating
             # (paper-to-live fidelity). These are pure signal transforms; each
@@ -309,6 +315,10 @@ class BacktestRunner:
                             "entry_price": fill.filled_price,
                             "current_price": fill.filled_price,
                             "unrealized_pnl": 0.0,
+                            # Carry the strategy's risk levels so the backtest
+                            # ENFORCES them intra-bar (it used to ignore stop/TP).
+                            "stop_loss": signal.stop_loss,
+                            "take_profit": signal.take_profit,
                         }
                     # Log the entry as a trade so total_trades reflects activity.
                     # Realized P&L is 0 for entries; closes record their own.
@@ -375,6 +385,45 @@ class BacktestRunner:
                             is_entry=True,
                         )
                     )
+
+    def _check_stop_tp(self, positions, bar, portfolio, quote_asset, timestamp) -> None:
+        """Close any long whose stop-loss or take-profit was touched this bar.
+
+        Stop is checked first (conservative when both touch the same bar). The
+        stop fills at ``min(stop, open)`` to model a gap-down through it; the
+        take-profit fills at the limit. Longs only (shorts out of scope here).
+        """
+        try:
+            hi = float(bar.get("high"))
+            lo = float(bar.get("low"))
+            op = float(bar.get("open"))
+        except Exception:
+            return
+        for symbol in list(positions.keys()):
+            pos = positions[symbol]
+            if pos.get("side") != "long" or float(pos.get("size", 0) or 0) <= 0:
+                continue
+            sl = pos.get("stop_loss")
+            tp = pos.get("take_profit")
+            if sl is not None and lo <= float(sl):
+                self._close_long(symbol, min(float(sl), op), "backtest_stop", positions, portfolio, quote_asset, timestamp)
+            elif tp is not None and hi >= float(tp):
+                self._close_long(symbol, float(tp), "backtest_take_profit", positions, portfolio, quote_asset, timestamp)
+
+    def _close_long(self, symbol, exit_price, reason, positions, portfolio, quote_asset, timestamp) -> None:
+        """Realize a long at ``exit_price`` (stop/TP fill), credit cash, record."""
+        pos = positions.get(symbol)
+        if not pos or pos.get("side") != "long":
+            return
+        qty = float(pos["size"])
+        fee_rate = float(getattr(self.execution, "fee_rate", 0.0) or 0.0)
+        fee = qty * exit_price * fee_rate
+        portfolio.deposit(quote_asset, qty * exit_price - fee)
+        realized = (exit_price - pos["entry_price"]) * qty - fee
+        self._trades.append(
+            TradeRecord(timestamp=timestamp, realized_pnl=realized, side="sell", quantity=qty, price=exit_price)
+        )
+        del positions[symbol]
 
     def walk_forward(
         self,
