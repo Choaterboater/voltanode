@@ -306,6 +306,51 @@ class BaseStrategy(ABC):
         except Exception:
             return signal
 
+    def _apply_regime_gate(self, signal: "Signal | None", ohlcv_data: Any) -> "Signal | None":
+        """Veto a BUY when price is below the trend EMA — a confirmed downtrend.
+
+        Enabled per-bot via ``config['regime_gate']``::
+
+            {"enabled": true, "trend_ema": 100}
+
+        Long-biased dip-buyers / scanners bled by opening longs into a falling
+        market (the crypto bear: BTC -36%, ETH -26%). When the latest close is
+        below the EMA, downgrade the BUY to HOLD. SELLs are never gated. Default
+        off — absent block ⇒ unchanged behavior. Needs >= trend_ema bars to act,
+        so short backtests / unit fixtures are unaffected.
+        """
+        try:
+            rg = self.config.get("regime_gate") or {}
+            if not rg.get("enabled"):
+                return signal
+            if signal is None or signal.signal_type != SignalType.BUY:
+                return signal
+            if ohlcv_data is None or "close" not in getattr(ohlcv_data, "columns", []):
+                return signal
+            period = int(rg.get("trend_ema", 100))
+            closes = ohlcv_data["close"].astype(float)
+            if period <= 0 or len(closes) < period:
+                return signal
+            trend = float(closes.ewm(span=period, adjust=False).mean().iloc[-1])
+            price = float(closes.iloc[-1])
+            if price >= trend:
+                return signal
+            return Signal(
+                strategy_id=self.strategy_id,
+                symbol=signal.symbol,
+                signal_type=SignalType.HOLD,
+                confidence=0.0,
+                timestamp=signal.timestamp,
+                metadata={
+                    "trigger": "regime_gate",
+                    "price": round(price, 6),
+                    "trend_ema": round(trend, 6),
+                    "original_trigger": (signal.metadata or {}).get("trigger"),
+                },
+            )
+        except Exception:
+            return signal
+
     def _matches_symbol(self, tick_symbol: str) -> bool:
         """True when the tick's symbol is in this strategy's scope."""
         configured = self.configured_symbols()
@@ -381,6 +426,11 @@ class BaseStrategy(ABC):
             # crowded-long perp funding regime. Reads a cache populated by the
             # background funding loop — ZERO network I/O in the tick path.
             signal = self._apply_funding_gate(signal, tick.symbol)
+            # Regime gate (opt-in, default off): veto BUYs into a confirmed
+            # downtrend (price below the trend EMA). Stops long-biased
+            # dip-buyers / scanners from opening into a falling market — the
+            # pattern behind the big crypto losers (ETH/BTC/SOL).
+            signal = self._apply_regime_gate(signal, ohlcv_data)
             # Position-aware BUY gate: if the strategy proposes to open a
             # long but the portfolio already has an open long position on
             # the same symbol, downgrade to HOLD. This kills the "every

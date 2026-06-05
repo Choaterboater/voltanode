@@ -28,6 +28,12 @@ class MeanReversionStrategy(BaseStrategy):
         "bb_std": 1.5,
         "touch_tolerance": 0.02,  # within 2% of band counts as a touch
         "position_pct": 0.03,
+        # Regime gate: suppress dip-BUYs when price is below this EMA (a
+        # confirmed downtrend). In paper, mean-reversion bled -$199 / 37% win
+        # by buying falling knives that kept hitting stops — this stands the
+        # dip-buyer down in downtrends. 0 disables. Only active once there are
+        # >= this many bars, so short backtests / unit fixtures are unaffected.
+        "trend_filter_ema": 100,
     }
 
     @classmethod
@@ -93,6 +99,18 @@ class MeanReversionStrategy(BaseStrategy):
         current_lower = float(lower_band.iloc[-1])
         current_sma = float(sma.iloc[-1])
 
+        # Regime gate — is price in a confirmed downtrend? Used below to
+        # suppress dip-BUYs (see DEFAULT_CONFIG["trend_filter_ema"]). SELLs are
+        # never gated: fading or exiting in a downtrend is fine.
+        trend_ema_period = int(cfg.get("trend_filter_ema", 0) or 0)
+        trend_ema_val = None
+        in_downtrend = False
+        if trend_ema_period > 0 and len(data) >= trend_ema_period:
+            trend_ema_val = float(
+                data["close"].ewm(span=trend_ema_period, adjust=False).mean().iloc[-1]
+            )
+            in_downtrend = current_price < trend_ema_val
+
         symbol = data.attrs.get("symbol", "unknown")
 
         # Per-bar latch — tick frequency >> bar frequency, so without this
@@ -114,6 +132,21 @@ class MeanReversionStrategy(BaseStrategy):
         tol = float(cfg.get("touch_tolerance", 0.01))
         touches_lower = current_price <= current_lower * (1 + tol)
         touches_upper = current_price >= current_upper * (1 - tol)
+
+        if is_oversold and touches_lower and in_downtrend:
+            # Dip-buy blocked by the regime gate: oversold + lower-band touch,
+            # but price is below the trend EMA — the falling-knife setup that
+            # bled the account. Stand down until the trend repairs.
+            self._last_signal_bar[symbol] = latest_bar
+            return Signal(
+                strategy_id=self.strategy_id,
+                symbol=symbol,
+                signal_type=SignalType.HOLD,
+                confidence=0.0,
+                timestamp=pd.Timestamp.now(),
+                metadata={"trigger": "regime_downtrend_skip", "rsi": current_rsi,
+                          "trend_ema": trend_ema_val, "price": current_price},
+            )
 
         if is_oversold and touches_lower:
             self._last_signal_bar[symbol] = latest_bar
