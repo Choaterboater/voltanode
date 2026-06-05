@@ -74,10 +74,10 @@ class PaperTradingEngine:
         # Hard per-position loss cap (backstop, see the sltp loop): force-close
         # any position down more than this from entry, regardless of its own
         # stop. Bounds the tail that sank realized P&L (a few names blew past
-        # their 8% stops). Reads safety.max_position_loss_pct if set; 0 = off.
-        self._max_position_loss_pct = float(
-            getattr(getattr(config, "safety", None), "max_position_loss_pct", 0.10) or 0.0
-        )
+        # their 8% stops). SafetyConfig.max_position_loss_pct is a PERCENT
+        # (default 10.0); store it as a fraction. 0 = off.
+        _cap_pct = float(getattr(getattr(config, "safety", None), "max_position_loss_pct", 10.0) or 0.0)
+        self._max_position_loss_pct = _cap_pct / 100.0
         self.risk_manager = risk_manager or RiskManager(config.risk)
         self.db_session = db_session
         self.execution = ExecutionSimulator(

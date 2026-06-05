@@ -216,6 +216,10 @@ class SafetyConfig(BaseModel):
     max_daily_loss_pct: float = 5.0
     max_position_size_pct: float = 20.0
     max_exposure_pct: float = 300.0
+    # Hard per-position loss cap, as a PERCENT of entry (engine converts to a
+    # fraction). Force-closes any position down more than this regardless of its
+    # own stop — bounds the tail (a few names blew past their 8% stops). 0 = off.
+    max_position_loss_pct: float = 10.0
     require_confirmation: bool = True
     kill_switch_on_disconnect: bool = True
     max_orders_per_minute: int = 300
