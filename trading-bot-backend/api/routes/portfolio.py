@@ -179,6 +179,23 @@ def _live_broker_to_response(account_id: str, eng: Any) -> PortfolioResponse | N
 
     unrealized = sum(pos.unrealized_pnl for pos in positions)
 
+    # Realized P&L from the engine's per-trade stored realized_pnl (computed at
+    # fill time with full position context). NOTE: a FIFO-over-history reducer
+    # was tried and reverted (2026-06-05) — the in-memory history is buy-
+    # incomplete (more sells than buys, since positions predate the log), so
+    # FIFO orphaned the losing sells and reported a falsely-positive figure. A
+    # correct full ledger needs the broker's complete fill history (Alpaca
+    # activities); until then the stored per-trade value is the honest source.
+    realized = 0.0
+    try:
+        for _tr in eng.get_trade_history():
+            _side = getattr(getattr(_tr, "side", None), "value", str(getattr(_tr, "side", ""))).lower()
+            _rp = getattr(_tr, "realized_pnl", None)
+            if _side == "sell" and _rp is not None:
+                realized += float(_rp)
+    except Exception:
+        realized = 0.0
+
     from datetime import datetime, timezone
     source, broker_connected = _portfolio_source_meta(eng)
     return PortfolioResponse(
@@ -187,7 +204,7 @@ def _live_broker_to_response(account_id: str, eng: Any) -> PortfolioResponse | N
         positions=positions,
         total_equity=total_equity,
         unrealized_pnl=unrealized,
-        realized_pnl=0.0,  # Broker-reported realized P&L not standardized across adapters
+        realized_pnl=round(realized, 2),
         timestamp=datetime.now(timezone.utc),
         source=source,
         broker_connected=broker_connected,
@@ -605,22 +622,22 @@ async def get_portfolio_stats(account_id: str, range: str = "30D") -> Dict[str, 
             sharpe_ratio = calculate_sharpe(returns)
         max_drawdown_pct, _, _ = calculate_max_drawdown(series)
 
+    # Closed-trade P&L from the engine's per-trade stored realized_pnl, over the
+    # FULL history (NOT engine.get_trade_history(account_id) — that filter drops
+    # trades whose order left the in-memory _orders map after a restart, which
+    # made win_rate/profit_factor a fake ~88%). A FIFO-over-history reducer was
+    # tried and reverted (2026-06-05): the history is buy-incomplete, so FIFO
+    # orphaned losing sells and biased the figure positive. Needs full broker
+    # fills to do FIFO correctly.
     closed_trades: List[Any] = []
     try:
-        # Use the FULL trade history, not engine.get_trade_history(account_id):
-        # the account filter (t.order_id in self._orders[account_id]) silently
-        # drops every trade whose order is no longer in the in-memory _orders
-        # map — which is almost all of them after a restart. That made
-        # win_rate / profit_factor reflect only the handful of recent (mostly
-        # winning) sells — a fake ~88% win rate while the account was down ~5%.
-        # VoltaNode is single-account ("default"), so every trade belongs to it.
         for trade in engine.get_trade_history():
             side = getattr(getattr(trade, "side", None), "value", str(getattr(trade, "side", ""))).lower()
             pnl = getattr(trade, "realized_pnl", None)
             if side == "sell" and pnl is not None:
                 closed_trades.append(float(pnl))
-    except KeyError:
-        pass
+    except Exception:
+        closed_trades = []
 
     wins = sum(1 for p in closed_trades if p > 0)
     total_trades = len(closed_trades)

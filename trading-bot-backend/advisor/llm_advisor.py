@@ -292,11 +292,12 @@ def _call_ollama(prompt: str, model: str, timeout: float = 60.0) -> Optional[str
 # models first and parks the broken ones at the tail so when OR restores
 # them the chain auto-benefits.
 _HEAVY_MODELS = [
+    "nvidia/nemotron-3-ultra-550b-a55b:free",  # 550B MoE, 1M ctx — strongest free; reasoning-heavy (added 2026-06-05)
     "openai/gpt-oss-120b:free",                # 120B reasoning, JSON via prompt
     "nvidia/nemotron-3-super-120b-a12b:free",  # 120B MoE, JSON-native
-    "minimax/minimax-m2.5:free",               # large MoE, 196K ctx
     "z-ai/glm-4.5-air:free",                   # solid mid-large
     "inclusionai/ring-2.6-1t:free",            # parked: now paid (404) as of 2026-05-18
+    # removed 2026-06-05: minimax/minimax-m2.5:free (delisted from OpenRouter)
 ]
 
 _FAST_MODELS = [
@@ -304,9 +305,9 @@ _FAST_MODELS = [
     "openai/gpt-oss-120b:free",                # 120B reasoning, deeper fallback
     "nvidia/nemotron-3-super-120b-a12b:free",  # 120B MoE, JSON-native
     "meta-llama/llama-3.3-70b-instruct:free",  # 70B, fast & reliable
-    "minimax/minimax-m2.5:free",               # large MoE, 196K ctx
-    "arcee-ai/trinity-large-thinking:free",    # reasoning, ~3.6s
+    "nvidia/nemotron-3-ultra-550b-a55b:free",  # 550B deep fallback — reasoning-heavy/slower (added 2026-06-05)
     "nvidia/nemotron-3-nano-30b-a3b:free",     # parked: transient 429s as of 2026-05-18
+    # removed 2026-06-05: minimax/minimax-m2.5:free + arcee-ai/trinity-large-thinking:free (delisted)
     "google/gemma-4-31b-it:free",              # parked: provider errors as of 2026-05-18
     "qwen/qwen3-next-80b-a3b-instruct:free",   # parked: provider errors as of 2026-05-18
 ]
