@@ -160,6 +160,7 @@ class BacktestRunner:
                 signal = strategy._apply_volatility_target(signal, current_bar)
                 signal = strategy._apply_cost_gate(signal, current_price)
                 signal = strategy._apply_funding_gate(signal, signal.symbol)
+                signal = strategy._apply_regime_gate(signal, current_bar)
             except Exception:
                 pass  # never let a gate transform abort the backtest
 

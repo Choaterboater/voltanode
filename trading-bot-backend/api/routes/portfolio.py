@@ -607,7 +607,14 @@ async def get_portfolio_stats(account_id: str, range: str = "30D") -> Dict[str, 
 
     closed_trades: List[Any] = []
     try:
-        for trade in engine.get_trade_history(account_id):
+        # Use the FULL trade history, not engine.get_trade_history(account_id):
+        # the account filter (t.order_id in self._orders[account_id]) silently
+        # drops every trade whose order is no longer in the in-memory _orders
+        # map — which is almost all of them after a restart. That made
+        # win_rate / profit_factor reflect only the handful of recent (mostly
+        # winning) sells — a fake ~88% win rate while the account was down ~5%.
+        # VoltaNode is single-account ("default"), so every trade belongs to it.
+        for trade in engine.get_trade_history():
             side = getattr(getattr(trade, "side", None), "value", str(getattr(trade, "side", ""))).lower()
             pnl = getattr(trade, "realized_pnl", None)
             if side == "sell" and pnl is not None:

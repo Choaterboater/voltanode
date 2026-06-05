@@ -71,6 +71,13 @@ class PaperTradingEngine:
         """
         self.config = config
         self.market_data = market_data
+        # Hard per-position loss cap (backstop, see the sltp loop): force-close
+        # any position down more than this from entry, regardless of its own
+        # stop. Bounds the tail that sank realized P&L (a few names blew past
+        # their 8% stops). Reads safety.max_position_loss_pct if set; 0 = off.
+        self._max_position_loss_pct = float(
+            getattr(getattr(config, "safety", None), "max_position_loss_pct", 0.10) or 0.0
+        )
         self.risk_manager = risk_manager or RiskManager(config.risk)
         self.db_session = db_session
         self.execution = ExecutionSimulator(
@@ -650,11 +657,24 @@ class PaperTradingEngine:
                     continue
 
                 close_side: OrderSide | None = None
+                # Hard per-position loss cap (backstop). Regardless of the
+                # strategy's own stop, never let a single position bleed past
+                # this. The realized P&L was sunk by a handful of names blowing
+                # past their 8% stops on fast gaps (ETH ~-11%, BTC, SOL) — a few
+                # big losers, not many small ones. 0 disables.
+                hard_cap = float(getattr(self, "_max_position_loss_pct", 0.10) or 0.0)
+                loss_pct = 0.0
+                if hard_cap > 0 and pos.entry_price and pos.entry_price > 0 and tick.price > 0:
+                    if pos.side == PositionSide.LONG:
+                        loss_pct = (pos.entry_price - tick.price) / pos.entry_price
+                    else:
+                        loss_pct = (tick.price - pos.entry_price) / pos.entry_price
+                cap_breached = hard_cap > 0 and loss_pct >= hard_cap
                 if pos.side == PositionSide.LONG:
-                    if pos.stop_loss is not None and tick.price <= pos.stop_loss:
+                    if cap_breached or (pos.stop_loss is not None and tick.price <= pos.stop_loss):
                         close_side = OrderSide.SELL
                 elif pos.side == PositionSide.SHORT:
-                    if pos.stop_loss is not None and tick.price >= pos.stop_loss:
+                    if cap_breached or (pos.stop_loss is not None and tick.price >= pos.stop_loss):
                         close_side = OrderSide.BUY
 
                 if close_side is not None:
