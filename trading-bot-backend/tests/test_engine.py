@@ -327,3 +327,29 @@ class TestProfitAwareExits:
             o for o in engine.get_orders()
             if o.strategy_id == "trailing_stop" and o.symbol == "TEST"
         ]
+
+    def test_default_stop_cuts_loss_at_five_percent(self, config: BotConfig) -> None:
+        """A long with no explicit stop is cut at -5% (tightened from -8%).
+
+        Asymmetry fix: partial profit is rung at +8%, so the default stop must
+        sit inside that band or the avg loss dwarfs the avg win (the 0.58
+        profit factor that sank realized P&L). -4% must NOT close; -5% must.
+        """
+        # -4%: inside the 5% default stop, position stays open.
+        e1 = PaperTradingEngine(config)
+        p1 = e1.get_portfolio("default")
+        p1.open_position("TEST", PositionSide.LONG, 10.0, 100.0)
+        e1.on_tick(TickData(symbol="TEST", price=96.0))
+        pos = p1.get_position("TEST")
+        assert pos is not None and pos.status == "open"
+        assert not [o for o in e1.get_orders() if o.strategy_id == "sltp_manager"]
+
+        # -5%: hits the default stop -> full close via sltp_manager.
+        e2 = PaperTradingEngine(config)
+        p2 = e2.get_portfolio("default")
+        p2.open_position("TEST", PositionSide.LONG, 10.0, 100.0)
+        e2.on_tick(TickData(symbol="TEST", price=95.0))
+        assert [
+            o for o in e2.get_orders()
+            if o.strategy_id == "sltp_manager" and o.symbol == "TEST"
+        ], "expected the default 5% stop to close the position"

@@ -345,7 +345,7 @@ safety:
   max_daily_loss_pct: 5.0
   max_position_size_pct: 20.0
   max_exposure_pct: 300.0
-  max_position_loss_pct: 10.0  # hard per-position loss cap (% of entry); 0 disables
+  max_position_loss_pct: 6.0  # hard per-position loss cap (% of entry); 0 disables
   require_confirmation: true
   kill_switch_on_disconnect: true
   max_orders_per_minute: 300

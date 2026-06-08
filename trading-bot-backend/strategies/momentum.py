@@ -29,6 +29,12 @@ class MomentumStrategy(BaseStrategy):
         # bump this back up via config; the hyperopt param_space below
         # now spans 30-200 so the optimizer can explore both ends.
         "trend_filter_ema": 100,
+        # Regime gate (base.py _apply_regime_gate): downgrade BUYs to HOLD when
+        # the latest close is below the trend EMA. Belt-and-suspenders with the
+        # inline above_trend check in generate_signal — keeps the gate in force
+        # if an operator overrides trend_filter_ema, and matches the other
+        # long-followers (simple_trend, auto_discovery).
+        "regime_gate": {"enabled": True, "trend_ema": 100},
     }
 
     @classmethod

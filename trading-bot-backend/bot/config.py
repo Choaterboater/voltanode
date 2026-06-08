@@ -218,8 +218,10 @@ class SafetyConfig(BaseModel):
     max_exposure_pct: float = 300.0
     # Hard per-position loss cap, as a PERCENT of entry (engine converts to a
     # fraction). Force-closes any position down more than this regardless of its
-    # own stop — bounds the tail (a few names blew past their 8% stops). 0 = off.
-    max_position_loss_pct: float = 10.0
+    # own stop — bounds the tail. Tightened 10 -> 6: realized P&L was a high
+    # win-rate masking a 0.58 profit factor, because a few names ran to -8/-10%
+    # (META -$292, ENLT -$401) while winners were trimmed at +8%. 0 = off.
+    max_position_loss_pct: float = 6.0
     require_confirmation: bool = True
     kill_switch_on_disconnect: bool = True
     max_orders_per_minute: int = 300

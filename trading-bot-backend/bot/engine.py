@@ -639,7 +639,14 @@ class PaperTradingEngine:
                 )
             if pos and pos.status == "open":
                 if pos.stop_loss is None and pos.entry_price > 0:
-                    sl_pct = 0.08
+                    # Cut losers faster than we ring profits. Partial profit
+                    # is taken at +8% (see _profit_manager_order); a default
+                    # stop wider than that is the asymmetry that sank realized
+                    # P&L — high win-rate, but avg loss ~7x avg win because a
+                    # few names ran to -8/-10% while winners were trimmed at
+                    # +8%. A 5% default stop puts the downside band inside the
+                    # profit-take band (loss < win), flipping the ratio.
+                    sl_pct = 0.05
                     tp_pct = 0.30
                     if pos.side == PositionSide.LONG:
                         pos.stop_loss = pos.entry_price * (1.0 - sl_pct)
