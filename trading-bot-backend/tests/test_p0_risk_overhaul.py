@@ -17,14 +17,16 @@ from datetime import datetime, timezone
 import pandas as pd
 import pytest
 
+from backtest.engine import BacktestConfig, BacktestRunner
 from bot.config import BotConfig, OrderSide, PositionSide
 from bot.engine import LiveTradingEngine, PaperTradingEngine, TickData
 from bot.orders import FillResult, Order
-from bot.portfolio import Position
+from bot.portfolio import Portfolio, Position
 from brokers.alpaca import AlpacaBroker
 from brokers.registry import get_broker
 from safety.daily_tracker import DailyPnlTracker
 from safety.kill_switch import KillSwitchError
+from strategies.base import Signal, SignalType
 from strategies.momentum import MomentumStrategy
 
 
@@ -243,3 +245,37 @@ class TestAtrAdaptiveStops:
         pos = self._pos(98.0)
         engine._apply_atr_stop_floor(pos, _flat_ohlcv(1.0))
         assert pos.stop_loss == pytest.approx(98.0)
+
+
+# ── 7. Backtest fidelity — match the live fee + ATR-stop model ───────────────
+
+class TestBacktestFidelity:
+    def test_backtest_uses_crypto_fee_for_crypto_asset_class(self) -> None:
+        strat = MomentumStrategy("bt-crypto", {"asset_class": "crypto", "fast_ema": 5, "slow_ema": 10})
+        runner = BacktestRunner(strat, _flat_ohlcv(1.0, n=30), BacktestConfig(initial_balance={"USDT": 10000.0}))
+        assert runner._is_crypto is True
+        assert runner.execution.fee_rate == pytest.approx(0.0025)
+
+    def test_backtest_uses_equity_fee_for_non_crypto(self) -> None:
+        strat = MomentumStrategy("bt-stock", {"asset_class": "stock", "fast_ema": 5, "slow_ema": 10})
+        runner = BacktestRunner(strat, _flat_ohlcv(1.0, n=30), BacktestConfig(initial_balance={"USDT": 10000.0}))
+        assert runner._is_crypto is False
+        assert runner.execution.fee_rate == pytest.approx(0.001)
+
+    def test_backtest_widens_a_tight_stop_via_atr(self) -> None:
+        strat = MomentumStrategy("bt-atr", {"fast_ema": 5, "slow_ema": 10})
+        data = _flat_ohlcv(1.0, n=30)  # ATR=2 at ~100 -> ~5% floor
+        runner = BacktestRunner(strat, data, BacktestConfig(initial_balance={"USDT": 100000.0}))
+        portfolio = Portfolio("backtest", {"USDT": 100000.0})
+        positions: dict = {}
+        sig = Signal(
+            strategy_id="bt-atr", symbol="BTC", signal_type=SignalType.BUY,
+            confidence=0.8, timestamp=pd.Timestamp.now(),
+            suggested_size=1.0, stop_loss=98.0, take_profit=130.0,  # tight 2% stop
+        )
+        runner._execute_signal(sig, 100.0, portfolio, positions, "USDT", ohlcv=data)
+        pos = positions.get("BTC")
+        assert pos is not None
+        # The 2% strategy stop is widened toward the ~5% ATR floor (~95).
+        assert pos["stop_loss"] < 97.0
+        assert pos["stop_loss"] > 93.0

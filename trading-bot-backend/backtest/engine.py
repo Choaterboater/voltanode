@@ -13,7 +13,7 @@ from backtest.metrics import BacktestMetrics, TradeRecord
 from bot.config import OrderSide, SizingMethod
 from bot.orders import ExecutionSimulator, Order, OrderType
 from bot.portfolio import Portfolio, PositionSide
-from bot.risk import PositionSizer, RiskManager
+from bot.risk import PositionSizer, RiskManager, atr_stop_fraction
 from strategies.base import BaseStrategy, Signal, SignalType
 
 
@@ -22,10 +22,21 @@ class BacktestConfig:
     """Configuration for backtest run."""
     initial_balance: Dict[str, float]
     fee_rate: float = 0.001
+    # Crypto taker fee — applied (instead of fee_rate) when the strategy's
+    # asset_class is "crypto", so a crypto backtest prices the same ~25 bps/side
+    # the live broker now charges (audit 2026-06-09 paper-to-live fidelity).
+    crypto_fee_rate: float = 0.0025
     slippage_bps: float = 5.0
     allow_short: bool = True
     position_sizing: SizingMethod = SizingMethod.PERCENTAGE
     position_sizing_value: float = 0.02
+    # ATR-adaptive stop floor — mirror the live engine so backtested exits use
+    # the same volatility-sized stops (only widens a tight stop, never tightens).
+    atr_stop_enabled: bool = True
+    atr_stop_mult: float = 2.5
+    atr_stop_period: int = 14
+    atr_stop_min_pct: float = 0.03
+    atr_stop_max_pct: float = 0.12
 
 
 @dataclass
@@ -86,8 +97,18 @@ class BacktestRunner:
         self.data = data.copy()
         self.config = config
         self.initial_balance = initial_balance or config.initial_balance
+        # Match the live broker's cost model: crypto pays the taker fee, equities
+        # are commission-free. Detect via the strategy's asset_class so a crypto
+        # backtest prices ~25 bps/side like live (audit 2026-06-09 fee fix).
+        _asset = str((getattr(strategy, "config", {}) or {}).get("asset_class", "")).lower()
+        self._is_crypto = _asset == "crypto"
+        effective_fee = (
+            float(getattr(config, "crypto_fee_rate", 0.0025))
+            if self._is_crypto
+            else float(config.fee_rate)
+        )
         self.execution = ExecutionSimulator(
-            fee_rate=config.fee_rate,
+            fee_rate=effective_fee,
             slippage_model=getattr(config, "slippage_model", "fixed"),
             slippage_bps=config.slippage_bps,
             # Fixed seed by default so a backtest is reproducible run-to-run;
@@ -96,6 +117,12 @@ class BacktestRunner:
             impact_coeff_bps=getattr(config, "impact_coeff_bps", 0.0),
             impact_ref_notional=getattr(config, "impact_ref_notional", 10_000.0),
         )
+        # ATR-adaptive stop floor params (mirror the live engine exactly).
+        self._atr_stop_enabled = bool(getattr(config, "atr_stop_enabled", True))
+        self._atr_stop_mult = float(getattr(config, "atr_stop_mult", 2.5))
+        self._atr_stop_period = int(getattr(config, "atr_stop_period", 14))
+        self._atr_stop_min_pct = float(getattr(config, "atr_stop_min_pct", 0.03))
+        self._atr_stop_max_pct = float(getattr(config, "atr_stop_max_pct", 0.12))
         self._trades: List[TradeRecord] = []
         self._equity_curve: List[Dict[str, Any]] = []
 
@@ -183,11 +210,11 @@ class BacktestRunner:
 
             if signal.signal_type == SignalType.BUY:
                 self._execute_signal(
-                    signal, current_price, portfolio, positions, quote_asset
+                    signal, current_price, portfolio, positions, quote_asset, ohlcv=current_bar
                 )
             elif signal.signal_type == SignalType.SELL:
                 self._execute_signal(
-                    signal, current_price, portfolio, positions, quote_asset
+                    signal, current_price, portfolio, positions, quote_asset, ohlcv=current_bar
                 )
 
             # Record equity = cash + signed position MARKET VALUE. Previously
@@ -244,6 +271,7 @@ class BacktestRunner:
         portfolio: Portfolio,
         positions: Dict[str, Dict[str, Any]],
         quote_asset: str,
+        ohlcv: pd.DataFrame | None = None,
     ) -> None:
         """Execute a signal in backtest."""
         symbol = signal.symbol
@@ -310,15 +338,28 @@ class BacktestRunner:
                         pos["entry_price"] = total_cost / pos["size"]
                         pos["current_price"] = fill.filled_price
                     else:
+                        # Carry the strategy's risk levels so the backtest
+                        # ENFORCES them intra-bar (it used to ignore stop/TP),
+                        # then widen a too-tight stop to the ATR floor exactly
+                        # like the live engine (audit 2026-06-09). Only ever
+                        # moves the stop further from entry, never tighter.
+                        stop_loss = signal.stop_loss
+                        if self._atr_stop_enabled and fill.filled_price > 0:
+                            atr_pct = atr_stop_fraction(
+                                ohlcv, fill.filled_price,
+                                mult=self._atr_stop_mult, period=self._atr_stop_period,
+                                min_pct=self._atr_stop_min_pct, max_pct=self._atr_stop_max_pct,
+                            )
+                            if atr_pct is not None:
+                                atr_stop = fill.filled_price * (1.0 - atr_pct)
+                                stop_loss = atr_stop if stop_loss is None else min(stop_loss, atr_stop)
                         positions[symbol] = {
                             "side": "long",
                             "size": fill.filled_qty,
                             "entry_price": fill.filled_price,
                             "current_price": fill.filled_price,
                             "unrealized_pnl": 0.0,
-                            # Carry the strategy's risk levels so the backtest
-                            # ENFORCES them intra-bar (it used to ignore stop/TP).
-                            "stop_loss": signal.stop_loss,
+                            "stop_loss": stop_loss,
                             "take_profit": signal.take_profit,
                         }
                     # Log the entry as a trade so total_trades reflects activity.

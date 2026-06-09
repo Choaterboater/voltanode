@@ -14,6 +14,47 @@ from bot.portfolio import Portfolio, lookup_price
 from safety.limits import compute_portfolio_equity
 
 
+def atr_stop_fraction(
+    ohlcv: Any,
+    ref_price: float | None,
+    mult: float = 2.5,
+    period: int = 14,
+    min_pct: float = 0.03,
+    max_pct: float = 0.12,
+) -> float | None:
+    """Stop distance as a fraction of price, from ``mult * ATR(period)``.
+
+    Shared by the live engine and the backtest so stops are sized identically
+    (audit 2026-06-09 timeframe-mismatch fix). Entries decide on daily bars but
+    stops fire on the live tick, so a fixed % stop is shaken out by normal
+    intraday range; sizing it to the symbol's own volatility fixes that.
+    Returns a fraction clamped to ``[min_pct, max_pct]``, or ``None`` when the
+    data is missing / has too few bars (caller keeps its legacy fixed stop).
+    """
+    if ohlcv is None or not ref_price or ref_price <= 0:
+        return None
+    try:
+        cols = getattr(ohlcv, "columns", [])
+        if not all(c in cols for c in ("high", "low", "close")):
+            return None
+        period = int(period)
+        if len(ohlcv) < period + 1:
+            return None
+        high = ohlcv["high"].astype(float)
+        low = ohlcv["low"].astype(float)
+        prev_close = ohlcv["close"].astype(float).shift(1)
+        tr = (high - low).abs()
+        tr = tr.combine((high - prev_close).abs(), max)
+        tr = tr.combine((low - prev_close).abs(), max)
+        atr = tr.rolling(period).mean().iloc[-1]
+        if atr is None or not (float(atr) > 0):
+            return None
+        pct = (float(mult) * float(atr)) / ref_price
+        return max(float(min_pct), min(pct, float(max_pct)))
+    except Exception:
+        return None
+
+
 @dataclass
 class RiskCheckResult:
     """Result of a pre-trade risk check."""

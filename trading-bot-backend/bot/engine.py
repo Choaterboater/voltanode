@@ -15,7 +15,7 @@ import pandas as pd
 from bot.config import BotConfig, OrderSide
 from bot.orders import ExecutionSimulator, FillResult, Order, OrderStatus
 from bot.portfolio import Portfolio, Position, PositionSide, lookup_price, symbol_lookup_keys, symbols_equivalent
-from bot.risk import RiskAlert, RiskManager
+from bot.risk import RiskAlert, RiskManager, atr_stop_fraction
 
 # Live trading imports
 from brokers.base import BrokerAdapter, BrokerConnectionError
@@ -628,42 +628,23 @@ class PaperTradingEngine:
         return None
 
     def _atr_stop_pct(self, ohlcv_data: Any, ref_price: float | None) -> float | None:
-        """Stop distance as a fraction of price, from ``mult * ATR(period)``.
+        """Stop distance as a fraction of price from ``mult * ATR(period)``.
 
-        Audit 2026-06-09 — entries decide on daily bars but stops fire on the
-        live 5s tick, so a fixed % stop is hit by normal intraday range. Sizing
-        the stop to the symbol's own volatility lets a daily-cadence entry
-        survive its noise. Returns a fraction clamped to [min, max], or None
-        when disabled / OHLCV missing / not enough bars (=> unit tests and
-        no-data paths keep the legacy fixed stop).
+        Delegates to ``bot.risk.atr_stop_fraction`` so the live engine and the
+        backtest size stops identically (audit 2026-06-09 timeframe-mismatch
+        fix). Disabled => None => the legacy fixed stop is kept (also the path
+        unit tests / no-OHLCV ticks take).
         """
         if not getattr(self, "_atr_stop_enabled", True):
             return None
-        if ohlcv_data is None or not ref_price or ref_price <= 0:
-            return None
-        try:
-            cols = getattr(ohlcv_data, "columns", [])
-            if not all(c in cols for c in ("high", "low", "close")):
-                return None
-            period = int(getattr(self, "_atr_stop_period", 14))
-            if len(ohlcv_data) < period + 1:
-                return None
-            high = ohlcv_data["high"].astype(float)
-            low = ohlcv_data["low"].astype(float)
-            prev_close = ohlcv_data["close"].astype(float).shift(1)
-            tr = (high - low).abs()
-            tr = tr.combine((high - prev_close).abs(), max)
-            tr = tr.combine((low - prev_close).abs(), max)
-            atr = tr.rolling(period).mean().iloc[-1]
-            if atr is None or not (float(atr) > 0):
-                return None
-            mult = float(getattr(self, "_atr_stop_mult", 2.5))
-            pct = (mult * float(atr)) / ref_price
-            lo = float(getattr(self, "_atr_stop_min_pct", 0.03))
-            hi = float(getattr(self, "_atr_stop_max_pct", 0.12))
-            return max(lo, min(pct, hi))
-        except Exception:
-            return None
+        return atr_stop_fraction(
+            ohlcv_data,
+            ref_price,
+            mult=getattr(self, "_atr_stop_mult", 2.5),
+            period=getattr(self, "_atr_stop_period", 14),
+            min_pct=getattr(self, "_atr_stop_min_pct", 0.03),
+            max_pct=getattr(self, "_atr_stop_max_pct", 0.12),
+        )
 
     def _apply_atr_stop_floor(self, pos: Position | None, ohlcv_data: Any) -> None:
         """Widen ``pos.stop_loss`` to the ATR-based floor. Only ever moves the
