@@ -81,7 +81,10 @@ def main() -> int:
     ap.add_argument("--lookback", type=int, default=400)
     ap.add_argument("--buy-threshold", type=float, default=0.008)
     ap.add_argument("--sell-threshold", type=float, default=0.008)
-    ap.add_argument("--fee", type=float, default=0.001)
+    ap.add_argument("--fee", type=float, default=0.001,
+                    help="per-side fee for non-crypto (equity)")
+    ap.add_argument("--crypto-fee", type=float, default=0.0025,
+                    help="crypto taker fee per side; applied when --asset-class crypto (matches live)")
     ap.add_argument("--slippage-bps", type=float, default=5.0)
     ap.add_argument("--balance", type=float, default=10_000.0)
     ap.add_argument("--device", default="cpu")
@@ -97,6 +100,10 @@ def main() -> int:
         strategy_id=f"kronos_{args.symbol.lower()}",
         config={
             "symbol": args.symbol.upper(),
+            # asset_class lets the BacktestRunner charge the crypto taker fee
+            # (not the equity rate) — without it a crypto run under-prices fees
+            # and the edge verdict is over-optimistic vs live.
+            "asset_class": args.asset_class,
             "pred_len": args.pred_len,
             "lookback": args.lookback,
             "buy_threshold": args.buy_threshold,
@@ -106,9 +113,13 @@ def main() -> int:
     )
 
     quote = "USDT" if args.asset_class == "crypto" else "USD"
+    # eff_fee = the per-side fee actually applied by the backtest (crypto vs
+    # equity), used below for an apples-to-apples buy & hold benchmark.
+    eff_fee = args.crypto_fee if args.asset_class == "crypto" else args.fee
     cfg = BacktestConfig(
         initial_balance={quote: args.balance},
         fee_rate=args.fee,
+        crypto_fee_rate=args.crypto_fee,
         slippage_bps=args.slippage_bps,
         allow_short=False,
     )
@@ -116,7 +127,7 @@ def main() -> int:
     m = result.metrics.to_dict() if hasattr(result.metrics, "to_dict") else dict(result.metrics)
 
     # Buy-and-hold benchmark over the same window, net of one round-trip fee.
-    bh_ret = (float(data["close"].iloc[-1]) / float(data["close"].iloc[0]) - 1.0) - 2 * args.fee
+    bh_ret = (float(data["close"].iloc[-1]) / float(data["close"].iloc[0]) - 1.0) - 2 * eff_fee
     strat_ret = float(m.get("total_pnl", 0.0)) / args.balance
     pf = m.get("profit_factor")
 
