@@ -35,6 +35,10 @@ class NewsSentimentStrategy(BaseStrategy):
         "lookback_hours": 6,
         "position_size_pct": 5.0,
         "require_trend_confirmation": True,
+        # Bullish-headline longs into a falling tape were the family's losses
+        # (META/TSLA 2026-06-04: -$637 attributed). Veto BUYs below the trend
+        # EMA by default; a registered config may set {"enabled": false}.
+        "regime_gate": {"enabled": True, "trend_ema": 100},
     }
 
     # Class-level cache for sentiment state (populated by external news pipeline)

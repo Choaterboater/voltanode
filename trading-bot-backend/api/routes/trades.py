@@ -206,6 +206,9 @@ async def get_trades(
             "fee": t.fee,
             "realized_pnl": t.realized_pnl,
             "timestamp": t.timestamp.isoformat(),
+            # Strategy that opened the position (exit fills are placed by the
+            # exit managers, so strategy_id alone mis-attributes losses).
+            "origin_strategy_id": getattr(t, "origin_strategy_id", None),
         }
         for t in trades[:limit]
     ]

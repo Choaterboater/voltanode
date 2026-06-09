@@ -357,9 +357,15 @@ class AutoDiscoveryStrategy(BaseStrategy):
             self._record_signal(sig)
             return sig
 
-        # Mid-range — keep waiting. Reset latch on neutral so next strong signal fires.
+        # Mid-range — keep waiting. Reset latch on neutral so next strong signal
+        # fires — but never while we're in a position: a decaying score always
+        # crosses this band on its way down to exit_score, and resetting the
+        # "entered" latch here disarms the exit leg above (live symptom: 15
+        # buys, 1 sell — positions rode to the hard stop instead of exiting on
+        # score decay).
         if entry > score.score > exit_:
-            self._last_side[symbol] = "neutral"
+            if self._last_side.get(symbol) != "entered":
+                self._last_side[symbol] = "neutral"
 
         return self._hold(
             symbol,

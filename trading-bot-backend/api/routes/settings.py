@@ -173,6 +173,9 @@ class SafetyStatusResponse(BaseModel):
     kill_switch: dict
     daily_tracker: dict
     safety_limits: dict
+    # Active RiskManager alerts (drawdown halt, concentration). Empty when
+    # nothing is firing — a silent halt used to be invisible here.
+    risk_alerts: list = []
 
 
 class TestConnectionResponse(BaseModel):
@@ -523,6 +526,21 @@ async def get_safety_status(request: Request) -> dict:
     config = _get_config(request)
     engine = _get_engine(request)
 
+    def _risk_alerts(eng) -> list:
+        """Serialize active RiskManager alerts (drawdown halt, concentration)."""
+        try:
+            return [
+                {
+                    "level": a.level,
+                    "rule": a.rule,
+                    "message": a.message,
+                    "timestamp": a.timestamp.isoformat(),
+                }
+                for a in (eng.get_risk_alerts() if eng is not None and hasattr(eng, "get_risk_alerts") else [])
+            ]
+        except Exception:
+            return []
+
     if engine and hasattr(engine, "get_live_status"):
         return {
             "live_mode": engine.live_mode if hasattr(engine, "live_mode") else config.live_mode.enabled,
@@ -530,6 +548,7 @@ async def get_safety_status(request: Request) -> dict:
             "kill_switch": engine.kill_switch.status() if hasattr(engine, "kill_switch") else {"activated": False},
             "daily_tracker": engine.daily_tracker.get_status() if hasattr(engine, "daily_tracker") else {},
             "safety_limits": engine.safety_validator.get_status() if hasattr(engine, "safety_validator") else {},
+            "risk_alerts": _risk_alerts(engine),
         }
 
     # Fallback for paper engine (no SafetyValidator / daily_tracker instance)
@@ -538,6 +557,7 @@ async def get_safety_status(request: Request) -> dict:
         "broker_connected": False,
         "kill_switch": {"activated": False},
         "daily_tracker": {},
+        "risk_alerts": _risk_alerts(engine),
         "safety_limits": {
             "max_daily_loss_pct": config.safety.max_daily_loss_pct,
             "max_position_size_pct": config.safety.max_position_size_pct,

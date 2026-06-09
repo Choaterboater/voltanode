@@ -90,6 +90,15 @@ class RiskConfig(BaseModel):
     atr_stop_period: int = 14
     atr_stop_min_pct: float = 0.03
     atr_stop_max_pct: float = 0.12
+    # Profit-manager knobs (previously getattr-only phantoms on the engine —
+    # unconfigurable without a code change). Fractions of entry price. When a
+    # position carries atr_stop_pct, breakeven/giveback are widened to
+    # 1.25x/1.0x that value so high-vol names aren't scratched at +4% by
+    # normal range (the sltp_manager "62% wins yet net -$931" signature).
+    pm_breakeven_pct: float = 0.04
+    pm_trail_arm_pct: float = 0.08
+    pm_trail_giveback_pct: float = 0.08
+    pm_partial_enabled: bool = False
 
 
 class CapitalDeploymentConfig(BaseModel):

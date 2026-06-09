@@ -58,6 +58,15 @@ class Position:
     high_water_price: float | None = None
     low_water_price: float | None = None
     partial_profit_taken: bool = False
+    # ATR stop distance (fraction of entry) captured when the stop floor was
+    # applied. Lets the hard loss cap and the profit manager scale to the
+    # symbol's own volatility instead of fixed percents. None = no OHLCV at
+    # entry (legacy rows, broker-synced positions) → fixed-percent behavior.
+    atr_stop_pct: float | None = None
+    # Strategy that OPENED the position. Exit fills are booked under the exit
+    # manager's id (sltp_manager/trailing_stop/...), which hides the entry
+    # signal's culpability in per-family P&L. None = unknown (legacy/broker).
+    opened_by_strategy_id: str | None = None
 
     @property
     def market_value(self) -> float:
@@ -111,6 +120,8 @@ class Position:
             "high_water_price": self.high_water_price,
             "low_water_price": self.low_water_price,
             "partial_profit_taken": self.partial_profit_taken,
+            "atr_stop_pct": self.atr_stop_pct,
+            "opened_by_strategy_id": self.opened_by_strategy_id,
         }
 
 

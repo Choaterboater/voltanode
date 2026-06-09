@@ -21,6 +21,11 @@ class MACDStrategy(BaseStrategy):
         "slow": 26,
         "signal": 9,
         "position_pct": 0.03,
+        # Crossover-moment entries bled when the crossover fired inside a
+        # broader downtrend (live: 44% win rate, net negative). Veto BUYs
+        # below the trend EMA by default; explicit {"enabled": false}
+        # in a registered config still wins via the shallow config merge.
+        "regime_gate": {"enabled": True, "trend_ema": 100},
     }
 
     @classmethod

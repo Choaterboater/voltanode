@@ -313,12 +313,35 @@ class RiskManager:
         Returns:
             RiskCheckResult with allowed flag.
         """
-        # Check drawdown
+        # Check drawdown. The halt must not freeze protective exits: an order
+        # that strictly REDUCES an existing position (SELL against a long, BUY
+        # closing a short) cannot add exposure, and rejecting it leaves losers
+        # running with frozen stops exactly when drawdown is worst — the same
+        # failure family the kill switch's exit exemption fixed. BUYs and
+        # orders that would open or extend a position stay rejected.
         if self.drawdown_monitor.is_breached():
+            try:
+                pos = portfolio.get_position(order.symbol)
+            except Exception:
+                pos = None
+            held = float(getattr(pos, "size", 0) or 0) if pos is not None else 0.0
+            pos_side = getattr(getattr(pos, "side", None), "value", None)
+            reducing = held > 0 and (
+                (order.side == OrderSide.SELL and pos_side == "long")
+                or (order.side == OrderSide.BUY and pos_side == "short")
+            )
+            if not reducing:
+                return RiskCheckResult(
+                    allowed=False,
+                    order=None,
+                    reason="Max drawdown breached — trading halted",
+                )
+            if order.quantity > held:
+                order.quantity = held
             return RiskCheckResult(
-                allowed=False,
-                order=None,
-                reason="Max drawdown breached — trading halted",
+                allowed=True,
+                order=order,
+                reason="Drawdown halt: position-reducing exit allowed",
             )
 
         # Check position size limit. Market orders need the live mark;

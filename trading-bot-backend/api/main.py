@@ -32,7 +32,7 @@ from data.fetcher import MarketData
 from strategies.base import BaseStrategy
 
 # Import routers
-from api.routes import portfolio, strategies, trades, backtest, market, advisor, settings, orders, news, signals, screener, watchlist
+from api.routes import portfolio, strategies, trades, backtest, market, advisor, settings, orders, news, signals, screener, watchlist, learning
 
 logger = logging.getLogger("volta.api")
 
@@ -140,6 +140,25 @@ async def _run_funding_loop(app: FastAPI) -> None:
             try:
                 from data.funding import refresh_funding, _to_binance_perp
 
+                # Self-gate: ~40 Binance calls per cycle is pure cost (and has
+                # wedged the event loop before) when nothing reads the cache.
+                # Only refresh while some registered bot actually consumes
+                # funding data; re-checks every cycle, so enabling a bot's
+                # funding_gate via the API activates the loop within 5 min.
+                eng = getattr(app.state, "engine", None)
+                has_consumer = False
+                for _strats in (getattr(eng, "_strategies", {}) or {}).values():
+                    for _s in _strats:
+                        _fg = (getattr(_s, "config", {}) or {}).get("funding_gate") or {}
+                        if _fg.get("enabled") or getattr(_s, "name", "") == "funding_carry":
+                            has_consumer = True
+                            break
+                    if has_consumer:
+                        break
+                if not has_consumer:
+                    await asyncio.sleep(300)
+                    continue
+
                 cfg = getattr(app.state, "config", None)
                 crypto = []
                 if cfg is not None:
@@ -183,9 +202,32 @@ async def _run_learning_loop(app: FastAPI) -> None:
         try:
             try:
                 from learning.trade_memory import TradeMemory
-                n = await asyncio.to_thread(TradeMemory().backfill_from_fills)
+                tm = TradeMemory()
+                n = await asyncio.to_thread(tm.backfill_from_fills)
                 if n:
                     logger.info(f"Learning loop: trade-memory refreshed ({n} round-trips)")
+                # Supervisor: bench any registered ENTRY strategy whose
+                # entry-attributed PF proves no edge (n>=10, PF<0.7). Exit
+                # managers are hard-excluded; benching only stops NEW signals
+                # — open positions stay managed by the engine stop loops.
+                # Never auto re-enables (operator toggle only).
+                try:
+                    from api.routes import strategies as strategies_routes
+                    from api.routes.learning import supervisor
+
+                    eng = getattr(app.state, "engine", None)
+                    notifier = getattr(eng, "notifier", None) if eng is not None else None
+                    actions = await asyncio.to_thread(
+                        supervisor.run,
+                        tm.all(),
+                        strategies_routes._registered_strategies,
+                        strategies_routes._persist,
+                        notifier.alert if notifier is not None else None,
+                    )
+                    for a in actions:
+                        logger.warning(f"Supervisor benched {a['strategy_id']}: {a['reason']}")
+                except Exception as exc:
+                    logger.warning(f"Supervisor pass failed: {exc}")
             except Exception as exc:
                 logger.warning(f"Learning loop iteration failed: {exc}")
             await asyncio.sleep(600)  # 10 min
@@ -502,7 +544,10 @@ def create_app() -> FastAPI:
             side = (p.get("side") or "long").lower()
             pside = _PS.SHORT if side == "short" else _PS.LONG
             if portfolio_obj.get_position(sym) is None:
-                portfolio_obj.open_position(sym, pside, qty, entry)
+                _newpos = portfolio_obj.open_position(sym, pside, qty, entry)
+                # Honest attribution: this position predates the session and
+                # no local strategy opened it — never credit/blame a bot.
+                _newpos.opened_by_strategy_id = "broker_sync"
                 synced += 1
         if synced:
             logger.info(f"Synced {synced} broker position(s) into engine portfolio")
@@ -796,6 +841,7 @@ def create_app() -> FastAPI:
     app.include_router(signals.router, prefix="/signals", tags=["Signals"])
     app.include_router(screener.router, prefix="/screener", tags=["Screeners"])
     app.include_router(watchlist.router, prefix="/watchlist", tags=["Watchlist"])
+    app.include_router(learning.router, prefix="/learning", tags=["Learning"])
 
     # Initialize news module — prefer encrypted Alpaca keys from config.yaml
     # (the same set the user entered in Settings); fall back to env vars.

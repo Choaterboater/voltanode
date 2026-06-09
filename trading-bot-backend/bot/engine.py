@@ -49,6 +49,11 @@ class Trade:
     fee: float
     realized_pnl: float | None
     timestamp: datetime
+    # Strategy that OPENED the position this fill touched. strategy_id above
+    # is whoever placed THIS order — for exits that's the exit manager
+    # (sltp_manager/trailing_stop), which hides the entry signal's culpability
+    # in per-family P&L. None = unknown (legacy fills, manual orders).
+    origin_strategy_id: str | None = None
 
 
 class PaperTradingEngine:
@@ -78,6 +83,13 @@ class PaperTradingEngine:
         # (default 10.0); store it as a fraction. 0 = off.
         _cap_pct = float(getattr(getattr(config, "safety", None), "max_position_loss_pct", 10.0) or 0.0)
         self._max_position_loss_pct = _cap_pct / 100.0
+        # Profit-manager knobs — real config keys (config.yaml risk block) so
+        # exit policy is revertible without a code deploy.
+        _risk_cfg = getattr(config, "risk", None)
+        self._pm_breakeven_pct = float(getattr(_risk_cfg, "pm_breakeven_pct", 0.04))
+        self._pm_trail_arm_pct = float(getattr(_risk_cfg, "pm_trail_arm_pct", 0.08))
+        self._pm_trail_giveback_pct = float(getattr(_risk_cfg, "pm_trail_giveback_pct", 0.08))
+        self._pm_partial_enabled = bool(getattr(_risk_cfg, "pm_partial_enabled", False))
         self.risk_manager = risk_manager or RiskManager(config.risk)
         self.db_session = db_session
         self.execution = ExecutionSimulator(
@@ -93,6 +105,9 @@ class PaperTradingEngine:
         self._trades: List[Trade] = []
         self._running: bool = False
         self._current_prices: Dict[str, float] = {}
+        # Risk-alert rules currently firing — used to log/notify only on the
+        # no-alert -> alert edge instead of every 5s tick.
+        self._alerted_rules: set[str] = set()
         # Optional file-backed fill persistence so trade history survives
         # restarts. Set via set_fills_persistence(path).
         self._fills_path: Optional[Any] = None
@@ -220,6 +235,7 @@ class PaperTradingEngine:
                                 side=OrderSide(d.get("side", "buy")),
                                 realized_pnl=d.get("realized_pnl"),
                                 broker_order_id=d.get("broker_order_id", ""),
+                                origin_strategy_id=d.get("origin_strategy_id"),
                             )
                             self._fills.append(fr)
                             # Backfill the Trade record too, so /trades/ and the
@@ -238,6 +254,7 @@ class PaperTradingEngine:
                                     fee=fr.fee,
                                     realized_pnl=fr.realized_pnl,
                                     timestamp=fr.timestamp,
+                                    origin_strategy_id=d.get("origin_strategy_id"),
                                 )
                             )
                             loaded += 1
@@ -277,6 +294,7 @@ class PaperTradingEngine:
                 "realized_pnl": fill.realized_pnl,
                 "broker_order_id": fill.broker_order_id,
                 "strategy_id": strategy_id,
+                "origin_strategy_id": getattr(fill, "origin_strategy_id", None),
             }
             line = _json.dumps(row) + "\n"
             with self._fills_write_lock, self._fills_path.open("a") as f:
@@ -426,6 +444,16 @@ class PaperTradingEngine:
         is_buy = order.side == OrderSide.BUY
         is_sell = order.side == OrderSide.SELL
 
+        # Resolve which strategy this fill should be ATTRIBUTED to before any
+        # mutation: a fill against an existing position inherits the position's
+        # opener (first-opener-wins); a fill opening a fresh position is its
+        # own origin. Captured here — the single point every execution path
+        # (paper, live broker, broker-poll sync) funnels through.
+        _pos0 = portfolio.get_position(symbol)
+        origin_id = order.strategy_id
+        if _pos0 is not None and getattr(_pos0, "opened_by_strategy_id", None):
+            origin_id = _pos0.opened_by_strategy_id
+
         # Update cash balance (derive quote asset from symbol)
         quote_asset = self._get_quote_asset(order.symbol)
         cost = fill.filled_qty * fill.filled_price + fill.fee
@@ -441,6 +469,8 @@ class PaperTradingEngine:
                 pos.entry_price = total_cost / total_size
                 pos.size = total_size
                 pos.update_price(fill.filled_price)
+                if not getattr(pos, "opened_by_strategy_id", None):
+                    pos.opened_by_strategy_id = order.strategy_id
             elif pos and pos.side.value == "short":
                 # Reduce short
                 if fill.filled_qty >= pos.size:
@@ -451,7 +481,8 @@ class PaperTradingEngine:
                     pos.size -= fill.filled_qty
                     pos.update_price(fill.filled_price)
             else:
-                portfolio.open_position(symbol, PositionSide.LONG, fill.filled_qty, fill.filled_price)
+                _newpos = portfolio.open_position(symbol, PositionSide.LONG, fill.filled_qty, fill.filled_price)
+                _newpos.opened_by_strategy_id = order.strategy_id
         elif is_sell:
             portfolio.deposit(quote_asset, fill.filled_qty * fill.filled_price - fill.fee)
             pos = portfolio.get_position(symbol)
@@ -470,6 +501,8 @@ class PaperTradingEngine:
                 pos.entry_price = total_cost / total_size
                 pos.size = total_size
                 pos.update_price(fill.filled_price)
+                if not getattr(pos, "opened_by_strategy_id", None):
+                    pos.opened_by_strategy_id = order.strategy_id
             else:
                 # SELL with no matching LOCAL position. In live mode the
                 # execute_order SELL-guard only admits this when the BROKER
@@ -494,7 +527,10 @@ class PaperTradingEngine:
                     )
                 else:
                     # Paper / backtest simulator: shorting is supported.
-                    portfolio.open_position(symbol, PositionSide.SHORT, fill.filled_qty, fill.filled_price)
+                    _newpos = portfolio.open_position(symbol, PositionSide.SHORT, fill.filled_qty, fill.filled_price)
+                    _newpos.opened_by_strategy_id = order.strategy_id
+
+        fill.origin_strategy_id = origin_id
 
         portfolio.record_trade(
             symbol=symbol,
@@ -518,6 +554,7 @@ class PaperTradingEngine:
                 fee=fill.fee,
                 realized_pnl=fill.realized_pnl,
                 timestamp=fill.timestamp,
+                origin_strategy_id=origin_id,
             )
         )
 
@@ -583,6 +620,17 @@ class PaperTradingEngine:
         trail_arm = float(getattr(self, "_pm_trail_arm_pct", 0.08))
         trail_giveback = float(getattr(self, "_pm_trail_giveback_pct", 0.08))
         partial_enabled = bool(getattr(self, "_pm_partial_enabled", False))
+
+        # Scale to the symbol's own volatility when the ATR floor measured it.
+        # A fixed +4% breakeven on an 8-11%-daily-range name converts normal
+        # fluctuation into a +0.2% scratch "win" while real losers still run
+        # the full stop — sltp_manager's 62%-win/-$931 signature. Breakeven
+        # must arm beyond the noise band (1.25x ATR stop) and the trail must
+        # give back at least the same room the loss stop gets (1.0x).
+        atr_pct = float(getattr(pos, "atr_stop_pct", 0) or 0)
+        if atr_pct > 0:
+            breakeven_at = max(breakeven_at, 1.25 * atr_pct)
+            trail_giveback = max(trail_giveback, atr_pct)
 
         is_long = pos.side == PositionSide.LONG
         price = tick.price
@@ -677,6 +725,10 @@ class PaperTradingEngine:
         atr_pct = self._atr_stop_pct(ohlcv_data, pos.entry_price)
         if atr_pct is None:
             return
+        # Remember the measured stop distance: the hard loss cap and the
+        # profit manager scale their fixed percents to it (a 6% cap inside a
+        # 12% ATR stop just front-runs the stop and re-creates the churn).
+        pos.atr_stop_pct = float(atr_pct)
         is_long = getattr(pos.side, "value", str(pos.side)) == "long"
         if is_long:
             atr_stop = pos.entry_price * (1.0 - atr_pct)
@@ -754,6 +806,15 @@ class PaperTradingEngine:
                 # past their 8% stops on fast gaps (ETH ~-11%, BTC, SOL) — a few
                 # big losers, not many small ones. 0 disables.
                 hard_cap = float(getattr(self, "_max_position_loss_pct", 0.10) or 0.0)
+                # When the ATR floor sized this position's stop wider than the
+                # global cap, honor the wider distance — otherwise the cap
+                # closes the position before its own volatility-sized stop can
+                # work (config: max_position_loss_pct 6% vs atr_stop_max_pct
+                # 12%). The global value stays the backstop for positions
+                # without an ATR measurement; 0 still disables entirely.
+                _pos_atr = float(getattr(pos, "atr_stop_pct", 0) or 0)
+                if hard_cap > 0 and _pos_atr > hard_cap:
+                    hard_cap = _pos_atr
                 loss_pct = 0.0
                 if hard_cap > 0 and pos.entry_price and pos.entry_price > 0 and tick.price > 0:
                     if pos.side == PositionSide.LONG:
@@ -1003,11 +1064,28 @@ class PaperTradingEngine:
                             f"trailing stop execution failed for {stop_order.symbol}: {exc}"
                         )
 
-        # Risk alerts
+        # Risk alerts. These were silently discarded — a breached drawdown
+        # halted all new entries with no log line, no notification, and no
+        # API surface saying why. Log + notify on the rule's first firing
+        # only (the check runs every tick), clear the latch when it stops.
+        all_alerts: List[RiskAlert] = []
         for portfolio in self._portfolios.values():
-            alerts = self.risk_manager.check_portfolio_limits(portfolio)
-            for alert in alerts:
-                pass  # Could log or emit events
+            all_alerts.extend(self.risk_manager.check_portfolio_limits(portfolio))
+        current_rules = {a.rule for a in all_alerts}
+        for alert in all_alerts:
+            if alert.rule in self._alerted_rules:
+                continue
+            logging.getLogger("volta.engine").warning(
+                "risk alert [%s] %s: %s", alert.level, alert.rule, alert.message
+            )
+            if alert.level == "critical":
+                notifier = getattr(self, "notifier", None)
+                if notifier is not None:
+                    try:
+                        notifier.alert(alert.level, alert.message)
+                    except Exception:
+                        pass
+        self._alerted_rules = current_rules
 
     def on_fill(self, fill: FillResult) -> None:
         """Callback when an order is filled.

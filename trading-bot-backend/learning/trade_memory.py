@@ -362,6 +362,31 @@ class TradeMemory:
             elif side == "sell":
                 remaining = qty
                 lots = open_lots[sym]
+                # Phantom-lot guard: when the engine recorded a realized P&L on
+                # this sell it knew the LIVE basis at execution time. Blind
+                # oldest-first FIFO can disagree when the log carries buy lots
+                # the broker never actually held (the 1,035-share TARA lot:
+                # FIFO booked -$717 against the phantom 4.81 basis while the
+                # engine's broker-true number was -$306 off the real 4.34 lot).
+                # Re-anchor matching to the open lot closest to the implied
+                # basis. rec_pnl == 0.0 exactly is the engine's unknown-basis
+                # sentinel — skip those.
+                rec_pnl = f.get("realized_pnl")
+                if rec_pnl is not None and lots and qty > 0:
+                    try:
+                        rp = float(rec_pnl)
+                        if rp != 0.0:
+                            implied_basis = price - (rp + fee) / qty
+                            best = min(
+                                range(len(lots)),
+                                key=lambda i: abs(lots[i]["price"] - implied_basis),
+                            )
+                            if best > 0:
+                                best_lot = lots[best]
+                                del lots[best]
+                                lots.appendleft(best_lot)
+                    except Exception:
+                        pass
                 while remaining > 1e-12 and lots:
                     lot = lots[0]
                     matched = min(remaining, lot["qty"])

@@ -155,6 +155,10 @@ class FillResult:
     side: OrderSide
     realized_pnl: float | None = None
     broker_order_id: str | None = None
+    # Strategy that OPENED the position this fill touched (set by the engine
+    # at booking time). For exit fills, the placing order's strategy_id is the
+    # exit manager — this field keeps the entry signal attributable.
+    origin_strategy_id: str | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert fill result to dictionary."""
@@ -169,6 +173,7 @@ class FillResult:
             "side": self.side.value,
             "realized_pnl": self.realized_pnl,
             "broker_order_id": self.broker_order_id,
+            "origin_strategy_id": self.origin_strategy_id,
         }
 
 
