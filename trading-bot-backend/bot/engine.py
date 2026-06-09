@@ -471,8 +471,30 @@ class PaperTradingEngine:
                 pos.size = total_size
                 pos.update_price(fill.filled_price)
             else:
-                # Open short
-                portfolio.open_position(symbol, PositionSide.SHORT, fill.filled_qty, fill.filled_price)
+                # SELL with no matching LOCAL position. In live mode the
+                # execute_order SELL-guard only admits this when the BROKER
+                # holds the position, so it's a CLOSE of a locally-untracked
+                # position (synced from broker / opened before a restart) — NOT
+                # a new short. Opening a phantom short here and leaving
+                # realized_pnl=None dropped real closed trades (incl. losers)
+                # from win-rate/PF (audit 2026-06-09 bug #6).
+                basis = None
+                pcb = getattr(self, "_pending_close_basis", None)
+                if isinstance(pcb, dict):
+                    basis = pcb.pop(symbol, None)
+                if basis and basis > 0:
+                    fill.realized_pnl = (fill.filled_price - basis) * fill.filled_qty - fill.fee
+                elif getattr(self, "live_mode", False):
+                    # Live but no broker basis available: don't fabricate a
+                    # short; record 0.0 (not None) so the trade still counts.
+                    fill.realized_pnl = 0.0
+                    logging.getLogger("volta.engine").warning(
+                        f"SELL {fill.filled_qty} {symbol} closed a position absent from the "
+                        f"local ledger with unknown basis; recorded realized_pnl=0.0"
+                    )
+                else:
+                    # Paper / backtest simulator: shorting is supported.
+                    portfolio.open_position(symbol, PositionSide.SHORT, fill.filled_qty, fill.filled_price)
 
         portfolio.record_trade(
             symbol=symbol,
@@ -1141,6 +1163,12 @@ class LiveTradingEngine(PaperTradingEngine):
         # Used to silence dust-rejection re-tries that would otherwise re-fire
         # every 5 minutes once the standard reject cooldown expires.
         self._dust_suppressed_until: Dict[Tuple[str, str, str], datetime] = {}
+        # symbol -> broker avg entry price, captured by the SELL-guard just
+        # before a close fills. Lets _update_portfolio_on_fill realize correct
+        # P&L when a SELL closes a position the LOCAL ledger lost (synced from
+        # broker / opened before a restart) instead of opening a phantom short
+        # with realized_pnl=None (audit 2026-06-09 bug #6).
+        self._pending_close_basis: Dict[str, float] = {}
 
     def _tracker_position_basis(self) -> Dict[str, tuple]:
         """Provider for ``DailyPnlTracker``: ``{symbol: (entry_price, qty)}``
@@ -1261,6 +1289,15 @@ class LiveTradingEngine(PaperTradingEngine):
                         held = float(p.get("qty", p.get("size", 0)) or 0)
                     except (TypeError, ValueError):
                         held = 0.0
+                    # Capture the broker's entry price so a close of a
+                    # locally-untracked position realizes correct P&L instead
+                    # of a null (audit 2026-06-09 bug #6).
+                    try:
+                        _ep = float(p.get("entry_price", p.get("avg_entry_price", 0)) or 0)
+                        if _ep > 0:
+                            self._pending_close_basis[order.symbol] = _ep
+                    except (TypeError, ValueError):
+                        pass
                     break
             if held <= 0:
                 order.status = OrderStatus.REJECTED

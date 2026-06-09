@@ -52,21 +52,38 @@ class BacktestMetrics:
             return 0.0
         return (end - start) / start * 100
 
+    def _periods_per_year(self) -> float:
+        """Annualization factor inferred from the equity curve's timestamp
+        spacing — NOT a hardcoded 252 (audit 2026-06-09 bug #8). The promotion
+        path runs on 1h crypto bars; assuming daily understated Sharpe ~6x and
+        made real edges look like noise to the CPCV/DSR gate. Crypto is 24/7, so
+        annualize on calendar time. Falls back to 252 when timestamps are
+        absent/unusable."""
+        DEFAULT = 252.0
+        ec = self._equity_curve
+        try:
+            if "timestamp" not in getattr(ec, "columns", []) or len(ec) < 3:
+                return DEFAULT
+            secs = pd.to_datetime(ec["timestamp"]).diff().dropna().dt.total_seconds()
+            med = float(secs.median())
+            return (365.0 * 24.0 * 3600.0) / med if med > 0 else DEFAULT
+        except Exception:
+            return DEFAULT
+
     @property
     def sharpe_ratio(self) -> float:
-        """Annualized Sharpe ratio."""
+        """Annualized Sharpe ratio (annualization inferred from bar spacing)."""
         if len(self._returns) < 2 or self._returns.std() == 0:
             return 0.0
-        # Annualized (assuming daily data)
-        return float(self._returns.mean() / self._returns.std() * np.sqrt(252))
+        return float(self._returns.mean() / self._returns.std() * np.sqrt(self._periods_per_year()))
 
     @property
     def sortino_ratio(self) -> float:
-        """Annualized Sortino ratio."""
+        """Annualized Sortino ratio (annualization inferred from bar spacing)."""
         downside = self._returns[self._returns < 0]
         if len(downside) < 1 or downside.std() == 0:
             return 0.0
-        return float(self._returns.mean() / downside.std() * np.sqrt(252))
+        return float(self._returns.mean() / downside.std() * np.sqrt(self._periods_per_year()))
 
     @property
     def max_drawdown_pct(self) -> float:
@@ -157,9 +174,9 @@ class BacktestMetrics:
         mdd = self.max_drawdown_pct
         if mdd == 0:
             return 0.0
-        # Simple annualization based on data length
-        days = len(self._equity_curve)
-        years = max(days / 252, 0.01)
+        # Annualize on the inferred bar frequency, not a fixed 252.
+        n_bars = len(self._equity_curve)
+        years = max(n_bars / self._periods_per_year(), 0.01)
         annual_return = self.total_return_pct / years
         return annual_return / mdd
 
@@ -193,20 +210,23 @@ class BacktestMetrics:
         }
 
 
-def calculate_sharpe(returns: pd.Series, risk_free_rate: float = 0.0) -> float:
+def calculate_sharpe(
+    returns: pd.Series, risk_free_rate: float = 0.0, periods_per_year: float = 252.0
+) -> float:
     """Calculate Sharpe ratio from a returns series.
 
     Args:
         returns: Series of period returns.
         risk_free_rate: Risk-free rate (annualized).
+        periods_per_year: Annualization factor (252 daily, ~8760 for 1h crypto).
 
     Returns:
         Sharpe ratio.
     """
     if len(returns) < 2 or returns.std() == 0:
         return 0.0
-    excess = returns - risk_free_rate / 252  # Daily adjustment
-    return float(excess.mean() / excess.std() * np.sqrt(252))
+    excess = returns - risk_free_rate / periods_per_year
+    return float(excess.mean() / excess.std() * np.sqrt(periods_per_year))
 
 
 def calculate_max_drawdown(equity: pd.Series) -> tuple[float, int, int]:

@@ -18,6 +18,7 @@ import pandas as pd
 import pytest
 
 from backtest.engine import BacktestConfig, BacktestRunner
+from backtest.metrics import BacktestMetrics
 from bot.config import BotConfig, OrderSide, PositionSide
 from bot.engine import LiveTradingEngine, PaperTradingEngine, TickData
 from bot.orders import FillResult, Order
@@ -279,3 +280,74 @@ class TestBacktestFidelity:
         # The 2% strategy stop is widened toward the ~5% ATR floor (~95).
         assert pos["stop_loss"] < 97.0
         assert pos["stop_loss"] > 93.0
+
+
+# ── 8. Phantom-short fix on unmatched SELLs (audit bug #6) ────────────────────
+
+class TestPhantomShortFix:
+    def _live_engine(self, config: BotConfig) -> LiveTradingEngine:
+        broker = get_broker("mock")
+        broker.connect("k", "s")
+        return LiveTradingEngine(config=config, broker=broker)
+
+    def _sell_fill(self) -> FillResult:
+        return FillResult(
+            order_id="o", symbol="BTC", filled_qty=1.0, filled_price=90.0,
+            fee=0.0, slippage=0.0, timestamp=datetime.now(timezone.utc),
+            side=OrderSide.SELL, realized_pnl=None, broker_order_id="b",
+        )
+
+    def test_unmatched_sell_realizes_pnl_from_broker_basis(self, config: BotConfig) -> None:
+        eng = self._live_engine(config)
+        portfolio = eng.get_portfolio("default")
+        eng._pending_close_basis["BTC"] = 100.0  # captured by the SELL-guard
+        order = Order.market("BTC", OrderSide.SELL, 1.0, account_id="default")
+        fill = self._sell_fill()
+        eng._update_portfolio_on_fill(order, fill, portfolio)
+        # Real loss recorded (90-100)*1, not None -> counts in win-rate/PF.
+        assert fill.realized_pnl == pytest.approx(-10.0)
+        pos = portfolio.get_position("BTC")
+        assert pos is None or pos.side.value != "short"  # no phantom short
+
+    def test_unmatched_sell_records_zero_not_none_when_basis_unknown(self, config: BotConfig) -> None:
+        eng = self._live_engine(config)
+        portfolio = eng.get_portfolio("default")
+        order = Order.market("BTC", OrderSide.SELL, 1.0, account_id="default")
+        fill = self._sell_fill()
+        eng._update_portfolio_on_fill(order, fill, portfolio)
+        assert fill.realized_pnl == 0.0  # not None -> still counted, just 0
+        pos = portfolio.get_position("BTC")
+        assert pos is None or pos.side.value != "short"
+
+
+# ── 9. Backtest Sharpe annualization inferred from bar spacing (audit bug #8) ─
+
+def _equity_df(step_seconds: float, n: int = 50) -> pd.DataFrame:
+    base = pd.Timestamp("2024-01-01")
+    return pd.DataFrame(
+        {
+            "timestamp": [base + pd.Timedelta(seconds=step_seconds * i) for i in range(n)],
+            "equity": [100.0 + 0.1 * i for i in range(n)],
+        }
+    )
+
+
+class TestBacktestAnnualization:
+    def test_periods_per_year_hourly(self) -> None:
+        m = BacktestMetrics(_equity_df(3600.0), [])
+        assert m._periods_per_year() == pytest.approx(8760.0, rel=0.02)
+
+    def test_periods_per_year_daily(self) -> None:
+        m = BacktestMetrics(_equity_df(86400.0), [])
+        assert m._periods_per_year() == pytest.approx(365.0, rel=0.02)
+
+    def test_defaults_to_252_without_timestamps(self) -> None:
+        df = pd.DataFrame({"equity": [100.0 + 0.1 * i for i in range(50)]})
+        assert BacktestMetrics(df, [])._periods_per_year() == pytest.approx(252.0)
+
+    def test_sharpe_scales_with_bar_frequency(self) -> None:
+        # Identical returns, finer bars -> higher annualized Sharpe (the bug was
+        # treating 1h bars as daily, understating it ~6x).
+        hourly = BacktestMetrics(_equity_df(3600.0), []).sharpe_ratio
+        daily = BacktestMetrics(_equity_df(86400.0), []).sharpe_ratio
+        assert hourly > daily > 0
