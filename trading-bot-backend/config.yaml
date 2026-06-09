@@ -227,6 +227,11 @@ risk:
   crypto_fee_rate: 0.0025  # Alpaca crypto taker (~25 bps); equities commission-free
   slippage_model: fixed
   slippage_bps: 5.0
+  atr_stop_enabled: true   # widen stops to >= mult*ATR so daily entries survive intraday noise
+  atr_stop_mult: 2.5
+  atr_stop_period: 14
+  atr_stop_min_pct: 0.03
+  atr_stop_max_pct: 0.12
 capital_deployment:
   enabled: true
   target_exposure_pct: 95.0

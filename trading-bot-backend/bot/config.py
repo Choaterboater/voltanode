@@ -80,6 +80,16 @@ class RiskConfig(BaseModel):
     crypto_fee_rate: float = 0.0025
     slippage_model: str = "fixed"
     slippage_bps: float = 5.0
+    # ATR-adaptive stop floor (audit 2026-06-09 timeframe-mismatch fix). Entries
+    # decide on daily bars but stops fire on the live 5s tick, so a fixed % stop
+    # gets shaken out by normal intraday range. Widen the stop to >= mult*ATR so
+    # a daily-cadence entry survives its own noise. Only widens, never tightens;
+    # clamped to [min, max]; no-op when OHLCV isn't available.
+    atr_stop_enabled: bool = True
+    atr_stop_mult: float = 2.5
+    atr_stop_period: int = 14
+    atr_stop_min_pct: float = 0.03
+    atr_stop_max_pct: float = 0.12
 
 
 class CapitalDeploymentConfig(BaseModel):

@@ -627,6 +627,61 @@ class PaperTradingEngine:
                         )
         return None
 
+    def _atr_stop_pct(self, ohlcv_data: Any, ref_price: float | None) -> float | None:
+        """Stop distance as a fraction of price, from ``mult * ATR(period)``.
+
+        Audit 2026-06-09 — entries decide on daily bars but stops fire on the
+        live 5s tick, so a fixed % stop is hit by normal intraday range. Sizing
+        the stop to the symbol's own volatility lets a daily-cadence entry
+        survive its noise. Returns a fraction clamped to [min, max], or None
+        when disabled / OHLCV missing / not enough bars (=> unit tests and
+        no-data paths keep the legacy fixed stop).
+        """
+        if not getattr(self, "_atr_stop_enabled", True):
+            return None
+        if ohlcv_data is None or not ref_price or ref_price <= 0:
+            return None
+        try:
+            cols = getattr(ohlcv_data, "columns", [])
+            if not all(c in cols for c in ("high", "low", "close")):
+                return None
+            period = int(getattr(self, "_atr_stop_period", 14))
+            if len(ohlcv_data) < period + 1:
+                return None
+            high = ohlcv_data["high"].astype(float)
+            low = ohlcv_data["low"].astype(float)
+            prev_close = ohlcv_data["close"].astype(float).shift(1)
+            tr = (high - low).abs()
+            tr = tr.combine((high - prev_close).abs(), max)
+            tr = tr.combine((low - prev_close).abs(), max)
+            atr = tr.rolling(period).mean().iloc[-1]
+            if atr is None or not (float(atr) > 0):
+                return None
+            mult = float(getattr(self, "_atr_stop_mult", 2.5))
+            pct = (mult * float(atr)) / ref_price
+            lo = float(getattr(self, "_atr_stop_min_pct", 0.03))
+            hi = float(getattr(self, "_atr_stop_max_pct", 0.12))
+            return max(lo, min(pct, hi))
+        except Exception:
+            return None
+
+    def _apply_atr_stop_floor(self, pos: Position | None, ohlcv_data: Any) -> None:
+        """Widen ``pos.stop_loss`` to the ATR-based floor. Only ever moves the
+        stop FURTHER from entry (never tighter), so it can't override a wider
+        strategy stop. No-op without OHLCV (audit 2026-06-09)."""
+        if pos is None or getattr(pos, "entry_price", 0) <= 0:
+            return
+        atr_pct = self._atr_stop_pct(ohlcv_data, pos.entry_price)
+        if atr_pct is None:
+            return
+        is_long = getattr(pos.side, "value", str(pos.side)) == "long"
+        if is_long:
+            atr_stop = pos.entry_price * (1.0 - atr_pct)
+            pos.stop_loss = atr_stop if pos.stop_loss is None else min(float(pos.stop_loss), atr_stop)
+        else:
+            atr_stop = pos.entry_price * (1.0 + atr_pct)
+            pos.stop_loss = atr_stop if pos.stop_loss is None else max(float(pos.stop_loss), atr_stop)
+
     def on_tick(self, tick: TickData, ohlcv_data: Any | None = None, signal_context: Any | None = None) -> None:
         """Process a price tick.
 
@@ -672,6 +727,11 @@ class PaperTradingEngine:
                         pos.stop_loss = pos.entry_price * (1.0 + sl_pct)
                         if pos.take_profit is None:
                             pos.take_profit = pos.entry_price * (1.0 - tp_pct)
+                    # Widen the fresh default stop to the ATR floor so it
+                    # survives normal intraday range (timeframe-mismatch fix).
+                    # Runs only while the stop is still unset, so it never
+                    # fights the profit manager's later breakeven/trail raises.
+                    self._apply_atr_stop_floor(pos, ohlcv_data)
 
                 partial_order = self._profit_manager_order(pos, tick, account_id)
                 if partial_order is not None and not self._is_debounced(partial_order):
@@ -892,6 +952,11 @@ class PaperTradingEngine:
                                 pos.stop_loss = pos.entry_price * 1.08
                                 if pos.take_profit is None:
                                     pos.take_profit = pos.entry_price * 0.70
+                        # Widen a tight strategy/default stop to the ATR floor
+                        # so a daily-cadence entry survives intraday noise
+                        # (audit 2026-06-09 timeframe-mismatch fix). One-time at
+                        # entry; only ever moves the stop further from price.
+                        self._apply_atr_stop_floor(pos, ohlcv_data)
 
         # Check pending orders for fills.
         # In live mode the order is already at the broker after the first
@@ -1051,6 +1116,13 @@ class LiveTradingEngine(PaperTradingEngine):
                 self.broker.crypto_fee_rate = float(getattr(config.risk, "crypto_fee_rate", 0.0025))
         except Exception:
             pass
+        # ATR-adaptive stop floor tuning (audit 2026-06-09 timeframe-mismatch fix).
+        _risk = getattr(config, "risk", None)
+        self._atr_stop_enabled = bool(getattr(_risk, "atr_stop_enabled", True))
+        self._atr_stop_mult = float(getattr(_risk, "atr_stop_mult", 2.5))
+        self._atr_stop_period = int(getattr(_risk, "atr_stop_period", 14))
+        self._atr_stop_min_pct = float(getattr(_risk, "atr_stop_min_pct", 0.03))
+        self._atr_stop_max_pct = float(getattr(_risk, "atr_stop_max_pct", 0.12))
         self.kill_switch = KillSwitch()
         # position_provider lets the tracker seed a SELL's cost basis from an
         # open position it hasn't seen today (overnight hold / post-restart),

@@ -14,11 +14,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pandas as pd
 import pytest
 
 from bot.config import BotConfig, OrderSide, PositionSide
 from bot.engine import LiveTradingEngine, PaperTradingEngine, TickData
 from bot.orders import FillResult, Order
+from bot.portfolio import Position
 from brokers.alpaca import AlpacaBroker
 from brokers.registry import get_broker
 from safety.daily_tracker import DailyPnlTracker
@@ -182,3 +184,62 @@ def test_momentum_inherits_regime_gate_from_default_config() -> None:
     strat = MomentumStrategy("m1", {"symbols": ["BTC", "ETH"], "fast_ema": 12, "slow_ema": 26})
     rg = strat.config.get("regime_gate")
     assert rg and rg.get("enabled") is True
+
+
+# ── 6. ATR-adaptive stop floor (timeframe-mismatch fix) ──────────────────────
+
+def _flat_ohlcv(half_range: float, n: int = 20, close: float = 100.0) -> pd.DataFrame:
+    """OHLCV with a flat close and a fixed high/low band, so the true range is
+    a constant 2*half_range -> ATR == 2*half_range (deterministic for tests)."""
+    return pd.DataFrame(
+        {
+            "high": [close + half_range] * n,
+            "low": [close - half_range] * n,
+            "close": [close] * n,
+        }
+    )
+
+
+class TestAtrAdaptiveStops:
+    def _pos(self, stop: float | None) -> Position:
+        return Position(
+            symbol="BTC", side=PositionSide.LONG, size=1.0,
+            entry_price=100.0, current_price=100.0, stop_loss=stop,
+        )
+
+    def test_widens_a_tight_stop_to_the_atr_floor(self, config: BotConfig) -> None:
+        engine = PaperTradingEngine(config)
+        pos = self._pos(98.0)  # 2% stop — tighter than the ~5% ATR floor
+        engine._apply_atr_stop_floor(pos, _flat_ohlcv(1.0))  # ATR=2 -> 2.5*2/100 = 5%
+        assert pos.stop_loss == pytest.approx(95.0)
+
+    def test_never_tightens_a_wider_stop(self, config: BotConfig) -> None:
+        engine = PaperTradingEngine(config)
+        pos = self._pos(90.0)  # 10% — already wider than the ATR floor
+        engine._apply_atr_stop_floor(pos, _flat_ohlcv(1.0))
+        assert pos.stop_loss == pytest.approx(90.0)
+
+    def test_clamped_to_max_pct(self, config: BotConfig) -> None:
+        engine = PaperTradingEngine(config)
+        pos = self._pos(99.0)
+        engine._apply_atr_stop_floor(pos, _flat_ohlcv(10.0))  # ATR=20 -> 50%, clamp to 12%
+        assert pos.stop_loss == pytest.approx(88.0)
+
+    def test_clamped_to_min_pct(self, config: BotConfig) -> None:
+        engine = PaperTradingEngine(config)
+        pos = self._pos(99.5)
+        engine._apply_atr_stop_floor(pos, _flat_ohlcv(0.05))  # ATR=0.1 -> 0.25%, clamp to 3%
+        assert pos.stop_loss == pytest.approx(97.0)
+
+    def test_noop_without_ohlcv(self, config: BotConfig) -> None:
+        engine = PaperTradingEngine(config)
+        pos = self._pos(98.0)
+        engine._apply_atr_stop_floor(pos, None)  # no data -> legacy fixed stop kept
+        assert pos.stop_loss == pytest.approx(98.0)
+
+    def test_disabled_is_noop(self, config: BotConfig) -> None:
+        engine = PaperTradingEngine(config)
+        engine._atr_stop_enabled = False
+        pos = self._pos(98.0)
+        engine._apply_atr_stop_floor(pos, _flat_ohlcv(1.0))
+        assert pos.stop_loss == pytest.approx(98.0)
