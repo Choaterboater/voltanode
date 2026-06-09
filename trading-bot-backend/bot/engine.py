@@ -525,13 +525,22 @@ class PaperTradingEngine:
         tick: TickData,
         account_id: str,
     ) -> Order | None:
-        """Update breakeven/trailing stops and emit one partial-profit order.
+        """Update breakeven/trailing stops and (optionally) emit a partial.
 
-        Rules for longs:
-        - Initial stop remains strategy/default stop.
-        - After +4%, move stop to slight breakeven.
-        - After +5%, trail 4% below the high-water mark.
-        - At configured take-profit or +8%, sell 40% once and let the rest run.
+        Audit 2026-06-09 — the old policy (trail 4% below the high armed at +5%
+        and ring 40% of the winner at +8%) INVERTED the payoff: winners were
+        realized small (40% trim + a trail tighter than the loss stop) while
+        losers ran the full 5% stop, so avg win << avg loss and PF stayed < 1
+        regardless of signal quality. New default lets the FULL winner run with
+        a trail WIDER than the loss stop, so a winning trade realizes on the
+        whole position:
+        - After +4% (``_pm_breakeven_pct``) move the stop to slight breakeven —
+          a winner can no longer round-trip into a loss.
+        - After +8% (``_pm_trail_arm_pct``) trail ``_pm_trail_giveback_pct``
+          (8%) below the high-water mark — wider than the 5% loss stop, so
+          normal daily range doesn't strangle the winner.
+        - The 40% partial is OFF by default (``_pm_partial_enabled``); set that
+          flag True to restore the old ring-the-register behaviour.
         Shorts mirror the same math.
         """
         if pos.entry_price <= 0 or pos.size <= 0:
@@ -548,6 +557,11 @@ class PaperTradingEngine:
             ):
                 return None
 
+        breakeven_at = float(getattr(self, "_pm_breakeven_pct", 0.04))
+        trail_arm = float(getattr(self, "_pm_trail_arm_pct", 0.08))
+        trail_giveback = float(getattr(self, "_pm_trail_giveback_pct", 0.08))
+        partial_enabled = bool(getattr(self, "_pm_partial_enabled", False))
+
         is_long = pos.side == PositionSide.LONG
         price = tick.price
         pos.high_water_price = max(float(pos.high_water_price or pos.entry_price), price)
@@ -555,60 +569,62 @@ class PaperTradingEngine:
 
         if is_long:
             profit_pct = (price / pos.entry_price) - 1.0
-            if profit_pct >= 0.04:
+            if profit_pct >= breakeven_at:
                 breakeven = pos.entry_price * 1.002
                 pos.stop_loss = max(float(pos.stop_loss or 0.0), breakeven)
-            if profit_pct >= 0.05:
-                trailing_stop = float(pos.high_water_price) * 0.96
+            if profit_pct >= trail_arm:
+                trailing_stop = float(pos.high_water_price) * (1.0 - trail_giveback)
                 pos.stop_loss = max(float(pos.stop_loss or 0.0), trailing_stop)
 
-            partial_trigger = (
-                not pos.partial_profit_taken
-                and (
-                    (pos.take_profit is not None and price >= pos.take_profit)
-                    or profit_pct >= 0.08
-                )
-            )
-            if partial_trigger:
-                qty = self._floor_exit_quantity(pos.size * 0.40)
-                if qty > 0:
-                    pos.partial_profit_taken = True
-                    pos.take_profit = None
-                    return Order.market(
-                        symbol=pos.symbol,
-                        side=OrderSide.SELL,
-                        quantity=qty,
-                        account_id=account_id,
-                        strategy_id="partial_take_profit",
+            if partial_enabled:
+                partial_trigger = (
+                    not pos.partial_profit_taken
+                    and (
+                        (pos.take_profit is not None and price >= pos.take_profit)
+                        or profit_pct >= 0.08
                     )
+                )
+                if partial_trigger:
+                    qty = self._floor_exit_quantity(pos.size * 0.40)
+                    if qty > 0:
+                        pos.partial_profit_taken = True
+                        pos.take_profit = None
+                        return Order.market(
+                            symbol=pos.symbol,
+                            side=OrderSide.SELL,
+                            quantity=qty,
+                            account_id=account_id,
+                            strategy_id="partial_take_profit",
+                        )
         else:
             profit_pct = (pos.entry_price / price) - 1.0 if price > 0 else 0.0
-            if profit_pct >= 0.04:
+            if profit_pct >= breakeven_at:
                 breakeven = pos.entry_price * 0.998
                 pos.stop_loss = min(float(pos.stop_loss or float("inf")), breakeven)
-            if profit_pct >= 0.05:
-                trailing_stop = float(pos.low_water_price) * 1.04
+            if profit_pct >= trail_arm:
+                trailing_stop = float(pos.low_water_price) * (1.0 + trail_giveback)
                 pos.stop_loss = min(float(pos.stop_loss or float("inf")), trailing_stop)
 
-            partial_trigger = (
-                not pos.partial_profit_taken
-                and (
-                    (pos.take_profit is not None and price <= pos.take_profit)
-                    or profit_pct >= 0.08
-                )
-            )
-            if partial_trigger:
-                qty = self._floor_exit_quantity(pos.size * 0.40)
-                if qty > 0:
-                    pos.partial_profit_taken = True
-                    pos.take_profit = None
-                    return Order.market(
-                        symbol=pos.symbol,
-                        side=OrderSide.BUY,
-                        quantity=qty,
-                        account_id=account_id,
-                        strategy_id="partial_take_profit",
+            if partial_enabled:
+                partial_trigger = (
+                    not pos.partial_profit_taken
+                    and (
+                        (pos.take_profit is not None and price <= pos.take_profit)
+                        or profit_pct >= 0.08
                     )
+                )
+                if partial_trigger:
+                    qty = self._floor_exit_quantity(pos.size * 0.40)
+                    if qty > 0:
+                        pos.partial_profit_taken = True
+                        pos.take_profit = None
+                        return Order.market(
+                            symbol=pos.symbol,
+                            side=OrderSide.BUY,
+                            quantity=qty,
+                            account_id=account_id,
+                            strategy_id="partial_take_profit",
+                        )
         return None
 
     def on_tick(self, tick: TickData, ohlcv_data: Any | None = None, signal_context: Any | None = None) -> None:
@@ -660,7 +676,12 @@ class PaperTradingEngine:
                 partial_order = self._profit_manager_order(pos, tick, account_id)
                 if partial_order is not None and not self._is_debounced(partial_order):
                     self.submit_order(partial_order, account_id)
-                    self.execute_order(partial_order, tick.price)
+                    try:
+                        self.execute_order(partial_order, tick.price)
+                    except Exception as exc:
+                        logging.getLogger("volta.engine").warning(
+                            f"profit-manager exit failed for {pos.symbol}: {exc}"
+                        )
                     continue
 
                 close_side: OrderSide | None = None
@@ -708,7 +729,12 @@ class PaperTradingEngine:
                     # rejected duplicates.
                     if not self._is_debounced(close_order):
                         self.submit_order(close_order, account_id)
-                        self.execute_order(close_order, tick.price)
+                        try:
+                            self.execute_order(close_order, tick.price)
+                        except Exception as exc:
+                            logging.getLogger("volta.engine").warning(
+                                f"protective stop close failed for {pos.symbol}: {exc}"
+                            )
 
         # Notify registered strategies of tick.
         # Two-pass to support ensemble-agreement veto: collect all signals
@@ -830,7 +856,18 @@ class PaperTradingEngine:
         for account_id, strategy, signal, order in best_per_key.values():
             self.submit_order(order, account_id)
             if order.order_type.value == "market" and tick.price:
-                self.execute_order(order, tick.price)
+                try:
+                    self.execute_order(order, tick.price)
+                except KillSwitchError:
+                    # Halted: entries are blocked, but the protective exits and
+                    # trailing stops further down must still run — don't let a
+                    # latched kill switch abort the whole tick (audit 2026-06-09).
+                    continue
+                except Exception as exc:
+                    logging.getLogger("volta.engine").warning(
+                        f"entry execution failed for {order.symbol}: {exc}"
+                    )
+                    continue
                 # Store stop-loss / take-profit on the open position
                 portfolio = self._portfolios.get(account_id)
                 if portfolio is not None:
@@ -872,7 +909,10 @@ class PaperTradingEngine:
                     except Exception:
                         pass
                 else:
-                    self.execute_order(order, tick.price)
+                    try:
+                        self.execute_order(order, tick.price)
+                    except Exception:
+                        pass
 
         # Check trailing stops. Run through the same debounce path as
         # strategy orders so a held-too-long-below-stop position doesn't
@@ -888,7 +928,12 @@ class PaperTradingEngine:
                     continue
                 self.submit_order(stop_order, stop_order.account_id)
                 if tick.price and symbols_equivalent(stop_order.symbol, tick.symbol):
-                    self.execute_order(stop_order, tick.price)
+                    try:
+                        self.execute_order(stop_order, tick.price)
+                    except Exception as exc:
+                        logging.getLogger("volta.engine").warning(
+                            f"trailing stop execution failed for {stop_order.symbol}: {exc}"
+                        )
 
         # Risk alerts
         for portfolio in self._portfolios.values():
@@ -976,6 +1021,12 @@ class LiveTradingEngine(PaperTradingEngine):
       - Broker connectivity checks
     """
 
+    #: Engine-generated protective EXITS — risk-reducing closes (stop-loss,
+    #: trailing stop, partial take-profit). These must execute even when the
+    #: kill switch is latched; otherwise a daily-loss halt freezes the very
+    #: stops meant to cap the loss (audit 2026-06-09). Only entries are halted.
+    _PROTECTIVE_STRATEGY_IDS = frozenset({"sltp_manager", "partial_take_profit", "trailing_stop"})
+
     def __init__(
         self,
         config: BotConfig,
@@ -992,8 +1043,19 @@ class LiveTradingEngine(PaperTradingEngine):
         super().__init__(config)
         self.broker = broker
         self.live_mode = True
+        # Push the configured crypto taker fee onto the broker so realized P&L
+        # is net of cost (audit 2026-06-09: the adapter hardcoded fee=0.0,
+        # leaving 191/195 fills cost-free and overstating performance).
+        try:
+            if hasattr(self.broker, "crypto_fee_rate"):
+                self.broker.crypto_fee_rate = float(getattr(config.risk, "crypto_fee_rate", 0.0025))
+        except Exception:
+            pass
         self.kill_switch = KillSwitch()
-        self.daily_tracker = DailyPnlTracker()
+        # position_provider lets the tracker seed a SELL's cost basis from an
+        # open position it hasn't seen today (overnight hold / post-restart),
+        # so the daily-loss breaker isn't blind to those losers (audit 2026-06-09).
+        self.daily_tracker = DailyPnlTracker(position_provider=self._tracker_position_basis)
         # Pass config.safety so the validator reflects operator-tuned limits
         # (e.g. max_exposure_pct, max_orders_per_minute) instead of the
         # hardcoded SafetyConfig defaults (50% / 10/min). Mutating
@@ -1026,6 +1088,49 @@ class LiveTradingEngine(PaperTradingEngine):
         # Used to silence dust-rejection re-tries that would otherwise re-fire
         # every 5 minutes once the standard reject cooldown expires.
         self._dust_suppressed_until: Dict[Tuple[str, str, str], datetime] = {}
+
+    def _tracker_position_basis(self) -> Dict[str, tuple]:
+        """Provider for ``DailyPnlTracker``: ``{symbol: (entry_price, qty)}``
+        for every open position. Lets the tracker realize correct daily P&L on
+        a SELL of a position it hasn't seen today (overnight hold or restart)
+        instead of falling back to fill_price (=> 0 P&L). See audit 2026-06-09.
+        """
+        out: Dict[str, tuple] = {}
+        for portfolio in getattr(self, "_portfolios", {}).values():
+            try:
+                positions = portfolio.get_all_positions()
+            except Exception:
+                continue
+            for pos in positions:
+                if getattr(pos, "status", "open") != "open":
+                    continue
+                sym = getattr(pos, "symbol", None)
+                entry = float(getattr(pos, "entry_price", 0) or 0)
+                qty = abs(float(getattr(pos, "size", 0) or 0))
+                if sym and entry > 0 and qty > 0:
+                    out[str(sym)] = (entry, qty)
+        return out
+
+    def _estimate_crypto_fee(self, symbol: str, qty: float, price: float) -> float:
+        """Estimate the taker fee for a broker-synced fill the broker reported
+        without one (the async poll path). Mirrors ``AlpacaBroker.place_order``:
+        crypto pays ``broker.crypto_fee_rate``, equities are commission-free.
+        """
+        try:
+            qty = float(qty); price = float(price)
+        except (TypeError, ValueError):
+            return 0.0
+        if qty <= 0 or price <= 0:
+            return 0.0
+        rate = float(getattr(self.broker, "crypto_fee_rate", 0.0025) or 0.0)
+        checker = getattr(self.broker, "_is_crypto_symbol", None)
+        is_crypto = False
+        if callable(checker):
+            try:
+                is_crypto = bool(checker(symbol))
+            except Exception:
+                is_crypto = False
+        return qty * price * rate if is_crypto else 0.0
 
     def execute_order(
         self, order: Order, current_price: float | None = None
@@ -1065,8 +1170,12 @@ class LiveTradingEngine(PaperTradingEngine):
                     realized_pnl=None, broker_order_id="",
                 )
 
-        # 1. Hard kill switch check
-        self.kill_switch.check()
+        # 1. Hard kill switch check. Protective EXITS (stop-loss, trailing
+        # stop, partial profit) are risk-reducing and must still execute when
+        # the switch is latched — otherwise a daily-loss halt freezes the very
+        # stops meant to cap the loss (audit 2026-06-09). Only entries are halted.
+        if (order.strategy_id or "") not in self._PROTECTIVE_STRATEGY_IDS:
+            self.kill_switch.check()
 
         # 2. Broker connectivity
         if not self.broker.is_connected():
@@ -1326,7 +1435,11 @@ class LiveTradingEngine(PaperTradingEngine):
                             symbol=local_order.symbol,
                             filled_qty=new_fill_qty,
                             filled_price=filled_price,
-                            fee=0.0,
+                            # Broker poll path reports no fee; estimate the
+                            # crypto taker cost so synced fills aren't free.
+                            fee=self._estimate_crypto_fee(
+                                local_order.symbol, new_fill_qty, filled_price
+                            ),
                             slippage=0.0,
                             timestamp=datetime.now(timezone.utc),
                             side=local_order.side,

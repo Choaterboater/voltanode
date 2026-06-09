@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
-from typing import List
+from typing import Callable, Dict, List, Optional, Tuple
 
 from bot.orders import FillResult
 
@@ -27,7 +27,10 @@ class DailyPnlTracker:
     - Maintains a list of today's trades for inspection.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        position_provider: Optional[Callable[[], Dict[str, Tuple[float, float]]]] = None,
+    ) -> None:
         self.daily_pnl: float = 0.0
         self.trades_today: List[TradeRecord] = []
         self._reset_date: date = datetime.now(timezone.utc).date()
@@ -36,6 +39,13 @@ class DailyPnlTracker:
         # correctly when buys and sells interleave (buy 100 / sell 50 / buy 50
         # must not weight the second buy against 100, only against 50).
         self._net_qty: dict = {}
+        # Optional callable returning {symbol: (entry_price, qty)} for currently
+        # open positions. Lets a SELL of a position we haven't seen TODAY
+        # (held overnight, or opened before a restart) realize correct daily
+        # P&L from the real entry price instead of falling back to fill_price
+        # (=> 0 P&L), which left the daily-loss breaker blind to those losers
+        # (audit 2026-06-09).
+        self._position_provider = position_provider
 
     def record(self, fill: FillResult) -> float:
         """Record a fill and compute its contribution to daily P&L.
@@ -66,9 +76,15 @@ class DailyPnlTracker:
 
         symbol = fill.symbol
         if fill.side == OrderSide.SELL:
-            # PnL on the closed portion only; if no basis yet today (sell of
-            # a pre-existing position) fall back to fill_price → 0 PnL.
-            basis = self._cost_basis.get(symbol, fill.filled_price)
+            # PnL on the closed portion only. If no basis yet today, try the
+            # position provider (overnight / pre-restart hold) before falling
+            # back to fill_price (=> 0 PnL) — otherwise the daily-loss breaker
+            # is blind to losses on positions not opened today.
+            basis = self._cost_basis.get(symbol)
+            if basis is None:
+                basis = self._seed_basis(symbol)
+            if basis is None:
+                basis = fill.filled_price
             pnl = (fill.filled_price - basis) * fill.filled_qty - fill.fee
             new_qty = self._net_qty.get(symbol, 0.0) - fill.filled_qty
             if new_qty <= 1e-12:
@@ -91,6 +107,31 @@ class DailyPnlTracker:
                 self._cost_basis[symbol] = new_basis
                 self._net_qty[symbol] = total_qty
             return 0.0  # No realized P&L on buys
+
+    def _seed_basis(self, symbol: str) -> Optional[float]:
+        """Entry price of an open position not yet tracked today, via the
+        position provider. Returns None if no provider or no match — caller
+        then falls back to fill_price. Symbol match is normalized so 'BTC',
+        'BTCUSD' and 'BTC/USD' all reconcile.
+        """
+        if self._position_provider is None:
+            return None
+        try:
+            positions = self._position_provider() or {}
+        except Exception:
+            return None
+        norm = str(symbol).upper().replace("/", "").replace("-", "")
+        for sym, val in positions.items():
+            psym = str(sym).upper().replace("/", "").replace("-", "")
+            if psym != norm and not psym.startswith(norm) and not norm.startswith(psym):
+                continue
+            try:
+                entry_price = float(val[0])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if entry_price > 0:
+                return entry_price
+        return None
 
     def _check_reset(self) -> None:
         """Reset state if we've crossed into a new day."""

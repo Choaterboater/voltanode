@@ -50,7 +50,7 @@ class AlpacaBroker(BrokerAdapter):
 
     _CONN_CACHE_TTL = 30.0
 
-    def __init__(self, paper: bool = True) -> None:
+    def __init__(self, paper: bool = True, crypto_fee_rate: float = 0.0025) -> None:
         self._paper = paper
         self._base_url = self.PAPER_BASE if paper else self.LIVE_BASE
         self._data_url = self.DATA_PAPER if paper else self.DATA_LIVE
@@ -58,6 +58,12 @@ class AlpacaBroker(BrokerAdapter):
         self._api_secret = ""
         self._session = requests.Session()
         self._conn_cache: tuple[bool, float] | None = None
+        # Alpaca is commission-free for EQUITIES but charges a taker fee on
+        # CRYPTO (~15-25 bps). The adapter historically hardcoded fee=0.0 for
+        # every fill, which silently overstated realized P&L (audit 2026-06-09:
+        # 191/195 fills were cost-free). Estimate the crypto taker fee from this
+        # rate so realized P&L is net of cost. Tunable via config.risk.crypto_fee_rate.
+        self.crypto_fee_rate = float(crypto_fee_rate)
 
     def connect(self, api_key: str, api_secret: str, **kwargs: Any) -> bool:
         self._api_key = api_key.strip()
@@ -273,7 +279,9 @@ class AlpacaBroker(BrokerAdapter):
 
         filled_qty = float(data.get("filled_qty", 0))
         filled_price = float(data.get("filled_avg_price", 0) or data.get("price", 0) or 0)
-        fee = 0.0  # Alpaca commission-free for equities
+        # Crypto pays a taker fee; equities are commission-free on Alpaca.
+        # Hardcoding 0.0 for crypto understated cost and inflated P&L.
+        fee = (filled_qty * filled_price * self.crypto_fee_rate) if is_crypto else 0.0
         slippage = 0.0
 
         broker_order_id = data.get("id", "")

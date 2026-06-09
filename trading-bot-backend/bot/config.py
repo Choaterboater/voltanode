@@ -74,6 +74,10 @@ class RiskConfig(BaseModel):
     position_sizing_method: SizingMethod = SizingMethod.PERCENTAGE
     position_sizing_value: float = 0.02
     fee_rate: float = 0.001
+    # Crypto taker fee (Alpaca ~15-25 bps). Equities are commission-free, so
+    # the live broker path applies this only to crypto symbols. Wired onto the
+    # broker by LiveTradingEngine.__init__ (audit 2026-06-09 fee fix).
+    crypto_fee_rate: float = 0.0025
     slippage_model: str = "fixed"
     slippage_bps: float = 5.0
 

@@ -74,9 +74,11 @@ class TestOrderExecution:
         # Price goes to 110
         engine.on_tick(TickData(symbol="TEST", price=110.0))
         pos = portfolio.get_position("TEST")
-        # Profit manager takes a 40% partial at +8%, then lets the rest run.
-        assert pos.size == pytest.approx(6.0)
-        assert abs(pos.unrealized_pnl - 60.0) < 5.0
+        # Full winner runs — the 40% trim is OFF by default (audit 2026-06-09).
+        # The trail arms at +8% but 110 is above it, so the position stays open
+        # at full size and the whole +10% is unrealized.
+        assert pos.size == pytest.approx(10.0)
+        assert abs(pos.unrealized_pnl - 100.0) < 5.0
 
     def test_short_position_pnl(self, engine: PaperTradingEngine) -> None:
         """Test that selling without a position is rejected (prevents infinite money bug)."""
@@ -288,7 +290,11 @@ class TestProfitAwareExits:
     """Profit manager should improve win-rate behavior."""
 
     def test_partial_take_profit_sells_only_part_of_winner(self, config: BotConfig) -> None:
+        # The 40% partial is OFF by default (audit 2026-06-09: it inverted the
+        # payoff). Opt in via the flag to exercise the legacy ring-the-register
+        # path that this test guards.
         engine = PaperTradingEngine(config)
+        engine._pm_partial_enabled = True
         portfolio = engine.get_portfolio("default")
         portfolio.open_position("TEST", PositionSide.LONG, 100.0, 100.0, stop_loss=92.0, take_profit=108.0)
 
@@ -307,14 +313,18 @@ class TestProfitAwareExits:
         portfolio = engine.get_portfolio("default")
         portfolio.open_position("TEST", PositionSide.LONG, 10.0, 100.0, stop_loss=92.0, take_profit=130.0)
 
+        # +4% -> stop ratchets to slight breakeven (unchanged).
         engine.on_tick(TickData(symbol="TEST", price=104.0))
         pos = portfolio.get_position("TEST")
         assert pos is not None
         assert pos.stop_loss == pytest.approx(100.2)
 
+        # +10% -> trail now arms at +8% and gives back 8% below the high (wider
+        # than the 5% loss stop, so winners run instead of being strangled):
+        # 110 * 0.92 = 101.2 (was 110 * 0.96 = 105.6 under the old tight trail).
         engine.on_tick(TickData(symbol="TEST", price=110.0))
         assert pos.high_water_price == pytest.approx(110.0)
-        assert pos.stop_loss == pytest.approx(105.6)
+        assert pos.stop_loss == pytest.approx(101.2)
 
     def test_no_synthetic_two_percent_trailing_stop(self, config: BotConfig) -> None:
         engine = PaperTradingEngine(config)

@@ -224,6 +224,7 @@ risk:
   position_sizing_method: percentage
   position_sizing_value: 0.03
   fee_rate: 0.001
+  crypto_fee_rate: 0.0025  # Alpaca crypto taker (~25 bps); equities commission-free
   slippage_model: fixed
   slippage_bps: 5.0
 capital_deployment:
