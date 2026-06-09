@@ -26,6 +26,7 @@ class SafetyConfig:
     max_daily_loss_pct: float = 5.0
     max_position_size_pct: float = 20.0
     max_exposure_pct: float = 300.0
+    max_position_loss_pct: float = 6.0
     require_confirmation: bool = True
     kill_switch_on_disconnect: bool = True
     max_orders_per_minute: int = 300
@@ -75,6 +76,7 @@ def _coerce_safety_config(config: Any | None) -> SafetyConfig:
         max_daily_loss_pct=float(getattr(config, "max_daily_loss_pct", 5.0)),
         max_position_size_pct=float(getattr(config, "max_position_size_pct", 20.0)),
         max_exposure_pct=float(getattr(config, "max_exposure_pct", 300.0)),
+        max_position_loss_pct=float(getattr(config, "max_position_loss_pct", 6.0)),
         require_confirmation=bool(getattr(config, "require_confirmation", True)),
         kill_switch_on_disconnect=bool(getattr(config, "kill_switch_on_disconnect", True)),
         max_orders_per_minute=int(getattr(config, "max_orders_per_minute", 300)),
@@ -241,6 +243,7 @@ class SafetyValidator:
             "max_daily_loss_pct": self.config.max_daily_loss_pct,
             "max_position_size_pct": self.config.max_position_size_pct,
             "max_exposure_pct": self.config.max_exposure_pct,
+            "max_position_loss_pct": self.config.max_position_loss_pct,
             "max_orders_per_minute": self.config.max_orders_per_minute,
             "allowed_symbols": self.config.allowed_symbols,
             "blocked_symbols": self.config.blocked_symbols,

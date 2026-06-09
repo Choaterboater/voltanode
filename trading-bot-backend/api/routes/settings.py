@@ -542,6 +542,7 @@ async def get_safety_status(request: Request) -> dict:
             "max_daily_loss_pct": config.safety.max_daily_loss_pct,
             "max_position_size_pct": config.safety.max_position_size_pct,
             "max_exposure_pct": config.safety.max_exposure_pct,
+            "max_position_loss_pct": config.safety.max_position_loss_pct,
             "max_orders_per_minute": config.safety.max_orders_per_minute,
             "allowed_symbols": list(config.safety.allowed_symbols),
             "blocked_symbols": list(config.safety.blocked_symbols),
