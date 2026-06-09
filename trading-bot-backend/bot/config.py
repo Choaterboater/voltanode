@@ -111,13 +111,17 @@ class CapitalDeploymentConfig(BaseModel):
 
 
 class PromotionGateSettings(BaseModel):
-    """CPCV + Deflated-Sharpe gate on apply-hyperopt / go-live. Default OFF.
+    """CPCV + Deflated-Sharpe gate on apply-hyperopt / go-live. Default ON.
 
     When ``enabled``, applying hyperopt params requires the candidate to clear
     combinatorial purged cross-validation with a Deflated Sharpe Ratio above
     ``min_dsr`` — the discipline that blocks promoting a curve-fit edge.
+
+    Default ON as of 2026-06-09: the Sharpe-annualization bug (#8) that made the
+    gate reject real edges as noise is fixed, so the gate is now trustworthy.
+    The apply-hyperopt route still honors ``force=true`` to override.
     """
-    enabled: bool = False
+    enabled: bool = True
     n_groups: int = 6
     n_test_groups: int = 2
     embargo_pct: float = 0.01

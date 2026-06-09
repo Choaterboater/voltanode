@@ -1009,10 +1009,10 @@ async def apply_hyperopt(strategy_id: str, request: Request, force: bool = False
     and persist. The bot picks up the new params on its next tick — no
     restart needed (config is read every ``on_tick``).
 
-    When ``config.promotion_gate.enabled`` (default off), the candidate params
-    must first clear a CPCV + Deflated-Sharpe-Ratio gate (positive after
-    deflating by the number of hyperopt trials) or the apply is blocked (422).
-    ``force=true`` overrides the gate (logged in the response for audit)."""
+    When ``config.promotion_gate.enabled`` (default ON since 2026-06-09), the
+    candidate params must first clear a CPCV + Deflated-Sharpe-Ratio gate
+    (positive after deflating by the number of hyperopt trials) or the apply is
+    blocked (422). ``force=true`` overrides the gate (logged for audit)."""
     strat = _registered_strategies.get(strategy_id)
     if strat is None:
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
@@ -1032,7 +1032,7 @@ async def apply_hyperopt(strategy_id: str, request: Request, force: bool = False
             detail="Most-recent hyperopt run produced no valid params (all trials rejected)",
         )
 
-    # ── CPCV + DSR promotion gate (opt-in, default off) ──────────────────
+    # ── CPCV + DSR promotion gate (default ON; force=true overrides) ─────
     # Read the LIVE config (loaded from config.yaml into app.state.config); a
     # bare BotConfig() would ignore the YAML and leave the gate un-enableable.
     gate_payload: Dict[str, Any] | None = None
@@ -1057,11 +1057,17 @@ async def apply_hyperopt(strategy_id: str, request: Request, force: bool = False
             bt_config = BacktestConfig(
                 initial_balance={"USDT": 100_000.0},
                 fee_rate=cfg.risk.fee_rate,
+                crypto_fee_rate=getattr(cfg.risk, "crypto_fee_rate", 0.0025),
                 slippage_bps=cfg.risk.slippage_bps,
                 allow_short=False,
             )
             gate_cfg = PromotionGateConfig.from_mapping(gate_dict)
-            merged_candidate = {**(strat.config or {}), **best_params}
+            # Carry asset_class so the gate's backtest charges the CRYPTO taker
+            # fee (not the equity rate) for crypto bots — best_params hold only
+            # EMA knobs and single-symbol configs don't default asset_class, so
+            # without this the gate under-prices fees, inflates DSR, and passes
+            # curve-fit configs it should reject (review 2026-06-09).
+            merged_candidate = {**(strat.config or {}), **best_params, "asset_class": asset_class}
             trial_sharpes = None
             if row.get("objective") == "sharpe":
                 trial_sharpes = [
@@ -1081,6 +1087,14 @@ async def apply_hyperopt(strategy_id: str, request: Request, force: bool = False
                 )
         except HTTPException:
             raise
+        except (RuntimeError, ValueError) as exc:
+            # Transient validation-data fetch/availability failure — fail closed
+            # but with a retryable status, not a generic 500 (the gate is
+            # default-on now, so this path is reached on every apply).
+            raise HTTPException(
+                status_code=503,
+                detail=f"Promotion gate could not fetch validation data ({exc}); retry or apply with force=true",
+            )
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Promotion gate evaluation failed: {exc}")
 

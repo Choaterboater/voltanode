@@ -35,6 +35,11 @@ class MomentumStrategy(BaseStrategy):
         # if an operator overrides trend_filter_ema, and matches the other
         # long-followers (simple_trend, auto_discovery).
         "regime_gate": {"enabled": True, "trend_ema": 100},
+        # Symmetric exit (audit 2026-06-09 #4): require a trend break (price <
+        # trend EMA) before a cross-down triggers a FULL exit. A cross-down in
+        # an intact uptrend is a routine pullback — full-exiting there is the
+        # sell-the-dip/buy-the-rip churn. False = legacy (exit on any cross-down).
+        "exit_requires_trend_break": True,
     }
 
     @classmethod
@@ -120,6 +125,11 @@ class MomentumStrategy(BaseStrategy):
 
         # Trend filter
         above_trend = current_price > curr_trend
+        bearish = curr_fast < curr_slow
+        # Symmetric exit gate (audit 2026-06-09 #4): only a confirmed trend
+        # break (fast<slow AND price <= trend EMA) triggers a full SELL,
+        # mirroring the BUY's cross_up AND above_trend requirement.
+        require_trend_break = bool(cfg.get("exit_requires_trend_break", True))
 
         # ATR for position sizing / confidence
         atr = self._calculate_atr(data, 14)
@@ -148,7 +158,16 @@ class MomentumStrategy(BaseStrategy):
             self._record_signal(signal)
             return signal
 
-        if cross_down:
+        # Full SELL on a confirmed trend break (audit 2026-06-09 #4). Legacy
+        # mode exits on the bare cross-down edge; default mode exits whenever
+        # fast<slow AND price has fallen to/below the trend EMA — on ANY bar,
+        # not only the cross edge — so a GRADUAL breakdown (cross and trend
+        # break landing on different bars) still exits instead of silently
+        # never firing. An in-uptrend cross-down (price still above trend) is
+        # NOT an exit: that's the sell-the-dip/buy-the-rip churn we removed; it
+        # falls through to the suppressed-exit HOLD below and the engine stops
+        # own the downside while the trend holds.
+        if (cross_down and not require_trend_break) or (require_trend_break and bearish and not above_trend):
             self._last_signal_bar[symbol] = latest_bar
             momentum = abs(curr_fast - curr_slow) / (atr if atr > 0 else 1.0)
             confidence = min(1.0, 0.5 + min(momentum * 0.1, 0.5))
@@ -170,6 +189,24 @@ class MomentumStrategy(BaseStrategy):
             )
             self._record_signal(signal)
             return signal
+
+        if bearish and require_trend_break:
+            # Bearish but price still above the trend EMA: intact-uptrend
+            # pullback — exit suppressed (no churn); engine stops own downside.
+            # Surfaced with a trigger so the new behaviour is auditable.
+            return Signal(
+                strategy_id=self.strategy_id,
+                symbol=symbol,
+                signal_type=SignalType.HOLD,
+                confidence=0.0,
+                timestamp=pd.Timestamp.now(),
+                metadata={
+                    "trigger": "exit_suppressed_uptrend",
+                    "fast_ema": float(curr_fast),
+                    "slow_ema": float(curr_slow),
+                    "trend_ema": float(curr_trend),
+                },
+            )
 
         return Signal(
             strategy_id=self.strategy_id,

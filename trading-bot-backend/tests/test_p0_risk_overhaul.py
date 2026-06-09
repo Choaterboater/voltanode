@@ -351,3 +351,71 @@ class TestBacktestAnnualization:
         hourly = BacktestMetrics(_equity_df(3600.0), []).sharpe_ratio
         daily = BacktestMetrics(_equity_df(86400.0), []).sharpe_ratio
         assert hourly > daily > 0
+
+
+# ── 10. Momentum symmetric exit (audit bug #4) ───────────────────────────────
+
+def _cross_down_data() -> pd.DataFrame:
+    # Rise 100->129 over 30 bars, then drop to 100 on the last bar so the fast
+    # EMA crosses below the slow EMA exactly on the final bar (a cross-down).
+    closes = [100.0 + i for i in range(30)] + [100.0]
+    df = pd.DataFrame(
+        {
+            "open": closes,
+            "high": [c * 1.01 for c in closes],
+            "low": [c * 0.99 for c in closes],
+            "close": closes,
+            "volume": [1000.0] * len(closes),
+        }
+    )
+    df.attrs["symbol"] = "BTC"
+    return df
+
+
+class TestMomentumSymmetricExit:
+    _CFG = {"fast_ema": 5, "slow_ema": 10, "trend_filter_ema": 20}
+
+    def test_legacy_exits_on_any_cross_down(self) -> None:
+        # exit_requires_trend_break=False reproduces the old behaviour AND
+        # confirms the fixture actually produces a cross-down on the last bar.
+        strat = MomentumStrategy("m", {**self._CFG, "exit_requires_trend_break": False})
+        sig = strat.generate_signal(_cross_down_data(), current_price=140.0)  # above trend
+        assert sig.signal_type == SignalType.SELL
+
+    def test_cross_down_in_uptrend_holds(self) -> None:
+        # Default (require trend break): a cross-down while price is still above
+        # the trend EMA is a pullback -> HOLD, not a churning full exit.
+        strat = MomentumStrategy("m", self._CFG)
+        sig = strat.generate_signal(_cross_down_data(), current_price=140.0)  # above trend
+        assert sig.signal_type == SignalType.HOLD
+
+    def test_cross_down_below_trend_sells(self) -> None:
+        # Confirmed trend break (price below the trend EMA) still exits.
+        strat = MomentumStrategy("m", self._CFG)
+        sig = strat.generate_signal(_cross_down_data(), current_price=90.0)  # below trend
+        assert sig.signal_type == SignalType.SELL
+
+    def test_gradual_breakdown_still_exits(self) -> None:
+        # The cross-down happened bars ago (last bar is bearish but NOT a fresh
+        # cross edge); price is now below the trend EMA. The fix must still emit
+        # a SELL here — the original edge-only logic would silently HOLD forever.
+        closes = [100.0 + i for i in range(30)] + [130.0 - 3.0 * i for i in range(1, 13)]
+        df = pd.DataFrame({
+            "open": closes,
+            "high": [c * 1.01 for c in closes],
+            "low": [c * 0.99 for c in closes],
+            "close": closes,
+            "volume": [1000.0] * len(closes),
+        })
+        df.attrs["symbol"] = "BTC"
+        strat = MomentumStrategy("m", self._CFG)
+        sig = strat.generate_signal(df, current_price=closes[-1])  # ~94, below trend EMA
+        assert sig.signal_type == SignalType.SELL
+
+
+# ── 11. CPCV/DSR promotion gate default-on (audit feature) ───────────────────
+
+def test_promotion_gate_enabled_by_default() -> None:
+    # The Sharpe-annualization fix (#8) makes the gate trustworthy, so it now
+    # defaults ON — apply-hyperopt must clear CPCV/DSR (force=true overrides).
+    assert BotConfig().promotion_gate.enabled is True
