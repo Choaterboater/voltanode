@@ -64,22 +64,26 @@ export default function MetricCard({
       // h-full so all cards in a grid row equalize even when their child
       // bodies have different heights (sparkline vs donut vs progress bars).
       // flex column keeps the child block pinned to the bottom.
-      className="flex h-full flex-col rounded-[10px] border border-border-subtle bg-bg-surface p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-accent-cyan/20"
+      className="panel panel-hover flex h-full flex-col p-5"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-xs text-text-muted">{label}</p>
-          <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-text-primary">
+          <p className="stat-label">{label}</p>
+          <p className="mt-1.5 font-mono text-[26px] font-semibold leading-8 tabular-nums tracking-tight text-text-primary">
             {value}
           </p>
           {delta !== undefined && (
-            <p className={`mt-1 text-xs font-mono tabular-nums ${deltaColor}`}>
+            <p className={`mt-1 font-mono text-xs tabular-nums ${deltaColor}`}>
               {showPlus ? '+' : ''}
               {delta}
             </p>
           )}
         </div>
-        {icon && <div className="shrink-0 text-text-muted">{icon}</div>}
+        {icon && (
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-bg-elevated/70 text-text-secondary">
+            {icon}
+          </div>
+        )}
       </div>
       {children && <div className="mt-3 flex-1">{children}</div>}
     </motion.div>

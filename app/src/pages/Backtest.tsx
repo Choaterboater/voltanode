@@ -47,6 +47,9 @@ const BACKTESTABLE_STRATEGIES: { id: string; label: string }[] = [
   { id: 'news_sentiment', label: 'News Sentiment' },
 ];
 
+const inputClass =
+  'w-full rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20';
+
 export default function Backtest() {
   const [strategyId, setStrategyId] = useState('momentum');
   const [assetClass, setAssetClass] = useState<'crypto' | 'stock'>('crypto');
@@ -91,7 +94,7 @@ export default function Backtest() {
 
   return (
     <Layout title="Backtest Lab">
-      <div className="space-y-5">
+      <div className="space-y-6">
         {error && (
           <div className="rounded-lg border border-danger-red/30 bg-danger-red/10 px-4 py-2 text-sm text-danger-red">
             {error}
@@ -103,16 +106,16 @@ export default function Backtest() {
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+            className="panel p-5"
           >
-            <h2 className="mb-4 text-base font-semibold text-text-primary">Backtest Config</h2>
+            <h2 className="mb-4 text-sm font-semibold text-text-primary">Backtest Config</h2>
             <form onSubmit={handleRun} className="space-y-3">
               <div>
-                <label className="mb-1 block text-xs text-text-muted">Strategy</label>
+                <label className="stat-label mb-1.5 block">Strategy</label>
                 <select
                   value={strategyId}
                   onChange={(e) => setStrategyId(e.target.value)}
-                  className="w-full rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan"
+                  className={inputClass}
                 >
                   {BACKTESTABLE_STRATEGIES.map((s) => (
                     <option key={s.id} value={s.id}>
@@ -123,18 +126,18 @@ export default function Backtest() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-text-muted">Asset class</label>
-                <div className="flex gap-2">
+                <label className="stat-label mb-1.5 block">Asset Class</label>
+                <div className="flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-input p-0.5">
                   <button
                     type="button"
                     onClick={() => {
                       setAssetClass('crypto');
                       setSymbol('BTC-USD');
                     }}
-                    className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${
+                    className={`flex-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                       assetClass === 'crypto'
-                        ? 'bg-accent-cyan/20 text-accent-cyan'
-                        : 'bg-bg-input text-text-secondary hover:text-text-primary'
+                        ? 'bg-bg-elevated text-text-primary shadow-card'
+                        : 'text-text-muted hover:text-text-secondary'
                     }`}
                   >
                     Crypto
@@ -145,10 +148,10 @@ export default function Backtest() {
                       setAssetClass('stock');
                       setSymbol('AAPL');
                     }}
-                    className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${
+                    className={`flex-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                       assetClass === 'stock'
-                        ? 'bg-accent-cyan/20 text-accent-cyan'
-                        : 'bg-bg-input text-text-secondary hover:text-text-primary'
+                        ? 'bg-bg-elevated text-text-primary shadow-card'
+                        : 'text-text-muted hover:text-text-secondary'
                     }`}
                   >
                     Stock
@@ -157,22 +160,22 @@ export default function Backtest() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-text-muted">Symbol</label>
+                <label className="stat-label mb-1.5 block">Symbol</label>
                 <input
                   type="text"
                   value={symbol}
                   onChange={(e) => setSymbol(e.target.value.toUpperCase())}
                   placeholder={assetClass === 'crypto' ? 'BTC-USD' : 'AAPL'}
-                  className="w-full rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan"
+                  className={`${inputClass} font-mono`}
                 />
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-text-muted">Timeframe</label>
+                <label className="stat-label mb-1.5 block">Timeframe</label>
                 <select
                   value={timeframe}
                   onChange={(e) => setTimeframe(e.target.value)}
-                  className="w-full rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan"
+                  className={inputClass}
                 >
                   <option value="1h">1 Hour</option>
                   <option value="4h">4 Hour</option>
@@ -181,24 +184,24 @@ export default function Backtest() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-text-muted">
+                <label className="stat-label mb-1.5 block">
                   Initial Balance ({assetClass === 'crypto' ? 'USDT' : 'USD'})
                 </label>
                 <input
                   type="number"
                   value={initialBalance}
                   onChange={(e) => setInitialBalance(e.target.value)}
-                  className="w-full rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan"
+                  className={`${inputClass} font-mono tabular-nums`}
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={running}
-                className="flex w-full items-center justify-center gap-2 rounded-md bg-accent-cyan py-2.5 text-sm font-semibold text-text-inverse hover:brightness-110 transition-all disabled:opacity-50"
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent-cyan py-2.5 text-sm font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90 disabled:opacity-50"
               >
                 {running ? (
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                 ) : (
                   <Play className="h-4 w-4" />
                 )}
@@ -214,12 +217,12 @@ export default function Backtest() {
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className="grid grid-cols-2 gap-3 sm:grid-cols-3"
+                  className="grid grid-cols-2 gap-4 sm:grid-cols-3"
                 >
-                  <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-4">
-                    <p className="text-xs text-text-muted">Total Return</p>
+                  <div className="panel p-4">
+                    <p className="stat-label">Total Return</p>
                     <p
-                      className={`mt-1 font-mono text-lg ${
+                      className={`mt-1.5 font-mono text-lg font-semibold tabular-nums ${
                         result.total_return_pct >= 0 ? 'text-success-green' : 'text-danger-red'
                       }`}
                     >
@@ -227,33 +230,33 @@ export default function Backtest() {
                       {result.total_return_pct.toFixed(2)}%
                     </p>
                   </div>
-                  <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-4">
-                    <p className="text-xs text-text-muted">Sharpe Ratio</p>
-                    <p className="mt-1 font-mono text-lg text-text-primary">
+                  <div className="panel p-4">
+                    <p className="stat-label">Sharpe Ratio</p>
+                    <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums text-text-primary">
                       {result.sharpe_ratio.toFixed(2)}
                     </p>
                   </div>
-                  <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-4">
-                    <p className="text-xs text-text-muted">Max Drawdown</p>
-                    <p className="mt-1 font-mono text-lg text-danger-red">
+                  <div className="panel p-4">
+                    <p className="stat-label">Max Drawdown</p>
+                    <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums text-danger-red">
                       {result.max_drawdown_pct.toFixed(2)}%
                     </p>
                   </div>
-                  <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-4">
-                    <p className="text-xs text-text-muted">Win Rate</p>
-                    <p className="mt-1 font-mono text-lg text-text-primary">
+                  <div className="panel p-4">
+                    <p className="stat-label">Win Rate</p>
+                    <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums text-text-primary">
                       {result.win_rate.toFixed(1)}%
                     </p>
                   </div>
-                  <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-4">
-                    <p className="text-xs text-text-muted">Profit Factor</p>
-                    <p className="mt-1 font-mono text-lg text-text-primary">
+                  <div className="panel p-4">
+                    <p className="stat-label">Profit Factor</p>
+                    <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums text-text-primary">
                       {result.profit_factor.toFixed(2)}
                     </p>
                   </div>
-                  <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-4">
-                    <p className="text-xs text-text-muted">Total Trades</p>
-                    <p className="mt-1 font-mono text-lg text-text-primary">
+                  <div className="panel p-4">
+                    <p className="stat-label">Total Trades</p>
+                    <p className="mt-1.5 font-mono text-lg font-semibold tabular-nums text-text-primary">
                       {result.total_trades}
                     </p>
                   </div>
@@ -263,7 +266,7 @@ export default function Backtest() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: 0.1 }}
-                  className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+                  className="panel p-5"
                 >
                   <h3 className="mb-3 text-sm font-semibold text-text-primary">Equity Curve</h3>
                   <div className="h-[300px] xl:h-[380px]">
@@ -273,35 +276,47 @@ export default function Backtest() {
                           ...p,
                           day: `Day ${i + 1}`,
                         }))}
-                        margin={{ top: 5, right: 10, left: 0, bottom: 0 }}
+                        margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
                       >
                         <defs>
                           <linearGradient id="btGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#06B6D4" stopOpacity={0.15} />
-                            <stop offset="100%" stopColor="#06B6D4" stopOpacity={0} />
+                            <stop offset="0%" stopColor="rgba(34,211,238,0.25)" />
+                            <stop offset="100%" stopColor="rgba(34,211,238,0)" />
                           </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" strokeOpacity={0.3} vertical={false} />
-                        <XAxis dataKey="day" tick={{ fill: '#64748B', fontSize: 12 }} axisLine={{ stroke: '#1E293B' }} tickLine={false} />
-                        <YAxis tick={{ fill: '#64748B', fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
+                        <CartesianGrid stroke="#1C2840" strokeDasharray="3 3" vertical={false} />
+                        <XAxis
+                          dataKey="day"
+                          tick={{ fontSize: 11, fill: '#6E7E96' }}
+                          axisLine={false}
+                          tickLine={false}
+                          minTickGap={28}
+                        />
+                        <YAxis
+                          tick={{ fontSize: 11, fill: '#6E7E96' }}
+                          axisLine={false}
+                          tickLine={false}
+                          tickFormatter={(v: number) => `$${v.toFixed(0)}`}
+                        />
                         <Tooltip
                           contentStyle={{
-                            backgroundColor: '#1A2235',
-                            border: '1px solid #1E293B',
-                            borderRadius: '8px',
-                            fontSize: '12px',
-                            color: '#F8FAFC',
+                            backgroundColor: '#0D1424',
+                            border: '1px solid #1C2840',
+                            borderRadius: 12,
+                            fontSize: 12,
                           }}
+                          labelStyle={{ color: '#A8B7CC' }}
+                          itemStyle={{ color: '#F2F6FC' }}
                           formatter={(value: number) => [formatCurrency(value), 'Equity']}
                         />
-                        <Area type="monotone" dataKey="equity" stroke="#06B6D4" strokeWidth={2} fill="url(#btGradient)" />
+                        <Area type="monotone" dataKey="equity" stroke="#22D3EE" strokeWidth={2} fill="url(#btGradient)" />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
                 </motion.div>
               </>
             ) : (
-              <div className="flex h-64 items-center justify-center rounded-[10px] border border-border-subtle bg-bg-surface">
+              <div className="panel flex h-64 items-center justify-center">
                 <div className="text-center">
                   <BarChart3 className="mx-auto mb-2 h-8 w-8 text-text-muted" />
                   <p className="text-sm text-text-muted">Configure and run a backtest to see results</p>

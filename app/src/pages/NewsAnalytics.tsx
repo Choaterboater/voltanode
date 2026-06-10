@@ -173,7 +173,7 @@ export default function NewsAnalytics() {
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
           <div className="flex items-center gap-3">
             <Zap className="h-6 w-6 text-accent-cyan" />
-            <h1 className="text-2xl font-bold text-text-primary">News Analytics</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-text-primary">News Analytics</h1>
           </div>
           <p className="mt-1 text-sm text-text-muted max-w-3xl">
             Sentiment velocity (how fast news is changing per symbol) and impact-calibration backtest
@@ -187,23 +187,23 @@ export default function NewsAnalytics() {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.05 }}
-          className="rounded-[10px] border border-border-subtle bg-bg-card p-4 space-y-3"
+          className="panel space-y-3 p-5"
         >
           <div className="flex items-center justify-between flex-wrap gap-3">
-            <h2 className="text-base font-semibold text-text-primary inline-flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-text-primary inline-flex items-center gap-2">
               <Activity className="h-4 w-4 text-accent-cyan" />
               Velocity (1h vs 24h)
             </h2>
             <button
               onClick={loadVelocity}
               disabled={velLoading}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg-elevated px-3 py-1.5 text-xs text-text-secondary hover:border-accent-cyan hover:text-accent-cyan transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated/60 px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:border-accent-cyan/30 hover:text-text-primary disabled:opacity-50"
             >
               <RefreshCw className={`h-3 w-3 ${velLoading ? 'animate-spin' : ''}`} />
               Refresh
             </button>
           </div>
-          <div className="text-[11px] text-text-muted">
+          <div className="text-2xs text-text-muted">
             <span className="font-mono text-text-secondary">velocity</span> = short-window avg compound minus long-window avg.
             Positive means news is becoming <em>more</em> positive recently. <span className="font-mono text-text-secondary">acceleration</span> is the
             change-of-change between adjacent windows — sniffs a regime shift.
@@ -212,7 +212,7 @@ export default function NewsAnalytics() {
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-border-subtle text-left text-text-muted uppercase tracking-wider">
+                <tr className="border-b border-border-subtle text-left text-2xs font-medium uppercase tracking-wider text-text-muted">
                   <th className="px-3 py-2.5">Symbol</th>
                   <th className="px-2 py-2.5">Label</th>
                   <th className="px-2 py-2.5 text-right">Velocity</th>
@@ -236,7 +236,7 @@ export default function NewsAnalytics() {
                     <tr key={sym} className="border-b border-border-subtle/50 hover:bg-bg-elevated/40">
                       <td className="px-3 py-2 font-mono font-bold text-accent-cyan">{sym}</td>
                       <td className="px-2 py-2">
-                        <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${style.cls}`}>
+                        <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-2xs font-semibold uppercase tracking-wide ${style.cls}`}>
                           <Icon className="h-2.5 w-2.5" />
                           {style.label}
                         </span>
@@ -278,10 +278,10 @@ export default function NewsAnalytics() {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="rounded-[10px] border border-border-subtle bg-bg-card p-4 space-y-3"
+          className="panel space-y-3 p-5"
         >
           <div className="flex items-center justify-between flex-wrap gap-3">
-            <h2 className="text-base font-semibold text-text-primary inline-flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-text-primary inline-flex items-center gap-2">
               <ChevronRight className="h-4 w-4 text-accent-cyan" />
               Impact calibration — do scores predict returns?
             </h2>
@@ -293,14 +293,14 @@ export default function NewsAnalytics() {
               value={impactSymbols}
               onChange={(e) => setImpactSymbols(e.target.value.toUpperCase())}
               placeholder="NVDA,AAPL,TSLA"
-              className="flex-1 min-w-[200px] rounded-md border border-border-subtle bg-bg-elevated py-1.5 px-3 text-xs font-mono text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+              className="flex-1 min-w-[200px] rounded-lg border border-border-subtle bg-bg-input px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
             />
-            <label className="text-[10px] text-text-muted inline-flex items-center gap-1.5">
+            <label className="stat-label inline-flex items-center gap-1.5">
               Lookback
               <select
                 value={lookbackDays}
                 onChange={(e) => setLookbackDays(Number(e.target.value))}
-                className="rounded-md border border-border-subtle bg-bg-elevated py-1 px-2 text-xs text-text-primary focus:border-accent-cyan focus:outline-none"
+                className="rounded-lg border border-border-subtle bg-bg-input px-2 py-1.5 text-xs normal-case tracking-normal text-text-primary focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               >
                 <option value={7}>7d</option>
                 <option value={14}>14d</option>
@@ -309,20 +309,20 @@ export default function NewsAnalytics() {
                 <option value={90}>90d</option>
               </select>
             </label>
-            <label className="text-[10px] text-text-muted inline-flex items-center gap-1.5">
+            <label className="stat-label inline-flex items-center gap-1.5">
               Horizons
               <input
                 type="text"
                 value={horizons}
                 onChange={(e) => setHorizons(e.target.value)}
                 placeholder="1,3,5"
-                className="w-20 rounded-md border border-border-subtle bg-bg-elevated py-1 px-2 text-xs font-mono text-text-primary focus:border-accent-cyan focus:outline-none"
+                className="w-20 rounded-lg border border-border-subtle bg-bg-input px-2 py-1.5 font-mono text-xs tracking-normal text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               />
             </label>
             <button
               onClick={loadImpact}
               disabled={impactLoading || !impactSymbols.trim()}
-              className="inline-flex items-center gap-1.5 rounded-md bg-accent-cyan px-3 py-1.5 text-xs font-semibold text-accent-foreground hover:bg-accent-cyan/90 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90 disabled:opacity-50"
             >
               {impactLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               {impactLoading ? 'Scanning…' : 'Run backtest'}
@@ -338,17 +338,17 @@ export default function NewsAnalytics() {
 
           {impact && !impactError && (
             <>
-              <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-text-muted">
-                <span>articles: <span className="font-mono text-text-secondary">{impact.article_count}</span></span>
-                <span>skipped: <span className="font-mono text-text-secondary">{impact.skipped_count}</span></span>
+              <div className="flex flex-wrap gap-x-5 gap-y-1 text-2xs text-text-muted">
+                <span>articles: <span className="font-mono tabular-nums text-text-secondary">{impact.article_count}</span></span>
+                <span>skipped: <span className="font-mono tabular-nums text-text-secondary">{impact.skipped_count}</span></span>
                 <span>symbols: <span className="font-mono text-text-secondary">{impact.symbols.join(',')}</span></span>
-                <span>window: <span className="font-mono text-text-secondary">{impact.lookback_days}d</span></span>
+                <span>window: <span className="font-mono tabular-nums text-text-secondary">{impact.lookback_days}d</span></span>
               </div>
 
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="border-b border-border-subtle text-left text-text-muted uppercase tracking-wider">
+                    <tr className="border-b border-border-subtle text-left text-2xs font-medium uppercase tracking-wider text-text-muted">
                       <th className="px-3 py-2.5">Score bucket</th>
                       {horizonsList.map((h) => (
                         <th key={`mean-${h}`} colSpan={3} className="px-2 py-2.5 text-center border-l border-border-subtle/50">
@@ -356,7 +356,7 @@ export default function NewsAnalytics() {
                         </th>
                       ))}
                     </tr>
-                    <tr className="border-b border-border-subtle text-left text-text-muted uppercase tracking-wider text-[9px]">
+                    <tr className="border-b border-border-subtle text-left text-2xs font-medium uppercase tracking-wider text-text-muted/70">
                       <th className="px-3 py-1.5"></th>
                       {horizonsList.flatMap((h) => [
                         <th key={`n-${h}`} className="px-1 py-1.5 text-right border-l border-border-subtle/50">n</th>,
@@ -416,7 +416,7 @@ export default function NewsAnalytics() {
                 </table>
               </div>
 
-              <p className="text-[10px] text-text-muted/70 max-w-3xl">
+              <p className="max-w-3xl text-2xs text-text-muted/70">
                 Hit-rate is directional: positive-score buckets hit when forward return is positive; negative-score buckets hit when forward return is negative.
                 The middle <span className="font-mono">[-0.10, +0.10)</span> bucket straddles zero so its hit-rate is reported as 50% (undefined). Strong-conviction
                 rows are tinted for emphasis.

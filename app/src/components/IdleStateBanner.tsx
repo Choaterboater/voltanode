@@ -104,13 +104,13 @@ export default function IdleStateBanner() {
 
   return (
     <div
-      className="flex gap-3 rounded-[10px] border border-accent-cyan/25 bg-bg-surface px-4 py-3 text-sm"
+      className="panel flex gap-3 border-warning-amber/30 bg-warning-amber/5 p-4"
       role="status"
     >
-      <Info className="mt-0.5 h-4 w-4 shrink-0 text-accent-cyan" aria-hidden />
+      <Info className="mt-0.5 h-4 w-4 shrink-0 text-warning-amber" aria-hidden />
       <div className="min-w-0 space-y-1">
-        <p className="font-medium text-text-primary">Bots may be idle</p>
-        <ul className="list-disc space-y-0.5 pl-4 text-text-muted">
+        <p className="text-sm font-semibold text-text-primary">Bots may be idle</p>
+        <ul className="list-disc space-y-0.5 pl-4 text-xs text-text-secondary">
           {reasons.map(r => (
             <li key={r}>{r}</li>
           ))}

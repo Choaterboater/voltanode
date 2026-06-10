@@ -20,20 +20,35 @@ import {
 import { useState, useEffect } from 'react';
 import { useSettings } from '@/hooks/useSettings';
 
-const navItems = [
-  { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-  { label: 'Watchlist', path: '/watchlist', icon: Eye },
-  { label: 'Advisor', path: '/advisor', icon: Sparkles },
-  { label: 'Squeeze', path: '/squeeze', icon: Flame },
-  { label: 'Long-Term', path: '/long-term', icon: Anchor },
-  { label: 'Paper Trading', path: '/paper', icon: Wallet },
-  { label: 'Strategies', path: '/strategies', icon: LineChart },
-  { label: 'Backtest', path: '/backtest', icon: BarChart3 },
-  { label: 'Analytics', path: '/analytics', icon: PieChart },
-  { label: 'Bot Lab', path: '/bots', icon: Bot },
-  { label: 'News', path: '/news', icon: Newspaper },
-  { label: 'News Analytics', path: '/news-analytics', icon: Activity },
-  { label: 'About', path: '/about', icon: Info },
+const navGroups = [
+  {
+    label: 'Trade',
+    items: [
+      { label: 'Dashboard', path: '/', icon: LayoutDashboard },
+      { label: 'Paper Trading', path: '/paper', icon: Wallet },
+      { label: 'Strategies', path: '/strategies', icon: LineChart },
+      { label: 'Bot Lab', path: '/bots', icon: Bot },
+    ],
+  },
+  {
+    label: 'Research',
+    items: [
+      { label: 'Watchlist', path: '/watchlist', icon: Eye },
+      { label: 'Advisor', path: '/advisor', icon: Sparkles },
+      { label: 'Squeeze', path: '/squeeze', icon: Flame },
+      { label: 'Long-Term', path: '/long-term', icon: Anchor },
+      { label: 'News', path: '/news', icon: Newspaper },
+      { label: 'News Analytics', path: '/news-analytics', icon: Activity },
+    ],
+  },
+  {
+    label: 'Analyze',
+    items: [
+      { label: 'Backtest', path: '/backtest', icon: BarChart3 },
+      { label: 'Analytics', path: '/analytics', icon: PieChart },
+      { label: 'About', path: '/about', icon: Info },
+    ],
+  },
 ];
 
 export default function Navbar() {
@@ -67,7 +82,7 @@ export default function Navbar() {
       {/* Mobile toggle */}
       <button
         onClick={() => setMobileOpen(!mobileOpen)}
-        className="fixed left-4 top-4 z-50 flex h-10 w-10 items-center justify-center rounded-md bg-bg-surface border border-border-subtle text-text-primary lg:hidden"
+        className="fixed left-4 top-4 z-50 flex h-10 w-10 items-center justify-center rounded-lg border border-border-subtle bg-bg-surface text-text-primary shadow-card lg:hidden"
       >
         <span className="sr-only">Toggle menu</span>
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -82,60 +97,66 @@ export default function Navbar() {
       {/* Overlay */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+          className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex flex-col w-[260px] transform border-r border-border-subtle bg-bg-surface transition-transform duration-300 lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-[248px] transform flex-col border-r border-border-subtle bg-bg-input/80 backdrop-blur-xl transition-transform duration-300 lg:translate-x-0 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
         {/* Logo area */}
-        <div className="flex h-16 flex-col justify-center px-5">
-          <div className="flex items-center gap-2.5">
-            <img src="./logo-icon.svg" alt="" className="h-7 w-7" />
-            <span className="text-lg font-bold tracking-tight text-text-primary">
+        <div className="flex h-16 items-center gap-3 px-5">
+          <img src="./logo-icon.svg" alt="" className="h-8 w-8" />
+          <div className="flex flex-col">
+            <span className="text-[17px] font-bold leading-5 tracking-tight text-text-primary">
               Volta<span className="text-accent-cyan">Node</span>
             </span>
-          </div>
-          <span className="mt-0.5 pl-[44px] text-[10px] text-text-muted tracking-wide">
-            by{' '}
             <a
               href="https://choatelabs.app/"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-accent-cyan hover:underline"
+              className="text-2xs text-text-muted transition-colors hover:text-accent-cyan"
             >
-              Choate Labs
+              by Choate Labs
             </a>
-          </span>
+          </div>
         </div>
 
         {/* Connection badge */}
-        <div className="mx-4 mb-2">
+        <div className="mx-4 mb-1">
           <button
             onClick={() => { navigate('/settings'); setMobileOpen(false); }}
-            className="flex w-full items-center gap-2 rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-xs transition-colors hover:bg-bg-elevated"
+            className="flex w-full items-center gap-2.5 rounded-lg border border-border-subtle bg-bg-surface px-3 py-2.5 text-xs shadow-card transition-colors hover:border-accent-cyan/30"
           >
             {loading ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin text-text-muted" />
             ) : (
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  backendOffline
-                    ? 'bg-danger-red'
-                    : brokerConnected
-                    ? isLive
-                      ? 'bg-danger-red animate-pulse'
-                      : 'bg-success-green'
-                    : 'bg-text-muted'
-                }`}
-              />
+              <span className="relative flex h-2 w-2">
+                {!backendOffline && brokerConnected && (
+                  <span
+                    className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-50 ${
+                      isLive ? 'bg-danger-red' : 'bg-success-green'
+                    }`}
+                  />
+                )}
+                <span
+                  className={`relative inline-flex h-2 w-2 rounded-full ${
+                    backendOffline
+                      ? 'bg-danger-red'
+                      : brokerConnected
+                      ? isLive
+                        ? 'bg-danger-red'
+                        : 'bg-success-green'
+                      : 'bg-text-muted'
+                  }`}
+                />
+              </span>
             )}
-            <span className="text-text-secondary truncate">
+            <span className="truncate font-medium text-text-secondary">
               {backendOffline
                 ? 'Backend offline'
                 : loading
@@ -144,45 +165,66 @@ export default function Navbar() {
                 ? `${brokerName.charAt(0).toUpperCase() + brokerName.slice(1)} · ${isLive ? 'LIVE' : 'Paper'}`
                 : 'No broker connected'}
             </span>
-            <Plug className="ml-auto h-3 w-3 text-text-muted" />
+            <Plug className="ml-auto h-3.5 w-3.5 shrink-0 text-text-muted" />
           </button>
         </div>
 
         {/* Nav items */}
-        <nav className="mt-2 px-3 flex-1 overflow-y-auto">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path;
-            return (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                onClick={() => setMobileOpen(false)}
-                className={`flex h-11 items-center rounded-lg px-4 text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'border-l-[3px] border-l-accent-cyan bg-accent-cyan-glow text-accent-cyan'
-                    : 'text-text-secondary hover:bg-bg-input hover:text-text-primary'
-                }`}
-              >
-                <Icon className="mr-3 h-5 w-5" />
-                {item.label}
-              </NavLink>
-            );
-          })}
+        <nav className="flex-1 overflow-y-auto px-3 pb-4 pt-2">
+          {navGroups.map((group) => (
+            <div key={group.label} className="mb-1">
+              <p className="px-3 pb-1 pt-3 text-2xs font-semibold uppercase tracking-[0.14em] text-text-muted/70">
+                {group.label}
+              </p>
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                const isActive = location.pathname === item.path;
+                return (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    onClick={() => setMobileOpen(false)}
+                    className={`group relative mb-0.5 flex h-9 items-center rounded-lg px-3 text-[13px] font-medium transition-colors ${
+                      isActive
+                        ? 'bg-accent-cyan/10 text-accent-cyan'
+                        : 'text-text-secondary hover:bg-bg-elevated/60 hover:text-text-primary'
+                    }`}
+                  >
+                    {isActive && (
+                      <span className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-accent-cyan shadow-glow-cyan" />
+                    )}
+                    <Icon
+                      className={`mr-3 h-4 w-4 transition-colors ${
+                        isActive ? 'text-accent-cyan' : 'text-text-muted group-hover:text-text-secondary'
+                      }`}
+                    />
+                    {item.label}
+                  </NavLink>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Settings link at bottom */}
-        <div className="px-3 pb-3">
+        <div className="border-t border-border-subtle px-3 py-3">
           <NavLink
             to="/settings"
             onClick={() => setMobileOpen(false)}
-            className={`flex h-10 items-center rounded-lg px-4 text-xs font-medium transition-colors ${
+            className={`group relative flex h-9 items-center rounded-lg px-3 text-[13px] font-medium transition-colors ${
               location.pathname === '/settings'
-                ? 'border-l-[3px] border-l-accent-cyan bg-accent-cyan-glow text-accent-cyan'
-                : 'text-text-muted hover:bg-bg-input hover:text-text-secondary'
+                ? 'bg-accent-cyan/10 text-accent-cyan'
+                : 'text-text-secondary hover:bg-bg-elevated/60 hover:text-text-primary'
             }`}
           >
-            <Settings className="mr-3 h-4 w-4" />
+            {location.pathname === '/settings' && (
+              <span className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-accent-cyan shadow-glow-cyan" />
+            )}
+            <Settings
+              className={`mr-3 h-4 w-4 ${
+                location.pathname === '/settings' ? 'text-accent-cyan' : 'text-text-muted group-hover:text-text-secondary'
+              }`}
+            />
             Settings
           </NavLink>
         </div>

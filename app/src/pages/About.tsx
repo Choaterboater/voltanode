@@ -45,7 +45,7 @@ export default function About() {
           animate={{ opacity: 1, y: 0 }}
           className="text-center"
         >
-          <h1 className="text-3xl font-extrabold tracking-tight text-text-primary">
+          <h1 className="text-2xl font-bold tracking-tight text-text-primary">
             VoltaNode
           </h1>
           <p className="mt-2 text-sm text-accent-cyan font-medium">
@@ -71,15 +71,15 @@ export default function About() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
         >
-          <h2 className="mb-4 text-base font-semibold text-text-primary">What You Can Do</h2>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <h2 className="mb-4 text-sm font-semibold text-text-primary">What You Can Do</h2>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {features.map((f, i) => (
               <motion.div
                 key={f.title}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.15 + i * 0.05 }}
-                className="rounded-[10px] border border-border-subtle bg-bg-surface p-4 hover:border-accent-cyan/20 transition-colors"
+                className="panel panel-hover p-4"
               >
                 <div className="flex items-center gap-2">
                   {f.icon}
@@ -96,9 +96,9 @@ export default function About() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
-          className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+          className="panel p-5"
         >
-          <h2 className="text-base font-semibold text-text-primary">Parent Company</h2>
+          <h2 className="text-sm font-semibold text-text-primary">Parent Company</h2>
           <div className="mt-3 flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent-cyan/10">
               <Zap className="h-5 w-5 text-accent-cyan" />
@@ -125,7 +125,7 @@ export default function About() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.4 }}
-          className="rounded-lg border border-warning-amber/20 bg-warning-amber/5 p-3"
+          className="rounded-xl border border-warning-amber/20 bg-warning-amber/5 p-4"
         >
           <p className="text-xs leading-relaxed text-warning-amber">
             <strong>Disclaimer:</strong> VoltaNode is a paper trading platform. No real money is traded. AI recommendations and price predictions are generated from technical analysis and do not constitute financial advice. Always do your own research before making investment decisions.

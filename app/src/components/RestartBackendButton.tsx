@@ -62,19 +62,19 @@ export default function RestartBackendButton() {
 
   const tone =
     state === 'confirming'
-      ? 'border-warning-amber text-warning-amber hover:bg-warning-amber/10'
+      ? 'border-warning-amber/40 text-warning-amber hover:bg-warning-amber/10'
       : state === 'restarting'
         ? 'border-border-subtle text-text-muted cursor-wait'
         : state === 'done'
-          ? 'border-success-green text-success-green'
-          : 'border-border-subtle text-text-secondary hover:border-text-primary hover:text-text-primary';
+          ? 'border-success-green/40 text-success-green'
+          : 'border-border-subtle text-text-secondary hover:border-accent-cyan/30 hover:text-text-primary';
 
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={state === 'restarting' || state === 'done'}
-      className={`flex h-8 items-center gap-1.5 rounded-md border bg-bg-base px-3 text-xs font-medium transition-colors ${tone}`}
+      className={`inline-flex items-center gap-1.5 rounded-lg border bg-bg-elevated/60 px-3 py-1.5 text-xs font-medium transition-colors ${tone}`}
       title="Stops the running backend process and starts a fresh one in a new console."
     >
       {state === 'restarting' && (

@@ -4,34 +4,34 @@
 
 @layer base {
   :root {
-    --background: 220 25% 7%;
-    --foreground: 210 40% 98%;
-    --card: 220 20% 10%;
-    --card-foreground: 210 40% 98%;
-    --popover: 220 20% 12%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 186 94% 42%;
-    --primary-foreground: 220 25% 7%;
-    --secondary: 220 15% 15%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 220 15% 15%;
-    --muted-foreground: 215 16% 57%;
-    --accent: 186 94% 42%;
-    --accent-foreground: 220 25% 7%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217 33% 17%;
-    --input: 220 20% 10%;
-    --ring: 186 94% 42%;
-    --radius: 0.625rem;
-    --sidebar-background: 220 20% 10%;
-    --sidebar-foreground: 210 40% 98%;
-    --sidebar-primary: 186 94% 42%;
-    --sidebar-primary-foreground: 220 25% 7%;
-    --sidebar-accent: 220 15% 15%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 217 33% 17%;
-    --sidebar-ring: 186 94% 42%;
+    --background: 221 48% 5%;
+    --foreground: 214 56% 97%;
+    --card: 219 47% 10%;
+    --card-foreground: 214 56% 97%;
+    --popover: 220 45% 12%;
+    --popover-foreground: 214 56% 97%;
+    --primary: 187 86% 53%;
+    --primary-foreground: 221 48% 5%;
+    --secondary: 220 38% 15%;
+    --secondary-foreground: 214 56% 97%;
+    --muted: 220 38% 15%;
+    --muted-foreground: 215 17% 57%;
+    --accent: 187 86% 53%;
+    --accent-foreground: 221 48% 5%;
+    --destructive: 0 91% 71%;
+    --destructive-foreground: 214 56% 97%;
+    --border: 221 39% 18%;
+    --input: 219 47% 8%;
+    --ring: 187 86% 53%;
+    --radius: 0.75rem;
+    --sidebar-background: 219 47% 8%;
+    --sidebar-foreground: 214 56% 97%;
+    --sidebar-primary: 187 86% 53%;
+    --sidebar-primary-foreground: 221 48% 5%;
+    --sidebar-accent: 220 38% 15%;
+    --sidebar-accent-foreground: 214 56% 97%;
+    --sidebar-border: 221 39% 16%;
+    --sidebar-ring: 187 86% 53%;
   }
 
   * {
@@ -39,17 +39,29 @@
   }
 
   body {
-    @apply bg-bg-base text-text-primary font-inter antialiased;
+    @apply text-text-primary font-inter antialiased;
+    /* Layered depth instead of a flat slab: a faint cyan bloom up top and a
+       purple whisper bottom-left over the deep base. Fixed so panels scroll
+       over it. */
+    background:
+      radial-gradient(1100px 520px at 78% -12%, rgba(34, 211, 238, 0.07), transparent 62%),
+      radial-gradient(900px 600px at -10% 110%, rgba(139, 92, 246, 0.05), transparent 55%),
+      #070b14;
+    background-attachment: fixed;
   }
 
   html {
     scroll-behavior: smooth;
   }
 
+  ::selection {
+    background: rgba(34, 211, 238, 0.28);
+  }
+
   /* Custom scrollbar */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
   }
 
   ::-webkit-scrollbar-track {
@@ -57,12 +69,16 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #1E293B;
-    border-radius: 3px;
+    background: #1c2840;
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #64748B;
+    background: #2c3d5e;
+    background-clip: padding-box;
+    border: 2px solid transparent;
   }
 
   /* Tabular nums for all numeric data */
@@ -73,12 +89,34 @@
 }
 
 @layer components {
+  /* ── Panel: the one card treatment every surface should use ───────────── */
+  .panel {
+    @apply rounded-xl border border-border-subtle bg-bg-surface shadow-card;
+  }
+
+  .panel-hover {
+    @apply transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card-hover;
+  }
+
+  .panel-title {
+    @apply text-sm font-semibold text-text-primary;
+  }
+
+  /* ── Stat primitives ───────────────────────────────────────────────────── */
+  .stat-label {
+    @apply text-2xs font-medium uppercase tracking-wider text-text-muted;
+  }
+
+  .stat-value {
+    @apply font-mono text-2xl font-semibold tabular-nums text-text-primary;
+  }
+
   .metric-value {
-    @apply font-mono text-mono-lg tabular-nums;
+    @apply font-mono text-2xl font-semibold tabular-nums text-text-primary;
   }
 
   .metric-label {
-    @apply text-body-sm text-text-muted;
+    @apply text-2xs font-medium uppercase tracking-wider text-text-muted;
   }
 
   .metric-delta-positive {
@@ -87,5 +125,30 @@
 
   .metric-delta-negative {
     @apply text-danger-red font-mono tabular-nums;
+  }
+
+  /* ── Tinted pills for status / direction ──────────────────────────────── */
+  .pill {
+    @apply inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide;
+  }
+
+  .pill-success {
+    @apply pill bg-success-green/10 text-success-green;
+  }
+
+  .pill-danger {
+    @apply pill bg-danger-red/10 text-danger-red;
+  }
+
+  .pill-warning {
+    @apply pill bg-warning-amber/10 text-warning-amber;
+  }
+
+  .pill-info {
+    @apply pill bg-accent-cyan/10 text-accent-cyan;
+  }
+
+  .pill-neutral {
+    @apply pill bg-bg-elevated text-text-secondary;
   }
 }

@@ -36,28 +36,12 @@ type SortDir = 'asc' | 'desc';
 
 const SOURCE_BADGES: Record<
   string,
-  { label: string; className: string; icon: React.ComponentType<{ className?: string }> }
+  { label: string; icon: React.ComponentType<{ className?: string }> }
 > = {
-  squeeze: {
-    label: 'Squeeze',
-    className: 'bg-accent-cyan/15 text-accent-cyan border-accent-cyan/40',
-    icon: Flame,
-  },
-  scanner: {
-    label: 'Scanner',
-    className: 'bg-success-green/15 text-success-green border-success-green/40',
-    icon: Zap,
-  },
-  advisor: {
-    label: 'Advisor',
-    className: 'bg-warning-amber/15 text-warning-amber border-warning-amber/40',
-    icon: Sparkles,
-  },
-  manual: {
-    label: 'Manual',
-    className: 'bg-bg-elevated text-text-muted border-border-subtle',
-    icon: Eye,
-  },
+  squeeze: { label: 'Squeeze', icon: Flame },
+  scanner: { label: 'Scanner', icon: Zap },
+  advisor: { label: 'Advisor', icon: Sparkles },
+  manual: { label: 'Manual', icon: Eye },
 };
 
 function fmtPct(n: number | null | undefined, decimals = 1): string {
@@ -81,7 +65,7 @@ interface SparklineProps {
 
 function Sparkline({ values, color, width = 64, height = 20 }: SparklineProps) {
   if (!values || values.length < 2) {
-    return <span className="text-text-muted/50 text-[10px]">—</span>;
+    return <span className="text-2xs text-text-muted/50">—</span>;
   }
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -135,7 +119,7 @@ function SortHeader({
   return (
     <th
       onClick={() => onClick(k)}
-      className={`${className} cursor-pointer select-none hover:text-text-primary transition-colors`}
+      className={`${className} stat-label cursor-pointer select-none bg-bg-input/50 transition-colors hover:text-text-primary`}
     >
       <div className="inline-flex items-center gap-1">
         <span className={active ? 'text-accent-cyan' : ''}>{children}</span>
@@ -306,7 +290,7 @@ export default function Watchlist() {
 
   return (
     <Layout>
-      <div className="px-4 sm:px-6 lg:px-8 py-8 max-w-7xl mx-auto space-y-5">
+      <div className="px-4 sm:px-6 lg:px-8 py-8 max-w-7xl mx-auto space-y-6">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -314,7 +298,7 @@ export default function Watchlist() {
         >
           <div className="flex items-center gap-3">
             <Eye className="h-6 w-6 text-accent-cyan" />
-            <h1 className="text-2xl font-bold text-text-primary">Watchlist</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-text-primary">Watchlist</h1>
           </div>
           <p className="mt-1 text-sm text-text-muted">
             Symbols you've flagged across the app — manual adds plus picks
@@ -327,7 +311,7 @@ export default function Watchlist() {
               not to trust prices/sparklines as live yet. Auto-hides once
               fresh data arrives. */}
           {items.length > 0 && !freshTs && cacheTs && (
-            <p className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-warning-amber/40 bg-warning-amber/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-warning-amber">
+            <p className="pill-warning mt-2">
               <RefreshCw className="h-3 w-3" />
               Cached ·{' '}
               {(() => {
@@ -347,22 +331,22 @@ export default function Watchlist() {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.05 }}
-          className="rounded-[10px] border border-border-subtle bg-bg-card p-4 space-y-3"
+          className="panel p-4 space-y-3"
         >
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-1 rounded-md bg-bg-elevated border border-border-subtle p-0.5">
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-input p-0.5">
               {(['all', 'stock', 'crypto'] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
-                  className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                     tab === t
-                      ? 'bg-bg-base text-accent-cyan'
-                      : 'text-text-secondary hover:text-text-primary'
+                      ? 'bg-bg-elevated text-text-primary shadow-card'
+                      : 'text-text-muted hover:text-text-secondary'
                   }`}
                 >
                   {t === 'all' ? 'All' : t === 'stock' ? 'Stocks' : 'Crypto'}
-                  <span className="ml-1.5 text-[10px] text-text-muted">
+                  <span className="ml-1.5 font-mono text-2xs tabular-nums text-text-muted">
                     {t === 'all'
                       ? counts.all
                       : t === 'stock'
@@ -374,20 +358,20 @@ export default function Watchlist() {
             </div>
 
             <div className="relative flex-1 min-w-[180px]">
-              <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-text-muted" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
               <input
                 type="text"
                 placeholder="Filter symbol or note…"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="w-full rounded-md border border-border-subtle bg-bg-elevated py-1.5 pl-8 pr-3 text-xs font-mono text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+                className="w-full rounded-lg border border-border-subtle bg-bg-input py-2 pl-9 pr-3 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               />
             </div>
 
             <button
               onClick={() => reload({ nocache: true })}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle px-3 py-1.5 text-xs text-text-secondary hover:border-accent-cyan hover:text-accent-cyan transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated/60 px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:border-accent-cyan/30 hover:text-text-primary disabled:opacity-50"
             >
               <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
               Refresh
@@ -395,7 +379,7 @@ export default function Watchlist() {
 
             <button
               onClick={() => setShowAdd(!showAdd)}
-              className="inline-flex items-center gap-1 rounded-md bg-accent-cyan px-3 py-1.5 text-xs font-semibold text-accent-foreground hover:bg-accent-cyan/90 transition-all"
+              className="inline-flex items-center gap-1 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90"
             >
               <Plus className="h-3.5 w-3.5" />
               Add
@@ -409,7 +393,7 @@ export default function Watchlist() {
                 onChange={(e) =>
                   setNewAssetType(e.target.value as 'stock' | 'crypto')
                 }
-                className="rounded-md border border-border-subtle bg-bg-elevated py-1.5 px-2 text-xs text-text-primary focus:border-accent-cyan focus:outline-none"
+                className="rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               >
                 <option value="stock">Stock</option>
                 <option value="crypto">Crypto</option>
@@ -420,11 +404,11 @@ export default function Watchlist() {
                 value={newSymbol}
                 onChange={(e) => setNewSymbol(e.target.value.toUpperCase())}
                 onKeyDown={(e) => e.key === 'Enter' && handleAddCustom()}
-                className="flex-1 rounded-md border border-border-subtle bg-bg-elevated py-1.5 px-3 text-xs font-mono text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+                className="flex-1 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 font-mono text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               />
               <button
                 onClick={handleAddCustom}
-                className="rounded-md bg-accent-cyan px-3 py-1.5 text-xs font-semibold text-accent-foreground hover:bg-accent-cyan/90"
+                className="rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90"
               >
                 Add
               </button>
@@ -433,7 +417,7 @@ export default function Watchlist() {
                   setShowAdd(false);
                   setNewSymbol('');
                 }}
-                className="rounded-md border border-border-subtle px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-elevated"
+                className="rounded-lg border border-border-subtle bg-bg-elevated/60 px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:border-accent-cyan/30 hover:text-text-primary"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -449,7 +433,7 @@ export default function Watchlist() {
         )}
 
         {/* Table */}
-        <div className="rounded-[10px] border border-border-subtle bg-bg-card overflow-hidden">
+        <div className="panel overflow-hidden">
           {loading && items.length === 0 && (
             <div className="p-8 text-center text-text-muted text-sm">
               Loading watchlist + live data…
@@ -512,7 +496,7 @@ export default function Watchlist() {
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-border-subtle text-left text-text-muted uppercase tracking-wider">
+                  <tr className="border-b border-border-subtle text-left">
                     <SortHeader k="symbol" cur={sortKey} dir={sortDir} onClick={toggleSort} className="px-4 py-3">
                       Ticker
                     </SortHeader>
@@ -528,15 +512,15 @@ export default function Watchlist() {
                     <SortHeader k="week_pct_change" cur={sortKey} dir={sortDir} onClick={toggleSort}>
                       Week %
                     </SortHeader>
-                    <th className="px-2 py-3">20d</th>
+                    <th className="stat-label bg-bg-input/50 px-2 py-3">20d</th>
                     <SortHeader k="relative_volume" cur={sortKey} dir={sortDir} onClick={toggleSort}>
                       Rel Vol
                     </SortHeader>
                     <SortHeader k="added_at" cur={sortKey} dir={sortDir} onClick={toggleSort}>
                       Added
                     </SortHeader>
-                    <th className="px-2 py-3">Note</th>
-                    <th className="px-2 py-3 text-right">Actions</th>
+                    <th className="stat-label bg-bg-input/50 px-2 py-3">Note</th>
+                    <th className="stat-label bg-bg-input/50 px-2 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -546,15 +530,15 @@ export default function Watchlist() {
                     return (
                       <tr
                         key={`${it.symbol}-${it.asset_type}`}
-                        className="border-b border-border-subtle/50 hover:bg-bg-elevated/40 transition-colors"
+                        className="border-b border-border-subtle/60 hover:bg-bg-elevated/40 transition-colors"
                       >
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <span className="font-mono font-bold text-accent-cyan text-sm">
+                            <span className="font-mono text-sm font-semibold text-accent-cyan">
                               {it.symbol}
                             </span>
                             <span
-                              className={`inline-block rounded border px-1 py-0.5 text-[9px] uppercase tracking-wider ${
+                              className={`inline-block rounded border px-1 py-0.5 text-2xs uppercase tracking-wider ${
                                 it.asset_type === 'crypto'
                                   ? 'border-accent-cyan/30 text-accent-cyan/80'
                                   : 'border-border-subtle text-text-muted'
@@ -565,17 +549,15 @@ export default function Watchlist() {
                           </div>
                         </td>
                         <td className="px-2 py-3">
-                          <span
-                            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${meta.className}`}
-                          >
+                          <span className="pill-neutral">
                             <Icon className="h-2.5 w-2.5" />
                             {meta.label}
                           </span>
                         </td>
-                        <td className="px-2 py-3 font-mono tabular-nums text-text-primary">
+                        <td className="px-2 py-3 font-mono text-xs tabular-nums text-text-primary">
                           {fmtPrice(it.current_price)}
                         </td>
-                        <td className="px-2 py-3 font-mono tabular-nums">
+                        <td className="px-2 py-3 font-mono text-xs tabular-nums">
                           {it.day_pct_change != null ? (
                             <span
                               className={
@@ -592,7 +574,7 @@ export default function Watchlist() {
                             <span className="text-text-muted/50">—</span>
                           )}
                         </td>
-                        <td className="px-2 py-3 font-mono tabular-nums">
+                        <td className="px-2 py-3 font-mono text-xs tabular-nums">
                           {it.week_pct_change != null ? (
                             <span
                               className={
@@ -623,7 +605,7 @@ export default function Watchlist() {
                             <span className="text-text-muted/50">—</span>
                           )}
                         </td>
-                        <td className="px-2 py-3 font-mono tabular-nums">
+                        <td className="px-2 py-3 font-mono text-xs tabular-nums">
                           {it.relative_volume != null ? (
                             <span
                               className={
@@ -640,12 +622,12 @@ export default function Watchlist() {
                             <span className="text-text-muted/50">—</span>
                           )}
                         </td>
-                        <td className="px-2 py-3 text-text-muted whitespace-nowrap">
+                        <td className="px-2 py-3 font-mono text-xs tabular-nums text-text-muted whitespace-nowrap">
                           {new Date(it.added_at).toLocaleDateString()}
                         </td>
                         <td className="px-2 py-3 max-w-[220px]">
                           <span
-                            className="text-text-secondary truncate block"
+                            className="block truncate text-xs text-text-muted"
                             title={it.note ?? ''}
                           >
                             {it.note ?? '—'}
@@ -657,7 +639,7 @@ export default function Watchlist() {
                               handleAnalyze(it.symbol, it.asset_type)
                             }
                             title="Analyze in Advisor"
-                            className="inline-flex items-center gap-0.5 rounded p-1.5 text-accent-cyan hover:bg-accent-cyan/10 transition-colors"
+                            className="inline-flex items-center gap-0.5 rounded-md p-1.5 text-text-muted hover:bg-accent-cyan/10 hover:text-accent-cyan transition-colors"
                           >
                             <Sparkles className="h-3.5 w-3.5" />
                             <ArrowRight className="h-3 w-3" />
@@ -665,7 +647,7 @@ export default function Watchlist() {
                           <button
                             onClick={() => handleRemove(it)}
                             title="Remove from watchlist"
-                            className="rounded p-1.5 text-text-muted hover:bg-danger-red/10 hover:text-danger-red transition-colors"
+                            className="rounded-md p-1.5 text-text-muted hover:bg-danger-red/10 hover:text-danger-red transition-colors"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>

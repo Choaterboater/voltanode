@@ -25,7 +25,6 @@ import {
   CartesianGrid,
 } from 'recharts';
 import Layout from '@/components/Layout';
-import Badge from '@/components/Badge';
 import { useAdvisor, lookupSymbol, type IndicatorReading, type PriceTarget, type LLMCommentary, type SymbolLookupHit } from '@/hooks/useAdvisor';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { Brain } from 'lucide-react';
@@ -67,10 +66,10 @@ function verdictIcon(verdict: string) {
   return <Minus className="h-6 w-6" />;
 }
 
-function signalBadgeVariant(signal: string): 'success' | 'danger' | 'warning' | 'info' | 'cyan' {
-  if (signal === 'bullish') return 'success';
-  if (signal === 'bearish') return 'danger';
-  return 'warning';
+function signalPill(signal: string): string {
+  if (signal === 'bullish') return 'pill-success';
+  if (signal === 'bearish') return 'pill-danger';
+  return 'pill-warning';
 }
 
 function formatCurrency(v: number) {
@@ -98,14 +97,14 @@ function IndicatorCard({ reading }: { reading: IndicatorReading }) {
   return (
     <motion.div
       layout
-      className="rounded-lg border border-border-subtle bg-bg-surface p-3 cursor-pointer hover:border-border-active transition-colors"
+      className="panel panel-hover cursor-pointer p-3"
       onClick={() => setExpanded(!expanded)}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Badge variant={signalBadgeVariant(reading.signal)}>
+          <span className={signalPill(reading.signal)}>
             {reading.signal.charAt(0).toUpperCase() + reading.signal.slice(1)}
-          </Badge>
+          </span>
           <span className="text-sm font-medium text-text-primary">{reading.name}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -127,7 +126,7 @@ function IndicatorCard({ reading }: { reading: IndicatorReading }) {
             className="overflow-hidden"
           >
             <p className="mt-2 text-xs text-text-secondary">{reading.description}</p>
-            <p className="mt-1 font-mono text-xs text-text-muted">Value: {reading.value}</p>
+            <p className="mt-1 font-mono text-xs tabular-nums text-text-muted">Value: {reading.value}</p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -140,16 +139,16 @@ function PriceTargetCard({ target, currentPrice }: { target: PriceTarget; curren
   const isAbove = target.price > currentPrice;
   const pct = Math.abs((target.price - currentPrice) / currentPrice * 100);
   return (
-    <div className="flex items-center justify-between rounded-lg border border-border-subtle bg-bg-surface p-3">
+    <div className="panel flex items-center justify-between p-3">
       <div>
         <p className="text-xs font-medium text-text-primary">{target.label}</p>
         <p className="text-xs text-text-muted mt-0.5">{target.rationale}</p>
       </div>
       <div className="text-right">
-        <p className={`font-mono text-sm font-medium ${isAbove ? 'text-success-green' : 'text-danger-red'}`}>
+        <p className={`font-mono text-sm font-medium tabular-nums ${isAbove ? 'text-success-green' : 'text-danger-red'}`}>
           {formatCurrency(target.price)}
         </p>
-        <p className="text-xs text-text-muted">{isAbove ? '+' : '-'}{pct.toFixed(1)}%</p>
+        <p className="font-mono text-xs tabular-nums text-text-muted">{isAbove ? '+' : '-'}{pct.toFixed(1)}%</p>
         <div className="mt-1 h-1 w-20 rounded-full bg-bg-input overflow-hidden ml-auto">
           <div className="h-full rounded-full bg-accent-cyan" style={{ width: `${target.probability * 100}%` }} />
         </div>
@@ -174,23 +173,23 @@ function PriceChart({ chartData }: { chartData: { timestamps: string[]; close: n
   return (
     <div className="h-[320px] w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+        <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#00D4FF" stopOpacity={0.15} />
-              <stop offset="100%" stopColor="#00D4FF" stopOpacity={0} />
+              <stop offset="0%" stopColor="rgba(34,211,238,0.25)" />
+              <stop offset="100%" stopColor="rgba(34,211,238,0)" />
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#152033" strokeOpacity={0.3} vertical={false} />
+          <CartesianGrid stroke="#1C2840" strokeDasharray="3 3" vertical={false} />
           <XAxis
             dataKey="date"
-            tick={{ fill: '#5A6A7D', fontSize: 11, fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}
-            axisLine={{ stroke: '#152033' }}
+            tick={{ fontSize: 11, fill: '#6E7E96' }}
+            axisLine={false}
             tickLine={false}
-            minTickGap={30}
+            minTickGap={28}
           />
           <YAxis
-            tick={{ fill: '#5A6A7D', fontSize: 11, fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}
+            tick={{ fontSize: 11, fill: '#6E7E96' }}
             axisLine={false}
             tickLine={false}
             domain={['auto', 'auto']}
@@ -198,13 +197,13 @@ function PriceChart({ chartData }: { chartData: { timestamps: string[]; close: n
           />
           <Tooltip
             contentStyle={{
-              backgroundColor: '#0D1320',
-              border: '1px solid #152033',
-              borderRadius: '8px',
-              fontFamily: 'JetBrains Mono, ui-monospace, monospace',
-              fontSize: '12px',
-              color: '#F0F4F8',
+              backgroundColor: '#0D1424',
+              border: '1px solid #1C2840',
+              borderRadius: 12,
+              fontSize: 12,
             }}
+            labelStyle={{ color: '#A8B7CC' }}
+            itemStyle={{ color: '#F2F6FC' }}
             formatter={(value: number, name: string) => {
               const labels: Record<string, string> = {
                 close: 'Close',
@@ -218,11 +217,11 @@ function PriceChart({ chartData }: { chartData: { timestamps: string[]; close: n
               return [typeof value === 'number' ? `$${value.toFixed(4)}` : '-', labels[name] || name];
             }}
           />
-          <Area type="monotone" dataKey="close" stroke="#00D4FF" strokeWidth={2} fill="url(#priceGradient)" dot={false} />
-          <Line type="monotone" dataKey="sma20" stroke="#10B981" strokeWidth={1} dot={false} strokeDasharray="4 4" />
-          <Line type="monotone" dataKey="sma50" stroke="#A855F7" strokeWidth={1} dot={false} strokeDasharray="4 4" />
-          {chartData.bb_upper && <Line type="monotone" dataKey="bbUpper" stroke="#FF5252" strokeWidth={1} dot={false} strokeOpacity={0.5} />}
-          {chartData.bb_lower && <Line type="monotone" dataKey="bbLower" stroke="#FF5252" strokeWidth={1} dot={false} strokeOpacity={0.5} />}
+          <Area type="monotone" dataKey="close" stroke="#22D3EE" strokeWidth={2} fill="url(#priceGradient)" dot={false} />
+          <Line type="monotone" dataKey="sma20" stroke="#34D399" strokeWidth={1} dot={false} strokeDasharray="4 4" />
+          <Line type="monotone" dataKey="sma50" stroke="#A78BFA" strokeWidth={1} dot={false} strokeDasharray="4 4" />
+          {chartData.bb_upper && <Line type="monotone" dataKey="bbUpper" stroke="#F87171" strokeWidth={1} dot={false} strokeOpacity={0.5} />}
+          {chartData.bb_lower && <Line type="monotone" dataKey="bbLower" stroke="#F87171" strokeWidth={1} dot={false} strokeOpacity={0.5} />}
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -245,24 +244,24 @@ function ResearchReportCard({ report }: { report: import('@/hooks/useAdvisor').R
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.05 }}
-      className="rounded-[10px] border border-accent-cyan/30 bg-bg-surface p-5"
+      className="panel border-accent-cyan/30 p-5"
     >
       {/* Header */}
       <div className="flex items-start justify-between border-b border-border-subtle pb-3">
         <div>
-          <p className="text-xs uppercase tracking-wider text-accent-cyan">
+          <p className="stat-label text-accent-cyan">
             Research Report{report.llm_model && ` · ${report.llm_model}`}
           </p>
-          <h3 className="mt-1 text-2xl font-bold text-text-primary">
+          <h3 className="mt-1 text-2xl font-bold tracking-tight text-text-primary">
             Should I Buy or Sell {report.symbol}?
           </h3>
         </div>
         <div className="text-right">
-          <p className={`text-2xl font-bold ${verdictColor(report.overall_label)}`}>
+          <p className={`text-2xl font-bold tracking-tight ${verdictColor(report.overall_label)}`}>
             {report.overall_label.replace('_', ' ')}
           </p>
           <p className="text-xs text-text-muted">
-            {report.confidence}% confidence · {report.optimal_timeframe}
+            <span className="font-mono tabular-nums">{report.confidence}%</span> confidence · {report.optimal_timeframe}
           </p>
         </div>
       </div>
@@ -278,26 +277,26 @@ function ResearchReportCard({ report }: { report: import('@/hooks/useAdvisor').R
           return (
             <div
               key={dim.name}
-              className={`rounded-md border border-border-subtle bg-bg-input/40 p-3 ${noData ? 'opacity-60' : ''}`}
+              className={`rounded-lg border border-border-subtle bg-bg-input/40 p-3 ${noData ? 'opacity-60' : ''}`}
             >
               <div className="flex items-baseline justify-between">
-                <span className="text-xs uppercase text-text-muted">{dim.name}</span>
-                <span className="text-[10px] text-text-muted">
+                <span className="stat-label">{dim.name}</span>
+                <span className="font-mono text-2xs tabular-nums text-text-muted">
                   {noData ? 'excluded' : `${Math.round(dim.weight * 100)}% weight`}
                 </span>
               </div>
               <div className="mt-1 flex items-baseline gap-2">
                 <span
-                  className={`font-mono text-2xl font-bold ${
+                  className={`font-mono text-2xl font-semibold tabular-nums ${
                     noData ? 'text-text-muted line-through' : dimColor(dim.label)
                   }`}
                   title={noData ? 'No data — score excluded from composite' : ''}
                 >
                   {dim.score}
                 </span>
-                <span className="text-xs text-text-muted">/100</span>
+                <span className="font-mono text-xs tabular-nums text-text-muted">/100</span>
                 <span
-                  className={`ml-auto text-[10px] font-medium ${
+                  className={`ml-auto text-2xs font-semibold uppercase tracking-wide ${
                     noData ? 'text-text-muted' : dimColor(dim.label)
                   }`}
                 >
@@ -312,8 +311,8 @@ function ResearchReportCard({ report }: { report: import('@/hooks/useAdvisor').R
 
       {/* Company Overview — what they do + current catalysts */}
       {report.company_overview && (
-        <div className="mt-4 rounded-md border border-accent-cyan/20 bg-accent-cyan/5 p-3">
-          <h4 className="mb-1 text-xs uppercase tracking-wider text-accent-cyan">Company &amp; Current Catalysts</h4>
+        <div className="mt-4 rounded-lg border border-accent-cyan/20 bg-accent-cyan/5 p-3">
+          <h4 className="stat-label mb-1 text-accent-cyan">Company &amp; Current Catalysts</h4>
           <p className="text-sm text-text-primary leading-relaxed">{report.company_overview}</p>
         </div>
       )}
@@ -321,7 +320,7 @@ function ResearchReportCard({ report }: { report: import('@/hooks/useAdvisor').R
       {/* Investment Thesis */}
       {report.investment_thesis && (
         <div className="mt-4">
-          <h4 className="mb-1 text-xs uppercase tracking-wider text-text-muted">Investment Thesis</h4>
+          <h4 className="stat-label mb-1">Investment Thesis</h4>
           <p className="text-sm text-text-primary leading-relaxed">{report.investment_thesis}</p>
         </div>
       )}
@@ -329,7 +328,7 @@ function ResearchReportCard({ report }: { report: import('@/hooks/useAdvisor').R
       {/* Key drivers */}
       {report.key_drivers && report.key_drivers.length > 0 && (
         <div className="mt-3">
-          <h4 className="mb-1 text-xs uppercase tracking-wider text-text-muted">Key Drivers</h4>
+          <h4 className="stat-label mb-1">Key Drivers</h4>
           <ol className="ml-4 list-decimal space-y-1 text-sm text-text-secondary">
             {report.key_drivers.map((d, i) => <li key={i}>{d}</li>)}
           </ol>
@@ -340,14 +339,14 @@ function ResearchReportCard({ report }: { report: import('@/hooks/useAdvisor').R
       {(report.bull_case || report.bear_case) && (
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {report.bull_case && (
-            <div className="rounded-md border border-success-green/30 bg-success-green/5 p-3">
-              <p className="text-xs font-semibold text-success-green">BULL CASE</p>
+            <div className="rounded-lg border border-success-green/30 bg-success-green/5 p-3">
+              <p className="stat-label text-success-green">BULL CASE</p>
               <p className="mt-1 text-sm text-text-secondary leading-relaxed">{report.bull_case}</p>
             </div>
           )}
           {report.bear_case && (
-            <div className="rounded-md border border-danger-red/30 bg-danger-red/5 p-3">
-              <p className="text-xs font-semibold text-danger-red">BEAR CASE</p>
+            <div className="rounded-lg border border-danger-red/30 bg-danger-red/5 p-3">
+              <p className="stat-label text-danger-red">BEAR CASE</p>
               <p className="mt-1 text-sm text-text-secondary leading-relaxed">{report.bear_case}</p>
             </div>
           )}
@@ -357,10 +356,10 @@ function ResearchReportCard({ report }: { report: import('@/hooks/useAdvisor').R
       {/* Action plan per investor type */}
       {report.action_plan && Object.keys(report.action_plan).length > 0 && (
         <div className="mt-3">
-          <h4 className="mb-1 text-xs uppercase tracking-wider text-text-muted">Action Plan</h4>
+          <h4 className="stat-label mb-1">Action Plan</h4>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {Object.entries(report.action_plan).map(([who, action]) => (
-              <div key={who} className="rounded-md border border-border-subtle bg-bg-input/40 p-2 text-xs">
+              <div key={who} className="rounded-lg border border-border-subtle bg-bg-input/40 p-2 text-xs">
                 <span className="font-semibold text-text-primary capitalize">
                   {who.replace(/_/g, ' ')}:
                 </span>{' '}
@@ -373,19 +372,19 @@ function ResearchReportCard({ report }: { report: import('@/hooks/useAdvisor').R
 
       {/* Catalysts strip */}
       {(report.next_earnings_date || report.analyst_target_median) && (
-        <div className="mt-3 flex flex-wrap gap-3 rounded-md border border-border-subtle bg-bg-input/40 p-3 text-xs">
+        <div className="mt-3 flex flex-wrap gap-3 rounded-lg border border-border-subtle bg-bg-input/40 p-3 text-xs">
           {report.next_earnings_date && (
             <div>
               <span className="text-text-muted">Next earnings:</span>{' '}
-              <span className="font-mono text-text-primary">{report.next_earnings_date}</span>
+              <span className="font-mono tabular-nums text-text-primary">{report.next_earnings_date}</span>
             </div>
           )}
           {report.analyst_target_median && (
             <div>
               <span className="text-text-muted">Analyst median target:</span>{' '}
-              <span className="font-mono text-text-primary">${report.analyst_target_median.toFixed(2)}</span>
+              <span className="font-mono tabular-nums text-text-primary">${report.analyst_target_median.toFixed(2)}</span>
               {report.analyst_count && (
-                <span className="ml-1 text-text-muted">({report.analyst_count} analysts)</span>
+                <span className="ml-1 font-mono tabular-nums text-text-muted">({report.analyst_count} analysts)</span>
               )}
             </div>
           )}
@@ -400,8 +399,8 @@ function ResearchReportCard({ report }: { report: import('@/hooks/useAdvisor').R
 
       {/* Bottom line */}
       {report.bottom_line && (
-        <div className="mt-3 rounded-md border-l-2 border-accent-cyan bg-accent-cyan/5 p-3">
-          <p className="text-xs uppercase tracking-wider text-accent-cyan">Bottom Line</p>
+        <div className="mt-3 rounded-lg border-l-2 border-accent-cyan bg-accent-cyan/5 p-3">
+          <p className="stat-label text-accent-cyan">Bottom Line</p>
           <p className="mt-1 text-sm font-medium text-text-primary leading-relaxed">{report.bottom_line}</p>
         </div>
       )}
@@ -423,14 +422,14 @@ function LLMCommentaryCard({ commentary, taConfidence }: { commentary: LLMCommen
       : commentary.agreement === 'disagrees'
       ? 'bg-danger-red/10 border-danger-red/30'
       : 'bg-warning-amber/10 border-warning-amber/30';
-  const impactColor =
+  const impactPill =
     commentary.news_impact === 'high'
-      ? 'danger'
+      ? 'pill-danger'
       : commentary.news_impact === 'medium'
-      ? 'warning'
+      ? 'pill-warning'
       : commentary.news_impact === 'low'
-      ? 'info'
-      : 'neutral';
+      ? 'pill-info'
+      : 'pill-neutral';
   const delta = commentary.adjusted_confidence - taConfidence;
 
   return (
@@ -438,18 +437,18 @@ function LLMCommentaryCard({ commentary, taConfidence }: { commentary: LLMCommen
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.05 }}
-      className={`mt-4 rounded-md border p-3 ${agreementBg}`}
+      className={`mt-4 rounded-xl border p-4 ${agreementBg}`}
     >
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-2">
           <Brain className="h-4 w-4 text-accent-cyan" />
           <span className="text-sm font-semibold text-text-primary">LLM Second Opinion</span>
-          <span className="text-[10px] font-mono text-text-muted">{commentary.model}</span>
+          <span className="font-mono text-2xs text-text-muted">{commentary.model}</span>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={impactColor as 'danger' | 'warning' | 'info' | 'neutral'}>
+          <span className={impactPill}>
             news: {commentary.news_impact}
-          </Badge>
+          </span>
           <span className={`text-xs font-mono font-medium ${agreementColor}`}>
             {commentary.agreement}
           </span>
@@ -457,7 +456,7 @@ function LLMCommentaryCard({ commentary, taConfidence }: { commentary: LLMCommen
       </div>
 
       {commentary.alternative_verdict && commentary.agreement === 'disagrees' && (
-        <div className="mb-3 flex items-center gap-2 rounded-md border border-accent-cyan/40 bg-accent-cyan/5 px-3 py-2">
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-accent-cyan/40 bg-accent-cyan/5 px-3 py-2">
           <span className="text-xs text-text-muted">Recommends instead:</span>
           <span className={`text-base font-bold ${verdictColor(commentary.alternative_verdict)}`}>
             {commentary.alternative_verdict.replace('_', ' ')}
@@ -481,8 +480,8 @@ function LLMCommentaryCard({ commentary, taConfidence }: { commentary: LLMCommen
       {(commentary.risk_factors?.length || commentary.catalysts?.length) ? (
         <div className="mb-3 grid gap-3 sm:grid-cols-2 text-xs">
           {commentary.risk_factors && commentary.risk_factors.length > 0 && (
-            <div className="rounded-md border border-danger-red/30 bg-danger-red/5 p-2">
-              <div className="mb-1 font-semibold text-danger-red">Risks</div>
+            <div className="rounded-lg border border-danger-red/30 bg-danger-red/5 p-2">
+              <div className="stat-label mb-1 text-danger-red">Risks</div>
               <ul className="space-y-1 text-text-secondary">
                 {commentary.risk_factors.map((r, i) => (
                   <li key={i} className="flex gap-2">
@@ -494,8 +493,8 @@ function LLMCommentaryCard({ commentary, taConfidence }: { commentary: LLMCommen
             </div>
           )}
           {commentary.catalysts && commentary.catalysts.length > 0 && (
-            <div className="rounded-md border border-success-green/30 bg-success-green/5 p-2">
-              <div className="mb-1 font-semibold text-success-green">Catalysts</div>
+            <div className="rounded-lg border border-success-green/30 bg-success-green/5 p-2">
+              <div className="stat-label mb-1 text-success-green">Catalysts</div>
               <ul className="space-y-1 text-text-secondary">
                 {commentary.catalysts.map((c, i) => (
                   <li key={i} className="flex gap-2">
@@ -512,16 +511,16 @@ function LLMCommentaryCard({ commentary, taConfidence }: { commentary: LLMCommen
       <div className="flex items-center justify-between border-t border-border-subtle/50 pt-2 text-xs">
         <span className="text-text-muted">
           Adjusted confidence:{' '}
-          <span className="font-mono font-medium text-text-primary">
+          <span className="font-mono font-medium tabular-nums text-text-primary">
             {commentary.adjusted_confidence.toFixed(1)}%
           </span>
           {Math.abs(delta) >= 0.5 && (
-            <span className={delta > 0 ? 'text-success-green ml-1' : 'text-danger-red ml-1'}>
+            <span className={`font-mono tabular-nums ml-1 ${delta > 0 ? 'text-success-green' : 'text-danger-red'}`}>
               ({delta > 0 ? '+' : ''}{delta.toFixed(1)} vs TA)
             </span>
           )}
         </span>
-        <span className="text-text-muted font-mono">
+        <span className="text-text-muted font-mono tabular-nums">
           {commentary.article_count} article{commentary.article_count === 1 ? '' : 's'}
         </span>
       </div>
@@ -626,16 +625,16 @@ export default function Advisor() {
 
   return (
     <Layout>
-      <div className="mx-auto max-w-5xl space-y-5">
+      <div className="mx-auto max-w-5xl space-y-6">
         {/* Hero Header */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           className="text-center"
         >
-          <h1 className="text-2xl font-bold text-text-primary">AI Trading Advisor</h1>
-          <p className="mt-1 text-sm font-medium text-accent-cyan">AI-Powered Analysis</p>
-          <p className="mt-2 text-xs text-text-muted">
+          <h1 className="text-2xl font-bold tracking-tight text-text-primary">AI Trading Advisor</h1>
+          <p className="stat-label mt-1.5 text-accent-cyan">AI-Powered Analysis</p>
+          <p className="mt-2 text-sm text-text-secondary">
             Ask about any stock or crypto. Get professional-grade analysis.
           </p>
         </motion.div>
@@ -645,20 +644,20 @@ export default function Advisor() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.05 }}
-          className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+          className="panel p-5"
         >
           {/* Asset type toggle */}
           <div className="flex items-center justify-center">
-            <div className="flex items-center rounded-md bg-bg-input border border-border-subtle p-0.5">
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-input p-0.5">
               <button
                 onClick={() => setAssetType('crypto')}
-                className={`rounded px-4 py-1.5 text-xs font-medium transition-colors ${assetType === 'crypto' ? 'bg-bg-elevated text-accent-cyan' : 'text-text-secondary hover:text-text-primary'}`}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${assetType === 'crypto' ? 'bg-bg-elevated text-text-primary shadow-card' : 'text-text-muted hover:text-text-secondary'}`}
               >
                 Crypto
               </button>
               <button
                 onClick={() => setAssetType('stock')}
-                className={`rounded px-4 py-1.5 text-xs font-medium transition-colors ${assetType === 'stock' ? 'bg-bg-elevated text-accent-cyan' : 'text-text-secondary hover:text-text-primary'}`}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${assetType === 'stock' ? 'bg-bg-elevated text-text-primary shadow-card' : 'text-text-muted hover:text-text-secondary'}`}
               >
                 Stock
               </button>
@@ -666,37 +665,39 @@ export default function Advisor() {
           </div>
 
           {/* Time ranges */}
-          <div className="mt-3 flex items-center justify-center gap-1">
-            {timeRanges.map((r) => (
-              <button
-                key={r.key}
-                onClick={() => {
-                  const newRange = r.key;
-                  setTimeRange(newRange);
-                  if (symbol.trim() && !loading) {
-                    runAnalyze(
-                      symbol.trim(),
-                      assetType,
-                      rangeToDays(newRange),
-                      advanced,
-                    ).catch(() => {});
-                  }
-                }}
-                className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
-                  timeRange === r.key
-                    ? 'bg-accent-cyan/10 text-accent-cyan border border-accent-cyan/20'
-                    : 'text-text-muted hover:text-text-secondary border border-transparent'
-                }`}
-              >
-                {r.label}
-              </button>
-            ))}
+          <div className="mt-3 flex items-center justify-center">
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-input p-0.5">
+              {timeRanges.map((r) => (
+                <button
+                  key={r.key}
+                  onClick={() => {
+                    const newRange = r.key;
+                    setTimeRange(newRange);
+                    if (symbol.trim() && !loading) {
+                      runAnalyze(
+                        symbol.trim(),
+                        assetType,
+                        rangeToDays(newRange),
+                        advanced,
+                      ).catch(() => {});
+                    }
+                  }}
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                    timeRange === r.key
+                      ? 'bg-bg-elevated text-text-primary shadow-card'
+                      : 'text-text-muted hover:text-text-secondary'
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Search input with typeahead by ticker OR company name */}
           <div className="mt-4 flex items-center gap-3">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-text-muted" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
               <input
                 type="text"
                 placeholder="Search by ticker or name: AAPL, Apple, NVDA, Bitcoin..."
@@ -705,10 +706,10 @@ export default function Advisor() {
                 onFocus={() => setLookupOpen(true)}
                 onBlur={() => setTimeout(() => setLookupOpen(false), 150)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAnalyze()}
-                className="w-full rounded-md border border-border-subtle bg-bg-input py-2.5 pl-9 pr-3 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+                className="w-full rounded-lg border border-border-subtle bg-bg-input py-2 pl-9 pr-3 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               />
               {lookupOpen && lookupHits.length > 0 && (
-                <ul className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-md border border-border-subtle bg-bg-surface shadow-lg">
+                <ul className="panel absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto">
                   {lookupHits.map((hit) => (
                     <li
                       key={`${hit.asset_type}-${hit.symbol}`}
@@ -734,7 +735,7 @@ export default function Advisor() {
                         <span className="font-mono font-semibold text-accent-cyan shrink-0">{hit.symbol.toUpperCase()}</span>
                         <span className="truncate text-text-secondary">{hit.name}</span>
                       </div>
-                      <span className="shrink-0 rounded bg-bg-input px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-text-muted">
+                      <span className="pill-neutral shrink-0">
                         {hit.asset_type}
                       </span>
                     </li>
@@ -745,7 +746,7 @@ export default function Advisor() {
             <button
               onClick={handleAnalyze}
               disabled={loading}
-              className="inline-flex items-center gap-2 rounded-md bg-accent-cyan px-5 py-2.5 text-sm font-semibold text-text-inverse hover:brightness-110 transition-all disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90 disabled:opacity-50"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
               Analyze
@@ -796,12 +797,12 @@ export default function Advisor() {
 
           {/* Quick select */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-xs text-text-muted">Quick select:</span>
+            <span className="stat-label">Quick select:</span>
             {quickSelect.map((ticker) => (
               <button
                 key={ticker}
                 onClick={() => handleQuickSelect(ticker)}
-                className="rounded-full border border-border-subtle bg-bg-input px-2.5 py-0.5 text-xs font-medium text-text-secondary hover:border-accent-cyan hover:text-accent-cyan transition-colors"
+                className="rounded-full border border-border-subtle bg-bg-input px-2.5 py-0.5 font-mono text-xs font-medium text-text-secondary transition-colors hover:border-accent-cyan/30 hover:text-text-primary"
               >
                 {ticker}
               </button>
@@ -820,11 +821,11 @@ export default function Advisor() {
             className="space-y-5"
           >
             {watchItems.length > 0 && (
-              <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-5">
+              <div className="panel p-5">
                 <div className="mb-3 flex items-center gap-2">
                   <Target className="h-4 w-4 text-accent-cyan" />
                   <h3 className="text-sm font-semibold text-text-primary">Your Watchlist</h3>
-                  <span className="ml-auto text-xs text-text-muted">tap to analyze</span>
+                  <span className="ml-auto text-2xs text-text-muted">tap to analyze</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
                   {watchItems.slice(0, 12).map((it) => (
@@ -840,17 +841,17 @@ export default function Advisor() {
                           advanced,
                         ).catch(() => {});
                       }}
-                      className="group flex items-center justify-between gap-2 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-left transition-colors hover:border-accent-cyan/50"
+                      className="group flex items-center justify-between gap-2 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-left transition-colors hover:border-accent-cyan/30"
                     >
                       <div className="min-w-0">
                         <p className="font-mono text-sm font-semibold text-text-primary group-hover:text-accent-cyan">
                           {it.symbol.toUpperCase()}
                         </p>
-                        <p className="truncate text-[10px] uppercase tracking-wider text-text-muted">
+                        <p className="stat-label truncate">
                           {it.source}
                         </p>
                       </div>
-                      <span className="shrink-0 rounded bg-bg-surface px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-text-muted">
+                      <span className="pill-neutral shrink-0">
                         {it.asset_type}
                       </span>
                     </button>
@@ -866,7 +867,7 @@ export default function Advisor() {
                 { icon: <Target className="h-4 w-4 text-accent-cyan" />, title: 'Fundamental', desc: 'Valuation, earnings, analyst targets and sector context — flagged when data is missing.' },
                 { icon: <Brain className="h-4 w-4 text-accent-cyan" />, title: 'Sentiment + AI', desc: 'News-driven sentiment with an LLM second opinion that can agree, disagree, or flag risk.' },
               ].map((c) => (
-                <div key={c.title} className="rounded-[10px] border border-border-subtle bg-bg-surface p-4">
+                <div key={c.title} className="panel p-4">
                   <div className="mb-1.5 flex items-center gap-2">
                     {c.icon}
                     <span className="text-sm font-semibold text-text-primary">{c.title}</span>
@@ -880,7 +881,7 @@ export default function Advisor() {
 
         {/* Error */}
         {error && (
-          <div className="rounded-[10px] border border-danger-red/30 bg-danger-red/5 p-4 text-sm text-danger-red">
+          <div className="panel border-danger-red/30 bg-danger-red/5 p-4 text-sm text-danger-red">
             {error}
           </div>
         )}
@@ -895,11 +896,11 @@ export default function Advisor() {
               className="space-y-4"
             >
               {/* Verdict Card */}
-              <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-5">
+              <div className="panel p-5">
                 {/* Symbol header — company/coin name and big price up top */}
                 <div className="mb-4 flex items-end justify-between border-b border-border-subtle pb-3">
                   <div>
-                    <p className="text-xs uppercase tracking-wider text-text-muted">
+                    <p className="stat-label">
                       {result.symbol.toUpperCase()}
                       {result.exchange && (
                         <span className="ml-2 text-text-muted/70">· {result.exchange}</span>
@@ -913,8 +914,8 @@ export default function Advisor() {
                     </h3>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs text-text-muted">Last price</p>
-                    <p className="font-mono text-3xl font-bold text-text-primary tabular-nums">
+                    <p className="stat-label">Last price</p>
+                    <p className="font-mono text-[26px] font-semibold leading-8 tabular-nums tracking-tight text-text-primary">
                       {formatCurrency(result.current_price)}
                     </p>
                   </div>
@@ -926,7 +927,7 @@ export default function Advisor() {
                       {verdictIcon(result.verdict)}
                     </div>
                     <div>
-                      <h2 className={`text-2xl font-bold ${verdictColor(result.verdict)}`}>
+                      <h2 className={`text-2xl font-bold tracking-tight ${verdictColor(result.verdict)}`}>
                         {result.verdict.replace('_', ' ')}
                       </h2>
                       <p className="text-xs text-text-muted">
@@ -936,24 +937,24 @@ export default function Advisor() {
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="text-center">
-                      <p className="text-xs text-text-muted">Confidence</p>
-                      <p className="font-mono text-lg font-semibold text-text-primary">{result.confidence.toFixed(0)}%</p>
+                      <p className="stat-label">Confidence</p>
+                      <p className="font-mono text-lg font-semibold tabular-nums text-text-primary">{result.confidence.toFixed(0)}%</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-xs text-text-muted">Risk</p>
-                      <Badge variant={result.risk_level === 'low' ? 'success' : result.risk_level === 'moderate' ? 'warning' : 'danger'}>
+                      <p className="stat-label">Risk</p>
+                      <span className={result.risk_level === 'low' ? 'pill-success' : result.risk_level === 'moderate' ? 'pill-warning' : 'pill-danger'}>
                         {result.risk_level}
-                      </Badge>
+                      </span>
                     </div>
                     <div className="text-center">
-                      <p className="text-xs text-text-muted">Horizon</p>
+                      <p className="stat-label">Horizon</p>
                       <p className="text-sm font-medium text-text-primary">{timeHorizonLabel(result.time_horizon)}</p>
                     </div>
                   </div>
                 </div>
 
                 {/* Summary */}
-                <div className="mt-4 rounded-md bg-bg-input p-3">
+                <div className="mt-4 rounded-lg bg-bg-input p-3">
                   <p className="text-sm leading-relaxed text-text-secondary">{result.summary}</p>
                 </div>
 
@@ -965,7 +966,7 @@ export default function Advisor() {
 
               {/* Multi-Dimensional Research Report */}
               {researchLoading && !research && (
-                <div className="rounded-[10px] border border-accent-cyan/30 bg-bg-surface p-5">
+                <div className="panel border-accent-cyan/30 p-5">
                   <div className="flex items-center gap-3 text-sm text-text-muted">
                     <Loader2 className="h-4 w-4 animate-spin text-accent-cyan" />
                     Generating multi-dimensional research report…
@@ -980,7 +981,7 @@ export default function Advisor() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: 0.1 }}
-                  className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+                  className="panel p-5"
                 >
                   <h3 className="text-sm font-semibold text-text-primary mb-3">Price Chart</h3>
                   <PriceChart
@@ -1005,12 +1006,12 @@ export default function Advisor() {
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.2 }}
-                  className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+                  className="panel p-5"
                 >
                   <div className="mb-3 flex items-center gap-2">
                     <Activity className="h-4 w-4 text-accent-cyan" />
                     <h3 className="text-sm font-semibold text-text-primary">Technical Indicators</h3>
-                    <span className="ml-auto text-xs text-text-muted">{result.indicators.length} signals</span>
+                    <span className="ml-auto font-mono text-2xs tabular-nums text-text-muted">{result.indicators.length} signals</span>
                   </div>
                   {/* Grow naturally so the indicator card matches the height
                       of the Price-Targets + Risk-Sizing column on the right
@@ -1029,14 +1030,14 @@ export default function Advisor() {
                     initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.25 }}
-                    className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+                    className="panel p-5"
                   >
                     <div className="mb-3 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <Target className="h-4 w-4 text-accent-cyan" />
                         <h3 className="text-sm font-semibold text-text-primary">Price Targets</h3>
                       </div>
-                      <span className="text-[10px] uppercase tracking-wider text-text-muted">
+                      <span className="stat-label">
                         {result.price_targets.length} levels
                       </span>
                     </div>
@@ -1052,30 +1053,30 @@ export default function Advisor() {
                     initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.3 }}
-                    className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+                    className="panel p-5"
                   >
                     <div className="mb-3 flex items-center gap-2">
                       <Shield className="h-4 w-4 text-accent-cyan" />
                       <h3 className="text-sm font-semibold text-text-primary">Risk & Position Sizing</h3>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
-                      <div className="rounded-md bg-bg-input p-3">
-                        <p className="text-xs text-text-muted">Position Size</p>
-                        <p className="mt-1 font-mono text-sm text-text-primary">{(result.suggested_position_size * 100).toFixed(1)}%</p>
+                      <div className="rounded-lg bg-bg-input p-3">
+                        <p className="stat-label">Position Size</p>
+                        <p className="mt-1 font-mono text-sm tabular-nums text-text-primary">{(result.suggested_position_size * 100).toFixed(1)}%</p>
                       </div>
-                      <div className="rounded-md bg-bg-input p-3">
-                        <p className="text-xs text-text-muted">Entry Zone</p>
-                        <p className="mt-1 font-mono text-sm text-text-primary">
+                      <div className="rounded-lg bg-bg-input p-3">
+                        <p className="stat-label">Entry Zone</p>
+                        <p className="mt-1 font-mono text-sm tabular-nums text-text-primary">
                           {formatCurrency(result.entry_zone_low)} – {formatCurrency(result.entry_zone_high)}
                         </p>
                       </div>
-                      <div className="rounded-md bg-bg-input p-3">
-                        <p className="text-xs text-text-muted">Stop Loss</p>
-                        <p className="mt-1 font-mono text-sm text-danger-red">{formatCurrency(result.stop_loss)}</p>
+                      <div className="rounded-lg bg-bg-input p-3">
+                        <p className="stat-label">Stop Loss</p>
+                        <p className="mt-1 font-mono text-sm tabular-nums text-danger-red">{formatCurrency(result.stop_loss)}</p>
                       </div>
-                      <div className="rounded-md bg-bg-input p-3">
-                        <p className="text-xs text-text-muted">Take Profit</p>
-                        <p className="mt-1 font-mono text-sm text-success-green">{formatCurrency(result.take_profit)}</p>
+                      <div className="rounded-lg bg-bg-input p-3">
+                        <p className="stat-label">Take Profit</p>
+                        <p className="mt-1 font-mono text-sm tabular-nums text-success-green">{formatCurrency(result.take_profit)}</p>
                       </div>
                     </div>
                   </motion.div>

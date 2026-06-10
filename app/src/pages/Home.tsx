@@ -41,7 +41,6 @@ import Layout from '@/components/Layout';
 import IdleStateBanner from '@/components/IdleStateBanner';
 import MetricCard from '@/components/MetricCard';
 import Badge from '@/components/Badge';
-import StatusDot from '@/components/StatusDot';
 import DataTable from '@/components/DataTable';
 import type { Trade } from '@/types';
 
@@ -87,8 +86,8 @@ function DonutChart({ percentage }: { percentage: number }) {
             dataKey="value"
             stroke="none"
           >
-            <Cell fill="#06B6D4" />
-            <Cell fill="#1E293B" />
+            <Cell fill="#22D3EE" />
+            <Cell fill="#1C2840" />
           </Pie>
         </PieChart>
       </ResponsiveContainer>
@@ -115,11 +114,11 @@ function SignalTile({
     <button
       onClick={onClick}
       type="button"
-      className="flex flex-col rounded-lg border border-border-subtle bg-bg-surface px-3 py-2 text-left transition-colors hover:border-accent-cyan/40"
+      className="panel panel-hover flex flex-col px-4 py-3 text-left"
     >
-      <span className="text-[10px] uppercase tracking-wider text-text-muted">{label}</span>
+      <span className="stat-label">{label}</span>
       <span className={`mt-0.5 font-mono text-base font-semibold tabular-nums ${toneClass}`}>{value}</span>
-      {sub && <span className="text-[10px] text-text-muted">{sub}</span>}
+      {sub && <span className="text-2xs text-text-muted">{sub}</span>}
     </button>
   );
 }
@@ -127,7 +126,7 @@ function SignalTile({
 function SignalsStrip({ signals }: { signals: SignalsSnapshot | null }) {
   if (!signals) {
     return (
-      <div className="rounded-[10px] border border-border-subtle bg-bg-surface px-4 py-2 text-xs text-text-muted">
+      <div className="panel px-4 py-3 text-xs text-text-muted">
         Loading market signals…
       </div>
     );
@@ -277,15 +276,15 @@ export default function Home() {
   const topBarRight = (
     <>
       {/* Time range selector */}
-      <div className="hidden items-center rounded-md bg-bg-surface border border-border-subtle p-0.5 md:flex">
+      <div className="hidden items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-input p-0.5 md:inline-flex">
         {timeRanges.map((range) => (
           <button
             key={range}
             onClick={() => setSelectedRange(range)}
-            className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
               selectedRange === range
-                ? 'bg-bg-elevated text-accent-cyan'
-                : 'text-text-secondary hover:text-text-primary'
+                ? 'bg-bg-elevated text-text-primary shadow-card'
+                : 'text-text-muted hover:text-text-secondary'
             }`}
           >
             {range}
@@ -300,7 +299,7 @@ export default function Home() {
         )}
       </button>
       {/* Account switcher */}
-      <button className="flex items-center gap-2 rounded-md border border-border-subtle bg-bg-surface px-3 py-1.5 text-xs text-text-primary hover:bg-bg-elevated transition-colors">
+      <button className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-elevated/60 px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:border-accent-cyan/30 hover:text-text-primary">
         <span>Paper Account</span>
         <ChevronDown className="h-3.5 w-3.5 text-text-muted" />
       </button>
@@ -330,9 +329,9 @@ export default function Home() {
       key: 'side',
       header: 'Side',
       render: (row: Trade) => (
-        <Badge variant={row.side === 'long' ? 'success' : 'danger'}>
+        <span className={row.side === 'long' ? 'pill-success' : 'pill-danger'}>
           {row.side === 'long' ? 'Long' : 'Short'}
-        </Badge>
+        </span>
       ),
     },
     {
@@ -379,7 +378,7 @@ export default function Home() {
         const sid = String(row.strategy ?? '');
         const short = sid.split('_').slice(0, -1).join('_') || sid || 'Manual';
         return (
-          <span className="font-mono text-[11px] text-text-secondary truncate max-w-[140px] inline-block" title={sid}>
+          <span className="inline-block max-w-[140px] truncate font-mono text-2xs text-text-secondary" title={sid}>
             {short}
           </span>
         );
@@ -387,11 +386,19 @@ export default function Home() {
     },
   ];
 
-  const alertIconMap: Record<string, React.ReactNode> = {
-    Play: <PlayCircle className="h-4 w-4 text-success-green" />,
-    Target: <Target className="h-4 w-4 text-accent-cyan" />,
-    AlertTriangle: <AlertTriangle className="h-4 w-4 text-warning-amber" />,
-    CheckCircle: <CheckCircle className="h-4 w-4 text-success-green" />,
+  const alertIconComponents: Record<string, typeof PlayCircle> = {
+    Play: PlayCircle,
+    Target: Target,
+    AlertTriangle: AlertTriangle,
+    CheckCircle: CheckCircle,
+  };
+
+  // Icon tint follows severity so the icon and the left border always agree.
+  const alertSeverityColor: Record<string, string> = {
+    success: 'text-success-green',
+    info: 'text-accent-cyan',
+    warning: 'text-warning-amber',
+    error: 'text-danger-red',
   };
 
   const alertBorderMap: Record<string, string> = {
@@ -433,7 +440,7 @@ export default function Home() {
             icon={<Wallet className="h-5 w-5" />}
             delay={0}
           >
-            {balanceSpark.length > 0 && <MiniSparkline data={balanceSpark} color="#10B981" />}
+            {balanceSpark.length > 0 && <MiniSparkline data={balanceSpark} color="#34D399" />}
           </MetricCard>
 
           <MetricCard
@@ -444,7 +451,7 @@ export default function Home() {
             icon={<TrendingUp className="h-5 w-5 text-success-green" />}
             delay={0.08}
           >
-            {pnlSpark.length > 0 && <MiniSparkline data={pnlSpark} color="#10B981" />}
+            {pnlSpark.length > 0 && <MiniSparkline data={pnlSpark} color="#34D399" />}
           </MetricCard>
 
           <MetricCard
@@ -464,7 +471,7 @@ export default function Home() {
                     style={{ width: totalPos > 0 ? `${(longCount / totalPos) * 100}%` : '0%' }}
                   />
                 </div>
-                <span className="text-xs font-mono text-text-secondary w-8">{totalPos > 0 ? Math.round((longCount / totalPos) * 100) : 0}%</span>
+                <span className="w-8 font-mono text-xs tabular-nums text-text-secondary">{totalPos > 0 ? Math.round((longCount / totalPos) * 100) : 0}%</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-text-muted w-12">Shorts</span>
@@ -474,7 +481,7 @@ export default function Home() {
                     style={{ width: totalPos > 0 ? `${(shortCount / totalPos) * 100}%` : '0%' }}
                   />
                 </div>
-                <span className="text-xs font-mono text-text-secondary w-8">{totalPos > 0 ? Math.round((shortCount / totalPos) * 100) : 0}%</span>
+                <span className="w-8 font-mono text-xs tabular-nums text-text-secondary">{totalPos > 0 ? Math.round((shortCount / totalPos) * 100) : 0}%</span>
               </div>
             </div>
           </MetricCard>
@@ -500,10 +507,7 @@ export default function Home() {
                 <span>No winners in the<br/>last {perfMetrics.totalTrades} closed trades.</span>
               </div>
             ) : (
-              <div className="flex items-center gap-3">
-                <DonutChart percentage={perfMetrics.winRate} />
-                <span className="text-xs text-text-muted">Win Rate</span>
-              </div>
+              <DonutChart percentage={perfMetrics.winRate} />
             )}
           </MetricCard>
         </div>
@@ -519,36 +523,37 @@ export default function Home() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.4, delay: 0.3 }}
-            className="rounded-[10px] border border-border-subtle bg-bg-surface p-5 lg:col-span-2"
+            className="panel p-5 lg:col-span-2"
           >
             <div className="mb-4">
-              <h2 className="text-base font-semibold text-text-primary">Portfolio Equity</h2>
+              <h2 className="text-sm font-semibold text-text-primary">Portfolio Equity</h2>
               <p className="text-xs text-text-muted">Paper account performance over time</p>
             </div>
             {equityCurve.length === 0 ? (
-              <div className="flex h-[240px] xl:h-[280px] flex-col items-center justify-center gap-2 text-center text-text-muted">
+              <div className="flex h-[260px] xl:h-[300px] flex-col items-center justify-center gap-2 text-center text-text-muted">
                 <p className="text-sm">No equity history yet</p>
                 <p className="text-xs">Snapshots accumulate once the engine has been running for a few minutes.</p>
               </div>
             ) : (
-            <div className="h-[240px] xl:h-[280px]">
+            <div className="h-[260px] xl:h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={equityCurve} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                <AreaChart data={equityCurve} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#06B6D4" stopOpacity={0.15} />
-                      <stop offset="100%" stopColor="#06B6D4" stopOpacity={0} />
+                      <stop offset="0%" stopColor="#22D3EE" stopOpacity={0.25} />
+                      <stop offset="100%" stopColor="#22D3EE" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" strokeOpacity={0.3} vertical={false} />
+                  <CartesianGrid stroke="#1C2840" strokeDasharray="3 3" vertical={false} />
                   <XAxis
                     dataKey="date"
-                    tick={{ fill: '#64748B', fontSize: 12, fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}
-                    axisLine={{ stroke: '#1E293B' }}
+                    tick={{ fontSize: 11, fill: '#6E7E96' }}
+                    axisLine={false}
                     tickLine={false}
+                    minTickGap={28}
                   />
                   <YAxis
-                    tick={{ fill: '#64748B', fontSize: 12, fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}
+                    tick={{ fontSize: 11, fill: '#6E7E96' }}
                     axisLine={false}
                     tickLine={false}
                     tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
@@ -556,19 +561,19 @@ export default function Home() {
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: '#1A2235',
-                      border: '1px solid #1E293B',
-                      borderRadius: '8px',
-                      fontFamily: 'JetBrains Mono, ui-monospace, monospace',
-                      fontSize: '12px',
-                      color: '#F8FAFC',
+                      backgroundColor: '#0D1424',
+                      border: '1px solid #1C2840',
+                      borderRadius: 12,
+                      fontSize: 12,
                     }}
+                    labelStyle={{ color: '#A8B7CC' }}
+                    itemStyle={{ color: '#F2F6FC' }}
                     formatter={(value: number) => [formatCurrency(value), 'Equity']}
                   />
                   <Area
                     type="monotone"
                     dataKey="equity"
-                    stroke="#06B6D4"
+                    stroke="#22D3EE"
                     strokeWidth={2}
                     fill="url(#equityGradient)"
                     animationDuration={1200}
@@ -586,45 +591,66 @@ export default function Home() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.4, delay: 0.4 }}
-              className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+              className="panel p-5"
             >
               <h3 className="text-sm font-semibold text-text-primary">Allocation</h3>
               {allocList.length === 0 ? (
                 <p className="mt-3 text-xs text-text-muted">No positions yet.</p>
-              ) : (
-              <div className="mt-3 flex items-center gap-4">
-                <div className="h-[140px] w-[140px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={allocList}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={40}
-                        outerRadius={65}
-                        dataKey="value"
-                        stroke="none"
-                        animationBegin={0}
-                        animationDuration={800}
-                      >
-                        {allocList.map((entry) => (
-                          <Cell key={entry.name} fill={entry.color} />
-                        ))}
-                      </Pie>
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="grid flex-1 grid-cols-2 gap-x-3 gap-y-1.5 sm:grid-cols-3">
-                  {allocList.map((asset) => (
-                    <div key={asset.name} className="flex items-center gap-1.5">
-                      <div className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: asset.color }} />
-                      <span className="text-xs text-text-secondary truncate">{asset.name}</span>
-                      <span className="ml-auto text-xs font-mono text-text-primary">{asset.value}%</span>
+              ) : (() => {
+                const sorted = [...allocList].sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+                const top = sorted.slice(0, 8);
+                const rest = sorted.slice(8);
+                const otherPct = rest.reduce((sum, a) => sum + Math.abs(a.value), 0);
+                return (
+                  <div className="mt-4 space-y-4">
+                    {/* Stacked allocation bar — top 8 holdings + Other */}
+                    <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-bg-input">
+                      {top.map((asset) => (
+                        <div
+                          key={asset.name}
+                          title={`${asset.name} ${asset.value}%`}
+                          style={{
+                            width: `${Math.abs(asset.value)}%`,
+                            minWidth: '0.5%',
+                            backgroundColor: asset.color,
+                          }}
+                        />
+                      ))}
+                      {otherPct > 0 && (
+                        <div
+                          title={`Other ${otherPct.toFixed(1)}%`}
+                          className="bg-text-muted/40"
+                          style={{ width: `${otherPct}%`, minWidth: '0.5%' }}
+                        />
+                      )}
                     </div>
-                  ))}
-                </div>
-              </div>
-              )}
+                    {/* Legend — top 8 only */}
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                      {top.map((asset) => (
+                        <div key={asset.name} className="flex items-center gap-2">
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ backgroundColor: asset.color }}
+                          />
+                          <span
+                            className={`truncate text-xs font-medium ${
+                              asset.name === 'USD' ? 'text-text-muted' : 'text-text-secondary'
+                            }`}
+                          >
+                            {asset.name}
+                          </span>
+                          <span className="ml-auto font-mono text-xs tabular-nums text-text-primary">
+                            {asset.value}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {rest.length > 0 && (
+                      <p className="text-2xs text-text-muted">+{rest.length} more positions</p>
+                    )}
+                  </div>
+                );
+              })()}
             </motion.div>
 
             {/* Key Performance Stats */}
@@ -632,29 +658,29 @@ export default function Home() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.4, delay: 0.5 }}
-              className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+              className="panel p-5"
             >
-              <h3 className="text-sm font-semibold text-text-primary mb-3">Key Performance Stats</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="border-b border-border-subtle pb-2">
-                  <p className="text-xs text-text-muted">Sharpe Ratio</p>
-                  <p className="font-mono text-sm text-text-primary">{fmtMetric(perfMetrics.sharpeRatio)}</p>
+              <h3 className="mb-3 text-sm font-semibold text-text-primary">Key Performance Stats</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="border-b border-border-subtle/60 pb-2">
+                  <p className="stat-label">Sharpe Ratio</p>
+                  <p className="mt-1 font-mono text-lg tabular-nums text-text-primary">{fmtMetric(perfMetrics.sharpeRatio)}</p>
                 </div>
-                <div className="border-b border-border-subtle pb-2">
-                  <p className="text-xs text-text-muted">Max Drawdown</p>
-                  <p className="font-mono text-sm text-danger-red">{fmtMetric(perfMetrics.maxDrawdownPercent, 1, '%')}</p>
+                <div className="border-b border-border-subtle/60 pb-2">
+                  <p className="stat-label">Max Drawdown</p>
+                  <p className="mt-1 font-mono text-lg tabular-nums text-danger-red">{fmtMetric(perfMetrics.maxDrawdownPercent, 1, '%')}</p>
                 </div>
-                <div className="border-b border-border-subtle pb-2">
-                  <p className="text-xs text-text-muted">Profit Factor</p>
-                  <p className="font-mono text-sm text-success-green">{fmtMetric(perfMetrics.profitFactor)}</p>
+                <div className="border-b border-border-subtle/60 pb-2">
+                  <p className="stat-label">Profit Factor</p>
+                  <p className="mt-1 font-mono text-lg tabular-nums text-success-green">{fmtMetric(perfMetrics.profitFactor)}</p>
                 </div>
                 <div className="border-b-0 pb-0">
-                  <p className="text-xs text-text-muted">Total Trades</p>
-                  <p className="font-mono text-sm text-text-primary">{perfMetrics.totalTrades}</p>
+                  <p className="stat-label">Total Trades</p>
+                  <p className="mt-1 font-mono text-lg tabular-nums text-text-primary">{perfMetrics.totalTrades}</p>
                 </div>
               </div>
               {perfMetrics.totalTrades === 0 && (
-                <p className="mt-2 text-[11px] text-text-muted">Stats fill in after the first closed trades.</p>
+                <p className="mt-2 text-2xs text-text-muted">Stats fill in after the first closed trades.</p>
               )}
             </motion.div>
           </div>
@@ -668,7 +694,7 @@ export default function Home() {
         >
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <h2 className="text-lg font-semibold text-text-primary">Active Bots</h2>
+              <h2 className="text-sm font-semibold text-text-primary">Active Bots</h2>
               <Badge variant={runningCount > 0 ? 'success' : 'neutral'}>
                 {runningCount} running
               </Badge>
@@ -676,13 +702,13 @@ export default function Home() {
             <div className="flex items-center gap-3">
               <button
                 onClick={() => navigate('/bots')}
-                className="text-sm text-accent-cyan hover:underline"
+                className="text-xs font-medium text-accent-cyan hover:underline"
               >
                 View All
               </button>
               <button
                 onClick={() => navigate('/bots')}
-                className="flex items-center gap-1.5 rounded-md bg-accent-cyan px-3 py-1.5 text-xs font-semibold text-text-inverse hover:brightness-110 transition-all"
+                className="flex items-center gap-1.5 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90"
               >
                 <Plus className="h-3.5 w-3.5" />
                 New Bot
@@ -691,7 +717,7 @@ export default function Home() {
           </div>
 
           {strategies.length === 0 ? (
-            <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-8 text-center text-sm text-text-muted">
+            <div className="panel p-8 text-center text-sm text-text-muted">
               No bots yet.{' '}
               <button
                 onClick={() => navigate('/bots')}
@@ -753,33 +779,26 @@ export default function Home() {
                       delay: 0.6 + index * 0.1,
                       ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
                     }}
-                    className="rounded-[10px] border border-border-subtle bg-bg-surface p-4 transition-all hover:-translate-y-0.5 hover:border-accent-cyan/20"
+                    className="panel panel-hover p-4"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <Badge variant="cyan">{bot.strategy_type}</Badge>
+                        <span className="pill-info">{bot.strategy_type}</span>
                         <p
-                          className="mt-2 font-mono text-xs text-text-primary truncate"
+                          className="mt-2 truncate font-mono text-sm font-semibold text-text-primary"
                           title={symList.join(', ')}
                         >
                           {pairDisplay}
                         </p>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <StatusDot status={status} />
-                        <span
-                          className={`text-xs ${
-                            status === 'running' ? 'text-success-green' : 'text-warning-amber'
-                          }`}
-                        >
-                          {status === 'running' ? 'Running' : 'Paused'}
-                        </span>
-                      </div>
+                      <span className={status === 'running' ? 'pill-success' : 'pill-neutral'}>
+                        {status === 'running' ? 'Running' : 'Paused'}
+                      </span>
                     </div>
 
                     <div className="mt-3 grid grid-cols-3 gap-2">
                       <div className="min-w-0">
-                        <p className="text-[10px] uppercase tracking-wider text-text-muted">P&amp;L</p>
+                        <p className="stat-label">P&amp;L</p>
                         <p
                           className={`truncate font-mono text-sm font-medium tabular-nums ${
                             pnl >= 0 ? 'text-success-green' : 'text-danger-red'
@@ -790,11 +809,11 @@ export default function Home() {
                         </p>
                       </div>
                       <div className="min-w-0">
-                        <p className="text-[10px] uppercase tracking-wider text-text-muted">Trades</p>
+                        <p className="stat-label">Trades</p>
                         <p className="font-mono text-sm tabular-nums text-text-primary">{tradeCount}</p>
                       </div>
                       <div className="min-w-0">
-                        <p className="text-[10px] uppercase tracking-wider text-text-muted">Win</p>
+                        <p className="stat-label">Win</p>
                         <p className="font-mono text-sm tabular-nums text-text-primary">
                           {winRate != null ? `${winRate.toFixed(0)}%` : '—'}
                         </p>
@@ -834,7 +853,7 @@ export default function Home() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.4, delay: 0.7 }}
-          className="overflow-hidden rounded-[10px] border border-border-subtle bg-bg-surface"
+          className="panel overflow-hidden"
         >
           <div className="flex h-12 items-center">
             <div className="animate-marquee flex items-center whitespace-nowrap hover:[animation-play-state:paused]">
@@ -843,8 +862,8 @@ export default function Home() {
                   key={`${ticker.symbol}-${i}`}
                   className="flex items-center gap-2 px-4"
                 >
-                  <span className="text-xs font-medium text-text-muted">{ticker.symbol}</span>
-                  <span className="font-mono text-xs text-text-primary">
+                  <span className="font-mono text-xs font-medium text-text-muted">{ticker.symbol}</span>
+                  <span className="font-mono text-xs tabular-nums text-text-primary">
                     ${ticker.price.toLocaleString('en-US', { minimumFractionDigits: ticker.price < 1 ? 4 : 2, maximumFractionDigits: ticker.price < 1 ? 4 : 2 })}
                   </span>
                   <span
@@ -855,7 +874,7 @@ export default function Home() {
                     {ticker.change24hPercent >= 0 ? '+' : ''}
                     {ticker.change24hPercent.toFixed(2)}%
                   </span>
-                  <div className="mx-2 h-4 w-px bg-border-subtle" />
+                  <div className="mx-2 h-4 w-px bg-text-muted/40" />
                 </div>
               ))}
             </div>
@@ -871,10 +890,10 @@ export default function Home() {
             transition={{ duration: 0.4, delay: 0.8 }}
           >
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-base font-semibold text-text-primary">Recent Trades</h2>
+              <h2 className="text-sm font-semibold text-text-primary">Recent Trades</h2>
               <button
                 onClick={() => navigate('/analytics')}
-                className="text-sm text-accent-cyan hover:underline"
+                className="text-xs font-medium text-accent-cyan hover:underline"
               >
                 View All
               </button>
@@ -893,14 +912,14 @@ export default function Home() {
             transition={{ duration: 0.4, delay: 0.85 }}
           >
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-base font-semibold text-text-primary">System Alerts</h2>
-              <button className="text-xs text-text-secondary hover:text-text-primary transition-colors">
+              <h2 className="text-sm font-semibold text-text-primary">System Alerts</h2>
+              <button className="text-xs font-medium text-text-secondary hover:text-text-primary transition-colors">
                 Clear All
               </button>
             </div>
             <div className="space-y-2">
               {alerts.length === 0 && (
-                <div className="rounded-lg border border-border-subtle bg-bg-surface p-3 text-xs text-text-muted">
+                <div className="panel p-4 text-xs text-text-muted">
                   No recent activity.
                 </div>
               )}
@@ -914,9 +933,14 @@ export default function Home() {
                     delay: 0.9 + index * 0.08,
                     ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
                   }}
-                  className={`flex items-start gap-3 rounded-lg border border-border-subtle bg-bg-surface p-3 border-l-[3px] ${alertBorderMap[alert.severity]}`}
+                  className={`panel flex items-start gap-3 border-l-[3px] p-4 ${alertBorderMap[alert.severity]}`}
                 >
-                  {alertIconMap[alert.icon]}
+                  {(() => {
+                    const Icon = alertIconComponents[alert.icon];
+                    return Icon ? (
+                      <Icon className={`h-4 w-4 shrink-0 ${alertSeverityColor[alert.severity] ?? 'text-text-muted'}`} />
+                    ) : null;
+                  })()}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-text-primary truncate">{alert.message}</p>
                     <p className="mt-0.5 text-xs text-text-muted">{alert.timestamp}</p>

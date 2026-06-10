@@ -36,10 +36,10 @@ type SortKey =
 type SortDir = 'asc' | 'desc';
 
 const TIER_STYLES: Record<string, string> = {
-  ADD: 'bg-success-green/15 text-success-green border-success-green/40',
-  WATCHLIST: 'bg-accent-cyan/15 text-accent-cyan border-accent-cyan/40',
-  BASE: 'bg-bg-elevated text-text-muted border-border-subtle',
-  DISMISS: 'bg-bg-elevated/50 text-text-muted/60 border-border-subtle',
+  ADD: 'pill-success',
+  WATCHLIST: 'pill-info',
+  BASE: 'pill-neutral',
+  DISMISS: 'pill-neutral opacity-60',
 };
 
 function fmtMoney(n: number | null | undefined): string {
@@ -128,7 +128,7 @@ function QuarterlyEarningsChart({
 }: QuarterlyEarningsChartProps) {
   if (!quarters || quarters.length === 0) {
     return (
-      <div className="text-text-muted text-[10px]">
+      <div className="text-2xs text-text-muted">
         No quarterly EPS history available.
       </div>
     );
@@ -152,10 +152,9 @@ function QuarterlyEarningsChart({
         y1={zeroY}
         x2={width - padding}
         y2={zeroY}
-        stroke="rgb(100,116,139)"
-        strokeOpacity={0.3}
+        stroke="#1C2840"
         strokeWidth={1}
-        strokeDasharray="2,2"
+        strokeDasharray="3 3"
       />
       {quarters.map((q, i) => {
         const v = q.eps ?? 0;
@@ -166,7 +165,7 @@ function QuarterlyEarningsChart({
         const yBot =
           v >= 0 ? zeroY : height - ((v - min) / range) * height;
         const barH = Math.max(1, yBot - yTop);
-        const fill = v >= 0 ? 'rgb(74,222,128)' : 'rgb(248,113,113)';
+        const fill = v >= 0 ? '#34D399' : '#F87171';
         const estY =
           est != null ? height - ((est - min) / range) * height : null;
         return (
@@ -190,7 +189,7 @@ function QuarterlyEarningsChart({
                 y1={estY}
                 x2={x + barW}
                 y2={estY}
-                stroke="rgb(148,163,184)"
+                stroke="#A8B7CC"
                 strokeWidth={1.4}
                 strokeOpacity={0.8}
               />
@@ -199,8 +198,8 @@ function QuarterlyEarningsChart({
               x={x + barW / 2}
               y={height + 11}
               textAnchor="middle"
-              fontSize={9}
-              fill="rgb(148,163,184)"
+              fontSize={10}
+              fill="#6E7E96"
             >
               {q.period_end.slice(2, 7).replace('-', '/')}
             </text>
@@ -213,7 +212,7 @@ function QuarterlyEarningsChart({
 
 function Sparkline({ values, color, width = 64, height = 20 }: SparklineProps) {
   if (!values || values.length < 2) {
-    return <span className="text-text-muted/50 text-[10px]">—</span>;
+    return <span className="text-2xs text-text-muted/50">—</span>;
   }
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -397,8 +396,8 @@ export default function Squeeze() {
           transition={{ duration: 0.3 }}
         >
           <div className="flex items-center gap-3">
-            <Flame className="h-7 w-7 text-accent-cyan" />
-            <h1 className="text-3xl font-bold tracking-tight text-text-primary">
+            <Flame className="h-6 w-6 text-accent-cyan" />
+            <h1 className="text-2xl font-bold tracking-tight text-text-primary">
               Squeeze Screener
             </h1>
           </div>
@@ -417,23 +416,23 @@ export default function Squeeze() {
         </motion.div>
 
         {/* Controls */}
-        <div className="rounded-lg border border-border-subtle bg-bg-card p-4 space-y-3">
+        <div className="panel p-5 space-y-4">
           <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={handleRun}
               disabled={loading}
-              className="inline-flex items-center gap-2 rounded-md bg-accent-cyan px-4 py-2 text-sm font-semibold text-accent-foreground hover:bg-accent-cyan/90 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+              className="inline-flex items-center gap-2 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Play className="h-4 w-4" />
+                <Play className="h-3.5 w-3.5" />
               )}
               {loading ? 'Scanning…' : 'Run Discovery'}
             </button>
 
             <div className="flex items-center gap-2">
-              <label className="text-xs uppercase tracking-wider text-text-muted">
+              <label className="stat-label">
                 Days Back
               </label>
               <input
@@ -444,12 +443,12 @@ export default function Squeeze() {
                 onChange={(e) =>
                   setDaysBack(Math.max(1, Number(e.target.value) || 7))
                 }
-                className="w-16 rounded-md border border-border-subtle bg-bg-elevated px-2 py-1 text-sm font-mono text-text-primary focus:border-accent-cyan focus:outline-none"
+                className="w-20 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm font-mono tabular-nums text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               />
             </div>
 
             <div className="flex items-center gap-2">
-              <label className="text-xs uppercase tracking-wider text-text-muted">
+              <label className="stat-label">
                 Max $
               </label>
               <input
@@ -462,11 +461,11 @@ export default function Squeeze() {
                   setMaxPrice(v <= 0 ? null : v);
                 }}
                 placeholder="0 = no cap"
-                className="w-20 rounded-md border border-border-subtle bg-bg-elevated px-2 py-1 text-sm font-mono text-text-primary focus:border-accent-cyan focus:outline-none"
+                className="w-24 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm font-mono tabular-nums text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
                 title="Price ceiling. 0 = no cap (CVNA-shape rallies). Defaults to $20 since most squeeze setups are sub-$20."
               />
               {maxPrice == null && (
-                <span className="text-[10px] uppercase tracking-wider text-accent-cyan">
+                <span className="pill-info">
                   no cap
                 </span>
               )}
@@ -483,7 +482,7 @@ export default function Squeeze() {
                 onFocus={() => {
                   if (lookupHits.length > 0) setLookupOpen(true);
                 }}
-                className="flex-1 rounded-md border border-border-subtle bg-bg-elevated px-3 py-1.5 text-sm font-mono text-text-primary placeholder:text-text-muted/60 focus:border-accent-cyan focus:outline-none"
+                className="flex-1 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm font-mono text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
                 onKeyDown={(e) => {
                   if (e.key === 'ArrowDown' && lookupOpen) {
                     e.preventDefault();
@@ -506,7 +505,7 @@ export default function Squeeze() {
                 }}
               />
               {lookupOpen && lookupHits.length > 0 && (
-                <ul className="absolute left-6 right-0 top-full mt-1 z-20 max-h-72 overflow-y-auto rounded-md border border-border-subtle bg-bg-card shadow-lg">
+                <ul className="absolute left-6 right-0 top-full mt-1 z-20 max-h-72 overflow-y-auto rounded-lg border border-border-subtle bg-bg-surface shadow-card">
                   {lookupHits.map((h, i) => (
                     <li
                       key={`${h.symbol}-${i}`}
@@ -536,7 +535,7 @@ export default function Squeeze() {
             {result && (
               <button
                 onClick={handleRun}
-                className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle px-3 py-1.5 text-xs text-text-secondary hover:border-accent-cyan hover:text-accent-cyan transition-colors"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated/60 px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:border-accent-cyan/30 hover:text-text-primary"
                 title="Re-scan with current filters"
               >
                 <RefreshCw className="h-3 w-3" />
@@ -546,29 +545,31 @@ export default function Squeeze() {
           </div>
 
           {/* Tier filter chips */}
-          <div className="flex items-center gap-2 text-xs">
-            <span className="uppercase tracking-wider text-text-muted mr-1">
+          <div className="flex items-center gap-3">
+            <span className="stat-label">
               Filter
             </span>
-            {(['ALL', 'ADD', 'WATCHLIST', 'BASE'] as TierFilter[]).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTierFilter(t)}
-                className={`rounded-md border px-3 py-1 transition-colors ${
-                  tierFilter === t
-                    ? 'border-accent-cyan text-accent-cyan bg-accent-cyan/10'
-                    : 'border-border-subtle text-text-secondary hover:border-accent-cyan/50 hover:text-text-primary'
-                }`}
-              >
-                {t}
-              </button>
-            ))}
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-input p-0.5">
+              {(['ALL', 'ADD', 'WATCHLIST', 'BASE'] as TierFilter[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTierFilter(t)}
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                    tierFilter === t
+                      ? 'bg-bg-elevated text-text-primary shadow-card'
+                      : 'text-text-muted hover:text-text-secondary'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         {/* Error */}
         {error && (
-          <div className="rounded-lg border border-danger-red/40 bg-danger-red/10 p-4 text-sm text-danger-red">
+          <div className="rounded-xl border border-danger-red/30 bg-danger-red/10 p-4 text-sm text-danger-red">
             <AlertTriangle className="inline h-4 w-4 mr-2" />
             {error}
           </div>
@@ -576,8 +577,8 @@ export default function Squeeze() {
 
         {/* Caveats banner — once per scan */}
         {result?.data_caveats && result.data_caveats.length > 0 && (
-          <details className="rounded-lg border border-border-subtle bg-bg-card p-3 text-xs text-text-muted">
-            <summary className="cursor-pointer hover:text-text-primary uppercase tracking-wider">
+          <details className="panel p-4 text-xs text-text-muted">
+            <summary className="stat-label cursor-pointer transition-colors hover:text-text-primary">
               Data caveats ({result.data_caveats.length})
             </summary>
             <ul className="mt-2 space-y-1 pl-4 list-disc">
@@ -589,7 +590,7 @@ export default function Squeeze() {
         )}
 
         {/* Results table */}
-        <div className="rounded-lg border border-border-subtle bg-bg-card overflow-hidden">
+        <div className="panel overflow-hidden">
           {!result && !loading && (
             <div className="p-8 text-center text-text-muted text-sm">
               No scan yet — click <em>Run Discovery</em>.
@@ -611,7 +612,7 @@ export default function Squeeze() {
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-border-subtle text-left text-text-muted uppercase tracking-wider">
+                  <tr className="stat-label border-b border-border-subtle text-left">
                     <SortHeader k="ticker" cur={sortKey} dir={sortDir} onClick={toggleSort} className="px-4 py-3">Ticker</SortHeader>
                     <SortHeader k="score" cur={sortKey} dir={sortDir} onClick={toggleSort}>Score</SortHeader>
                     <th className="px-2 py-3">Tier</th>
@@ -717,8 +718,8 @@ function RowGroup({
         <td className="px-4 py-3">
           <div className="flex items-center gap-2">
             <div>
-              <div className="font-bold text-accent-cyan text-sm">{r.ticker}</div>
-              <div className="text-[10px] text-text-muted truncate max-w-[140px]">
+              <div className="font-mono text-sm font-bold text-accent-cyan">{r.ticker}</div>
+              <div className="text-2xs text-text-muted truncate max-w-[140px]">
                 {r.name}
               </div>
             </div>
@@ -747,11 +748,7 @@ function RowGroup({
           {r.score.toFixed(1)}
         </td>
         <td className="px-2 py-3">
-          <span
-            className={`inline-block rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider ${tierClass}`}
-          >
-            {r.tier}
-          </span>
+          <span className={tierClass}>{r.tier}</span>
         </td>
         <td className="px-2 py-3 font-mono tabular-nums text-text-primary">
           {r.current_price != null ? `$${r.current_price.toFixed(2)}` : '—'}
@@ -785,7 +782,7 @@ function RowGroup({
               }
             />
           ) : (
-            <span className="text-text-muted/50 text-[10px]">—</span>
+            <span className="text-2xs text-text-muted/50">—</span>
           )}
         </td>
         <td className="px-2 py-3 font-mono tabular-nums">
@@ -860,9 +857,9 @@ function ExpandedRow({ r }: { r: SqueezeResult }) {
         {/* Quarterly EPS chart — full-width row, then 3-col detail grid below */}
         {r.quarterly_eps && r.quarterly_eps.length > 0 && (
           <div className="mb-4">
-            <div className="text-text-muted mb-1 uppercase tracking-wider text-[10px]">
+            <div className="stat-label mb-1">
               Quarterly EPS{' '}
-              <span className="text-text-muted/60 normal-case">
+              <span className="text-text-muted/60 normal-case tracking-normal">
                 (last {r.quarterly_eps.length} quarters · grey tick = est)
               </span>
             </div>
@@ -872,10 +869,10 @@ function ExpandedRow({ r }: { r: SqueezeResult }) {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Factor breakdown */}
           <div>
-            <div className="text-text-muted mb-2 uppercase tracking-wider">
+            <div className="stat-label mb-2">
               Factor Breakdown
             </div>
-            <div className="space-y-1">
+            <div className="space-y-2">
               {(
                 [
                   ['short_interest', 'Short Interest'],
@@ -890,15 +887,22 @@ function ExpandedRow({ r }: { r: SqueezeResult }) {
                 const v = r.factors[k];
                 const note = r.factor_notes[k];
                 return (
-                  <div
-                    key={k}
-                    className="flex items-center justify-between gap-2"
-                  >
-                    <span className="text-text-secondary">{label}</span>
-                    <span className="text-text-primary font-mono tabular-nums">
-                      {v.toFixed(2)}{' '}
-                      <span className="text-text-muted">({note})</span>
-                    </span>
+                  <div key={k} className="space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="stat-label">{label}</span>
+                      <span className="text-text-primary font-mono tabular-nums">
+                        {v.toFixed(2)}{' '}
+                        <span className="text-text-muted">({note})</span>
+                      </span>
+                    </div>
+                    <div className="h-1 overflow-hidden rounded-full bg-bg-elevated">
+                      <div
+                        className="h-full rounded-full bg-accent-cyan"
+                        style={{
+                          width: `${Math.min(100, Math.max(0, v * 100))}%`,
+                        }}
+                      />
+                    </div>
                   </div>
                 );
               })}
@@ -907,7 +911,7 @@ function ExpandedRow({ r }: { r: SqueezeResult }) {
 
           {/* FINRA detail */}
           <div>
-            <div className="text-text-muted mb-2 uppercase tracking-wider">
+            <div className="stat-label mb-2">
               FINRA Short Volume{' '}
               {r.finra?.trade_date && `(${r.finra.trade_date})`}
             </div>
@@ -951,7 +955,7 @@ function ExpandedRow({ r }: { r: SqueezeResult }) {
 
           {/* Filing + warnings */}
           <div>
-            <div className="text-text-muted mb-2 uppercase tracking-wider">
+            <div className="stat-label mb-2">
               Filing &amp; Warnings
             </div>
             {r.filing ? (
@@ -984,7 +988,7 @@ function ExpandedRow({ r }: { r: SqueezeResult }) {
             )}
             {r.warnings.length > 0 && (
               <div className="mt-3 text-warning-amber/80">
-                <div className="text-[10px] uppercase tracking-wider mb-1">
+                <div className="text-2xs font-medium uppercase tracking-wider mb-1">
                   Warnings
                 </div>
                 <ul className="list-disc pl-4 space-y-0.5">

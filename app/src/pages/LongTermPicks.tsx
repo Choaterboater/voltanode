@@ -39,10 +39,10 @@ function ScoreBar({ value, label }: { value: number; label?: string }) {
           style={{ width: `${pct}%` }}
         />
       </div>
-      <span className="font-mono tabular-nums text-[10px] text-text-muted">
+      <span className="font-mono text-2xs tabular-nums text-text-muted">
         {value.toFixed(2)}
       </span>
-      {label && <span className="text-[9px] text-text-muted/70">{label}</span>}
+      {label && <span className="text-2xs text-text-muted/70">{label}</span>}
     </div>
   );
 }
@@ -116,7 +116,7 @@ export default function LongTermPicks() {
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
           <div className="flex items-center gap-3">
             <Anchor className="h-6 w-6 text-accent-cyan" />
-            <h1 className="text-2xl font-bold text-text-primary">Long-Term Picks</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-text-primary">Long-Term Picks</h1>
           </div>
           <p className="mt-1 text-sm text-text-muted max-w-3xl">
             Year-plus holding candidates ranked by{' '}
@@ -132,18 +132,18 @@ export default function LongTermPicks() {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.05 }}
-          className="rounded-[10px] border border-border-subtle bg-bg-card p-4 space-y-3"
+          className="panel space-y-3 p-5"
         >
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-1 rounded-md bg-bg-elevated border border-border-subtle p-0.5">
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-input p-0.5">
               {(['stock', 'crypto'] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setAssetClass(t)}
-                  className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                     assetClass === t
-                      ? 'bg-bg-base text-accent-cyan'
-                      : 'text-text-secondary hover:text-text-primary'
+                      ? 'bg-bg-elevated text-text-primary shadow-card'
+                      : 'text-text-muted hover:text-text-secondary'
                   }`}
                 >
                   {t === 'stock' ? 'Stocks' : 'Crypto'}
@@ -152,13 +152,13 @@ export default function LongTermPicks() {
             </div>
 
             <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-text-muted" />
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
               <input
                 type="text"
                 placeholder="Symbols (comma-separated) — leave blank for S&P 500"
                 value={symbolsInput}
                 onChange={(e) => setSymbolsInput(e.target.value.toUpperCase())}
-                className="w-full rounded-md border border-border-subtle bg-bg-elevated py-1.5 pl-8 pr-3 text-xs font-mono text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+                className="w-full rounded-lg border border-border-subtle bg-bg-input py-2 pl-8 pr-3 font-mono text-xs text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               />
             </div>
 
@@ -167,13 +167,13 @@ export default function LongTermPicks() {
               placeholder="Sector filter"
               value={sector}
               onChange={(e) => setSector(e.target.value)}
-              className="w-32 rounded-md border border-border-subtle bg-bg-elevated py-1.5 px-3 text-xs text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+              className="w-32 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-xs text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
             />
 
             <button
               onClick={() => void runScan()}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-md bg-accent-cyan px-3 py-1.5 text-xs font-semibold text-accent-foreground hover:bg-accent-cyan/90 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90 disabled:opacity-50"
             >
               {loading ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -198,7 +198,7 @@ export default function LongTermPicks() {
               someone picks <$50 is to find cheap S&P names — not to
               intersect with the page's preloaded 10 mega-caps. */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-text-muted">
+            <span className="stat-label">
               Max price
             </span>
             {[
@@ -226,10 +226,10 @@ export default function LongTermPicks() {
                       setTimeout(() => void runScan(), 50);
                     }
                   }}
-                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-mono transition-colors ${
+                  className={`rounded-full border px-2.5 py-0.5 font-mono text-2xs transition-colors ${
                     active
                       ? 'border-accent-cyan bg-accent-cyan/15 text-accent-cyan'
-                      : 'border-border-subtle bg-bg-elevated text-text-secondary hover:border-accent-cyan/40 hover:text-accent-cyan'
+                      : 'border-border-subtle bg-bg-input text-text-secondary hover:border-accent-cyan/40 hover:text-accent-cyan'
                   }`}
                 >
                   {label}
@@ -250,14 +250,14 @@ export default function LongTermPicks() {
                 const v = e.target.value;
                 setMaxPrice(v === '' ? null : Number(v));
               }}
-              className="w-20 rounded-md border border-border-subtle bg-bg-elevated py-0.5 px-2 text-[11px] font-mono text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+              className="w-20 rounded-lg border border-border-subtle bg-bg-input px-2 py-0.5 font-mono text-2xs text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
             />
           </div>
 
           {showAdvanced && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-2 border-t border-border-subtle">
               <label className="text-xs text-text-muted space-y-1">
-                <span>Top N: <span className="font-mono text-text-primary">{topN}</span></span>
+                <span>Top N: <span className="font-mono tabular-nums text-text-primary">{topN}</span></span>
                 <input
                   type="range" min="5" max="100" step="5"
                   value={topN}
@@ -266,7 +266,7 @@ export default function LongTermPicks() {
                 />
               </label>
               <label className="text-xs text-text-muted space-y-1">
-                <span>Min score: <span className="font-mono text-text-primary">{minScore}</span></span>
+                <span>Min score: <span className="font-mono tabular-nums text-text-primary">{minScore}</span></span>
                 <input
                   type="range" min="0" max="100" step="5"
                   value={minScore}
@@ -275,7 +275,7 @@ export default function LongTermPicks() {
                 />
               </label>
               <label className="text-xs text-text-muted space-y-1">
-                <span>Universe limit: <span className="font-mono text-text-primary">{limitUniverse}</span></span>
+                <span>Universe limit: <span className="font-mono tabular-nums text-text-primary">{limitUniverse}</span></span>
                 <input
                   type="range" min="20" max="500" step="20"
                   value={limitUniverse}
@@ -284,7 +284,7 @@ export default function LongTermPicks() {
                 />
               </label>
               <label className="text-xs text-text-muted space-y-1">
-                <span>Weight: fundamentals <span className="font-mono text-text-primary">{wFund.toFixed(2)}</span></span>
+                <span>Weight: fundamentals <span className="font-mono tabular-nums text-text-primary">{wFund.toFixed(2)}</span></span>
                 <input
                   type="range" min="0" max="1" step="0.05"
                   value={wFund}
@@ -293,7 +293,7 @@ export default function LongTermPicks() {
                 />
               </label>
               <label className="text-xs text-text-muted space-y-1">
-                <span>Weight: trend <span className="font-mono text-text-primary">{wTrend.toFixed(2)}</span></span>
+                <span>Weight: trend <span className="font-mono tabular-nums text-text-primary">{wTrend.toFixed(2)}</span></span>
                 <input
                   type="range" min="0" max="1" step="0.05"
                   value={wTrend}
@@ -302,7 +302,7 @@ export default function LongTermPicks() {
                 />
               </label>
               <label className="text-xs text-text-muted space-y-1">
-                <span>Weight: low-vol <span className="font-mono text-text-primary">{wVol.toFixed(2)}</span></span>
+                <span>Weight: low-vol <span className="font-mono tabular-nums text-text-primary">{wVol.toFixed(2)}</span></span>
                 <input
                   type="range" min="0" max="1" step="0.05"
                   value={wVol}
@@ -324,12 +324,12 @@ export default function LongTermPicks() {
 
         {/* Meta strip */}
         {data && !error && (
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-text-muted">
-            <span>Universe: <span className="font-mono text-text-secondary">{data.universe_size}</span></span>
-            <span>Scored: <span className="font-mono text-text-secondary">{data.scored}</span></span>
-            <span>Elapsed: <span className="font-mono text-text-secondary">{data.elapsed_ms}ms</span></span>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-2xs text-text-muted">
+            <span>Universe: <span className="font-mono tabular-nums text-text-secondary">{data.universe_size}</span></span>
+            <span>Scored: <span className="font-mono tabular-nums text-text-secondary">{data.scored}</span></span>
+            <span>Elapsed: <span className="font-mono tabular-nums text-text-secondary">{data.elapsed_ms}ms</span></span>
             <span>
-              Weights: <span className="font-mono text-text-secondary">
+              Weights: <span className="font-mono tabular-nums text-text-secondary">
                 fund={data.weights.fundamentals?.toFixed(2)} ·
                 trend={data.weights.trend?.toFixed(2)} ·
                 vol={data.weights.low_volatility?.toFixed(2)}
@@ -344,7 +344,7 @@ export default function LongTermPicks() {
         )}
 
         {/* Table */}
-        <div className="rounded-[10px] border border-border-subtle bg-bg-card overflow-hidden">
+        <div className="panel overflow-hidden">
           {loading && !data && (
             <div className="p-8 text-center text-text-muted text-sm">
               Scanning… fundamentals + 2y OHLCV per symbol. Full S&amp;P takes a few minutes.
@@ -368,7 +368,7 @@ export default function LongTermPicks() {
               ) : maxPrice !== null ? (
                 <>
                   <p>No picks under ${maxPrice} in the first {limitUniverse} symbols.</p>
-                  <p className="text-[11px]">
+                  <p className="text-2xs">
                     Try bumping the universe limit (Advanced) or raising the price cap.
                   </p>
                 </>
@@ -381,7 +381,7 @@ export default function LongTermPicks() {
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-border-subtle text-left text-text-muted uppercase tracking-wider">
+                  <tr className="border-b border-border-subtle text-left text-2xs font-medium uppercase tracking-wider text-text-muted">
                     <th className="px-3 py-3">#</th>
                     <th className="px-2 py-3">Symbol</th>
                     <th className="px-2 py-3 hidden md:table-cell">Name</th>
@@ -459,7 +459,7 @@ export default function LongTermPicks() {
           )}
         </div>
 
-        <p className="text-[11px] text-text-muted/70 text-center max-w-2xl mx-auto">
+        <p className="mx-auto max-w-2xl text-center text-2xs text-text-muted/70">
           Not market timing. These are "worth buying and forgetting about" candidates.
           Drill into any pick via the Advisor button for the LLM-driven deep dive
           (macro, insider activity, earnings, sentiment, fundamentals narrative).

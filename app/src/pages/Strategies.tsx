@@ -13,7 +13,6 @@ import {
   Activity,
 } from 'lucide-react';
 import Layout from '@/components/Layout';
-import Badge from '@/components/Badge';
 import { getStrategies, getTrades, registerStrategy, toggleStrategy, type ApiStrategy } from '@/lib/api';
 
 interface PerStrategyMetrics {
@@ -159,9 +158,9 @@ export default function Strategies() {
 
         {/* Registered / Active */}
         <div>
-          <h2 className="mb-3 text-lg font-semibold text-text-primary">Active Strategies</h2>
+          <h2 className="mb-3 text-sm font-semibold text-text-primary">Active Strategies</h2>
           {registered.length === 0 ? (
-            <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-8 text-center text-sm text-text-muted">
+            <div className="panel p-8 text-center text-sm text-text-muted">
               No strategies registered yet. Register one below.
             </div>
           ) : (
@@ -192,7 +191,7 @@ export default function Strategies() {
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3, delay: i * 0.04 }}
-                  className="flex h-full flex-col rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+                  className="panel panel-hover flex h-full flex-col p-5"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-3">
@@ -200,18 +199,18 @@ export default function Strategies() {
                         {strategyIcons[s.strategy_type] || <Activity className="h-5 w-5" />}
                       </div>
                       <div className="min-w-0">
-                        <p className="font-medium text-text-primary">{s.strategy_type}</p>
+                        <p className="text-sm font-semibold text-text-primary">{s.strategy_type}</p>
                         <p
-                          className="truncate text-xs text-text-muted"
+                          className="truncate font-mono text-2xs text-text-muted"
                           title={s.strategy_id}
                         >
                           {s.strategy_id}
                         </p>
                       </div>
                     </div>
-                    <Badge variant={s.is_active ? 'success' : 'neutral'}>
+                    <span className={s.is_active ? 'pill-success' : 'pill-neutral'}>
                       {s.is_active ? 'Active' : 'Idle'}
-                    </Badge>
+                    </span>
                   </div>
 
                   <p className="mt-3 text-xs text-text-secondary">
@@ -221,7 +220,7 @@ export default function Strategies() {
                   {/* Symbol chips */}
                   <div className="mt-3 flex flex-wrap gap-1">
                     {symList.length === 0 ? (
-                      <span className="text-[10px] italic text-text-muted">
+                      <span className="text-2xs italic text-text-muted">
                         Dynamic universe
                       </span>
                     ) : (
@@ -229,14 +228,14 @@ export default function Strategies() {
                         {symList.slice(0, 4).map((sym) => (
                           <span
                             key={sym}
-                            className="rounded border border-border-subtle bg-bg-input px-1.5 py-0.5 text-[10px] font-mono text-text-secondary"
+                            className="pill-neutral font-mono normal-case"
                           >
                             {sym}
                           </span>
                         ))}
                         {symList.length > 4 && (
                           <span
-                            className="rounded border border-accent-cyan/30 bg-accent-cyan/10 px-1.5 py-0.5 text-[10px] font-mono text-accent-cyan"
+                            className="pill-neutral font-mono normal-case"
                             title={symList.join(', ')}
                           >
                             +{symList.length - 4}
@@ -247,21 +246,21 @@ export default function Strategies() {
                   </div>
 
                   {/* Always-on metrics block so cards have consistent height */}
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                    <div className="rounded bg-bg-input p-2">
-                      <p className="text-text-muted">Win Rate</p>
-                      <p className="font-mono text-text-primary">
+                  <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle/60 pt-3">
+                    <div>
+                      <p className="stat-label">Win Rate</p>
+                      <p className="font-mono text-sm tabular-nums text-text-primary">
                         {winRate != null ? `${winRate.toFixed(1)}%` : '—'}
                       </p>
                     </div>
-                    <div className="rounded bg-bg-input p-2">
-                      <p className="text-text-muted">Trades</p>
-                      <p className="font-mono text-text-primary">{totalTrades}</p>
+                    <div>
+                      <p className="stat-label">Trades</p>
+                      <p className="font-mono text-sm tabular-nums text-text-primary">{totalTrades}</p>
                     </div>
-                    <div className="rounded bg-bg-input p-2">
-                      <p className="text-text-muted">P&L</p>
+                    <div>
+                      <p className="stat-label">P&L</p>
                       <p
-                        className={`font-mono ${
+                        className={`font-mono text-sm tabular-nums ${
                           pnl > 0
                             ? 'text-success-green'
                             : pnl < 0
@@ -277,16 +276,16 @@ export default function Strategies() {
                   <div className="mt-auto flex items-center gap-2 pt-4">
                     <button
                       onClick={() => handleToggle(s)}
-                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      className={`inline-flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-medium transition-colors ${
                         s.is_active
-                          ? 'bg-warning-amber/10 text-warning-amber hover:bg-warning-amber/20'
-                          : 'bg-success-green/10 text-success-green hover:bg-success-green/20'
+                          ? 'border-border-subtle bg-bg-elevated/60 text-text-secondary hover:border-accent-cyan/30 hover:text-text-primary'
+                          : 'border-success-green/30 bg-success-green/10 text-success-green hover:bg-success-green/20'
                       }`}
                     >
                       {s.is_active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
                       {s.is_active ? 'Pause' : 'Activate'}
                     </button>
-                    <button className="rounded-md p-1.5 text-text-secondary hover:bg-bg-input hover:text-text-primary transition-colors">
+                    <button className="rounded-lg p-2 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors">
                       <Settings className="h-4 w-4" />
                     </button>
                   </div>
@@ -299,7 +298,7 @@ export default function Strategies() {
 
         {/* Available Library */}
         <div>
-          <h2 className="mb-3 text-lg font-semibold text-text-primary">Strategy Library</h2>
+          <h2 className="mb-3 text-sm font-semibold text-text-primary">Strategy Library</h2>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {available.map((s, i) => (
               <motion.div
@@ -307,14 +306,14 @@ export default function Strategies() {
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3, delay: i * 0.08 }}
-                className="rounded-[10px] border border-border-subtle bg-bg-surface p-5 opacity-80 hover:opacity-100 transition-opacity"
+                className="panel panel-hover p-5 opacity-80 hover:opacity-100 transition-opacity"
               >
                 <div className="flex items-center gap-3">
                   <div className="rounded-lg bg-bg-elevated p-2 text-text-secondary">
                     {strategyIcons[s.strategy_type] || <Activity className="h-5 w-5" />}
                   </div>
                   <div>
-                    <p className="font-medium text-text-primary">{s.strategy_type}</p>
+                    <p className="text-sm font-semibold text-text-primary">{s.strategy_type}</p>
                     <p className="text-xs text-text-muted">{strategyDescriptions[s.strategy_type] || 'Custom strategy'}</p>
                   </div>
                 </div>
@@ -323,7 +322,7 @@ export default function Strategies() {
                   {Object.entries(s.config).slice(0, 4).map(([k, v]) => (
                     <div key={k} className="flex justify-between text-xs">
                       <span className="text-text-muted">{k}</span>
-                      <span className="font-mono text-text-secondary">{String(v)}</span>
+                      <span className="font-mono tabular-nums text-text-secondary">{String(v)}</span>
                     </div>
                   ))}
                 </div>
@@ -331,7 +330,7 @@ export default function Strategies() {
                 <button
                   onClick={() => handleRegister(s.strategy_type)}
                   disabled={registering === s.strategy_type}
-                  className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-md bg-accent-cyan px-3 py-1.5 text-xs font-semibold text-text-inverse hover:brightness-110 transition-all disabled:opacity-50"
+                  className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90 disabled:opacity-50"
                 >
                   {registering === s.strategy_type ? (
                     <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />

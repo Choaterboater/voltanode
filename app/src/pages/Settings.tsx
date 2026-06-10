@@ -127,20 +127,20 @@ function BrokerCard({
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+      className="panel p-5"
     >
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-sm font-semibold text-text-primary capitalize">{name}</h3>
           <p className="mt-0.5 text-xs text-text-muted">{description}</p>
           {brokerConfig && (
-            <p className="mt-1 text-[10px] text-text-muted">
+            <p className="mt-2">
               {brokerConfig.api_key_configured && brokerConfig.api_secret_configured ? (
-                <span className="text-success-green">● Keys saved</span>
+                <span className="pill-success">Keys saved</span>
               ) : brokerConfig.api_key_configured || brokerConfig.api_secret_configured ? (
-                <span className="text-warning-amber">● Partial keys</span>
+                <span className="pill-warning">Partial keys</span>
               ) : (
-                <span>● No keys saved</span>
+                <span className="pill-neutral">No keys saved</span>
               )}
             </p>
           )}
@@ -194,7 +194,7 @@ function BrokerCard({
                 placeholder="API Key"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                className="w-full rounded-md border border-border-subtle bg-bg-input py-2 pl-9 pr-3 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+                className="w-full rounded-lg border border-border-subtle bg-bg-input py-2 pl-9 pr-3 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               />
             </div>
             <div className="relative">
@@ -204,7 +204,7 @@ function BrokerCard({
                 placeholder="API Secret"
                 value={apiSecret}
                 onChange={(e) => setApiSecret(e.target.value)}
-                className="w-full rounded-md border border-border-subtle bg-bg-input py-2 pl-9 pr-3 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+                className="w-full rounded-lg border border-border-subtle bg-bg-input py-2 pl-9 pr-3 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               />
             </div>
           </div>
@@ -213,7 +213,7 @@ function BrokerCard({
             <button
               onClick={handleSave}
               disabled={saving || loading}
-              className="inline-flex items-center gap-1.5 rounded-md bg-accent-cyan px-3 py-1.5 text-xs font-semibold text-text-inverse hover:brightness-110 transition-all disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90 disabled:opacity-50"
             >
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
               Save Keys
@@ -222,7 +222,7 @@ function BrokerCard({
               onClick={handleTest}
               disabled={testing || loading || (!isMock && !keysConfigured)}
               title={!isMock && !keysConfigured ? 'Save API keys first' : ''}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg-input px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated/60 px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:border-accent-cyan/30 hover:text-text-primary disabled:opacity-50"
             >
               {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <TestTube className="h-3.5 w-3.5" />}
               Test Connection
@@ -231,7 +231,7 @@ function BrokerCard({
               <button
                 onClick={handleDisconnect}
                 disabled={disconnecting || loading}
-                className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-bg-input px-3 py-1.5 text-xs font-medium text-danger-red hover:bg-danger-red-glow transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-danger-red/30 bg-danger-red/10 px-3.5 py-2 text-xs font-medium text-danger-red transition-colors hover:bg-danger-red/20 disabled:opacity-50"
               >
                 {disconnecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
                 Disconnect
@@ -284,7 +284,7 @@ function SafetyTab({
 
   if (!safetyStatus && loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
+      <div className="panel flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-accent-cyan" />
       </div>
     );
@@ -292,7 +292,7 @@ function SafetyTab({
 
   if (!safetyStatus) {
     return (
-      <div className="flex h-64 flex-col items-center justify-center gap-3">
+      <div className="panel flex h-64 flex-col items-center justify-center gap-3">
         <p className="text-sm text-text-muted">Unable to load safety status</p>
         <button onClick={onRefresh} className="text-xs text-accent-cyan hover:underline">
           Retry
@@ -305,12 +305,12 @@ function SafetyTab({
   const limits = safetyStatus.safety_limits || {};
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Kill Switch Card */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+        className="panel border-danger-red/30 p-5"
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -327,7 +327,7 @@ function SafetyTab({
               <button
                 onClick={() => handleKillSwitch('deactivate')}
                 disabled={activating}
-                className="inline-flex items-center gap-1.5 rounded-md bg-success-green px-3 py-1.5 text-xs font-semibold text-text-inverse hover:brightness-110 transition-all disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-success-green px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-success-green/90 disabled:opacity-50"
               >
                 {activating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5" />}
                 Deactivate
@@ -336,7 +336,7 @@ function SafetyTab({
               <button
                 onClick={() => handleKillSwitch('activate')}
                 disabled={activating}
-                className="inline-flex items-center gap-1.5 rounded-md bg-danger-red px-3 py-1.5 text-xs font-semibold text-text-inverse hover:brightness-110 transition-all disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-danger-red/30 bg-danger-red/10 px-3.5 py-2 text-xs font-semibold text-danger-red transition-colors hover:bg-danger-red/20 disabled:opacity-50"
               >
                 {activating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
                 Activate
@@ -351,14 +351,14 @@ function SafetyTab({
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+        className="panel p-5"
       >
-        <h3 className="text-sm font-semibold text-text-primary mb-3">Safety Limits</h3>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <h3 className="mb-4 text-sm font-semibold text-text-primary">Safety Limits</h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Object.entries(limits).map(([key, value]) => (
-            <div key={key} className="rounded-md bg-bg-input p-3">
-              <p className="text-xs text-text-muted capitalize">{key.replace(/_/g, ' ')}</p>
-              <p className="mt-1 font-mono text-sm text-text-primary">
+            <div key={key} className="rounded-lg border border-border-subtle bg-bg-input p-4">
+              <p className="stat-label">{key.replace(/_/g, ' ')}</p>
+              <p className="mt-1.5 font-mono text-lg tabular-nums text-text-primary">
                 {typeof value === 'number' ? `${value}${key.includes('pct') ? '%' : ''}` : String(value)}
               </p>
             </div>
@@ -426,18 +426,18 @@ function LiveModeTab({
 
   if (!liveMode && loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
+      <div className="panel flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-accent-cyan" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+        className="panel p-5"
       >
         <div className="flex items-center justify-between">
           <div>
@@ -455,12 +455,12 @@ function LiveModeTab({
 
         <div className="mt-4 space-y-3">
           <div>
-            <label className="block text-xs text-text-muted mb-1">Default Broker</label>
+            <label className="stat-label mb-1.5 block">Default Broker</label>
             <select
               value={selectedBroker}
               onChange={(e) => setSelectedBroker(e.target.value)}
               disabled={liveMode?.live_mode || toggling}
-              className="w-full rounded-md border border-border-subtle bg-bg-input py-2 px-3 text-sm text-text-primary focus:border-accent-cyan focus:outline-none disabled:opacity-50"
+              className="w-full rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20 disabled:opacity-50"
             >
               <option value="">Select a broker</option>
               {Object.entries(brokers).map(([key, desc]) => (
@@ -475,10 +475,10 @@ function LiveModeTab({
             <button
               onClick={handleToggle}
               disabled={toggling || loading || (!liveMode?.live_mode && !selectedBroker)}
-              className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold text-text-inverse transition-all disabled:opacity-50 ${
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-text-inverse transition-colors disabled:opacity-50 ${
                 liveMode?.live_mode
-                  ? 'bg-danger-red hover:brightness-110'
-                  : 'bg-success-green hover:brightness-110'
+                  ? 'bg-danger-red hover:bg-danger-red/90'
+                  : 'bg-success-green hover:bg-success-green/90'
               }`}
             >
               {toggling ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -500,7 +500,7 @@ function LiveModeTab({
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-sm rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+            className="panel w-full max-w-sm p-5"
           >
             <div className="flex items-center gap-3">
               <AlertTriangle className="h-6 w-6 text-warning-amber" />
@@ -513,14 +513,14 @@ function LiveModeTab({
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
                 onClick={() => setConfirmOpen(false)}
-                className="rounded-md border border-border-subtle bg-bg-input px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition-colors"
+                className="rounded-lg border border-border-subtle bg-bg-elevated/60 px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:border-accent-cyan/30 hover:text-text-primary"
               >
                 Cancel
               </button>
               <button
                 onClick={() => doToggle(true)}
                 disabled={toggling}
-                className="rounded-md bg-danger-red px-3 py-1.5 text-xs font-semibold text-text-inverse hover:brightness-110 transition-all disabled:opacity-50"
+                className="rounded-lg bg-danger-red px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-danger-red/90 disabled:opacity-50"
               >
                 {toggling ? <Loader2 className="h-3.5 w-3.5 animate-spin inline" /> : null}
                 Confirm Live Mode
@@ -610,38 +610,40 @@ export default function SettingsPage() {
 
   return (
     <Layout title="Settings">
-      <div className="mx-auto max-w-4xl space-y-5">
+      <div className="mx-auto max-w-4xl space-y-6">
         {/* Tabs */}
-        <div className="flex items-center gap-1 rounded-md bg-bg-surface border border-border-subtle p-1">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.key;
-            return (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={`flex flex-1 items-center justify-center gap-2 rounded px-3 py-2 text-xs font-medium transition-colors ${
-                  isActive
-                    ? 'bg-bg-elevated text-accent-cyan'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-bg-input'
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-                {tab.label}
-              </button>
-            );
-          })}
+        <div className="mb-6 flex justify-center">
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-input p-0.5">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`inline-flex items-center gap-2 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                    isActive
+                      ? 'bg-bg-elevated text-text-primary shadow-card'
+                      : 'text-text-muted hover:text-text-secondary'
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Tab Content */}
         {activeTab === 'brokers' && (
-          <div className="space-y-4">
+          <div className="space-y-5">
             <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-text-primary">Broker Connections</h2>
+              <h2 className="text-sm font-semibold text-text-primary">Broker Connections</h2>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setShowAddBroker(true)}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-accent-cyan px-3 py-1.5 text-xs font-semibold text-text-inverse hover:brightness-110 transition-all"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   Add Broker
@@ -661,7 +663,7 @@ export default function SettingsPage() {
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+                className="panel p-5"
               >
                 <h3 className="text-sm font-semibold text-text-primary mb-3">Register New Broker</h3>
                 <div className="flex items-center gap-2">
@@ -670,7 +672,7 @@ export default function SettingsPage() {
                     placeholder="Broker name (e.g. kraken, coinbase)"
                     value={newBrokerName}
                     onChange={(e) => setNewBrokerName(e.target.value)}
-                    className="flex-1 rounded-md border border-border-subtle bg-bg-input py-2 px-3 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+                    className="flex-1 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
                   />
                   <button
                     onClick={async () => {
@@ -689,14 +691,14 @@ export default function SettingsPage() {
                       }
                     }}
                     disabled={registering || !newBrokerName.trim()}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-accent-cyan px-3 py-2 text-xs font-semibold text-text-inverse hover:brightness-110 transition-all disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90 disabled:opacity-50"
                   >
                     {registering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                     Register
                   </button>
                   <button
                     onClick={() => { setShowAddBroker(false); setNewBrokerName(''); }}
-                    className="rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-xs font-medium text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition-colors"
+                    className="rounded-lg border border-border-subtle bg-bg-elevated/60 px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:border-accent-cyan/30 hover:text-text-primary"
                   >
                     Cancel
                   </button>

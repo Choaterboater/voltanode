@@ -5,26 +5,29 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        'bg-base': '#0B0F19',
-        'bg-surface': '#111827',
-        'bg-elevated': '#1A2235',
-        'bg-input': '#0F1525',
-        'text-primary': '#F8FAFC',
-        'text-secondary': '#94A3B8',
-        'text-muted': '#64748B',
-        'text-inverse': '#0B0F19',
-        'accent-cyan': '#06B6D4',
-        'accent-cyan-glow': 'rgba(6,182,212,0.15)',
-        'success-green': '#10B981',
-        'success-green-glow': 'rgba(16,185,129,0.12)',
-        'danger-red': '#EF4444',
-        'danger-red-glow': 'rgba(239,68,68,0.12)',
-        'warning-amber': '#F59E0B',
-        'info-purple': '#8B5CF6',
-        'border-subtle': '#1E293B',
-        'border-active': '#06B6D4',
-        'border-success': '#10B981',
-        'border-danger': '#EF4444',
+        // 2026-06-09 redesign: same token names, lifted values. Deeper base,
+        // clearly-separated surfaces, brighter accents tuned for dark bg,
+        // and borders that are actually visible. Pages keep their classes.
+        'bg-base': '#070B14',
+        'bg-surface': '#0D1424',
+        'bg-elevated': '#16203A',
+        'bg-input': '#0A111F',
+        'text-primary': '#F2F6FC',
+        'text-secondary': '#A8B7CC',
+        'text-muted': '#6E7E96',
+        'text-inverse': '#070B14',
+        'accent-cyan': '#22D3EE',
+        'accent-cyan-glow': 'rgba(34,211,238,0.14)',
+        'success-green': '#34D399',
+        'success-green-glow': 'rgba(52,211,153,0.12)',
+        'danger-red': '#F87171',
+        'danger-red-glow': 'rgba(248,113,113,0.12)',
+        'warning-amber': '#FBBF24',
+        'info-purple': '#A78BFA',
+        'border-subtle': '#1C2840',
+        'border-active': '#22D3EE',
+        'border-success': '#34D399',
+        'border-danger': '#F87171',
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -73,6 +76,15 @@ module.exports = {
         inter: ['Inter', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
       },
+      fontSize: {
+        // Global readability lift: text-xs was 12px and is the app's dominant
+        // body size (240+ uses). 13px keeps density while staying legible.
+        // text-2xs is the sanctioned micro-label size (replaces ad-hoc
+        // text-[10px]) — pair with uppercase + tracking-wider.
+        '2xs': ['0.6875rem', { lineHeight: '0.875rem', letterSpacing: '0.02em' }],
+        xs: ['0.8125rem', { lineHeight: '1.25rem' }],
+        sm: ['0.875rem', { lineHeight: '1.4rem' }],
+      },
       borderRadius: {
         xl: "calc(var(--radius) + 4px)",
         lg: "var(--radius)",
@@ -82,6 +94,11 @@ module.exports = {
       },
       boxShadow: {
         xs: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        // Card depth: a hairline top highlight + soft drop. Surfaces read as
+        // raised panels instead of outlined rectangles.
+        card: "inset 0 1px 0 0 rgba(255,255,255,0.04), 0 10px 30px -16px rgba(0,0,0,0.65)",
+        "card-hover": "inset 0 1px 0 0 rgba(255,255,255,0.06), 0 16px 40px -16px rgba(0,0,0,0.7), 0 0 0 1px rgba(34,211,238,0.12)",
+        "glow-cyan": "0 0 28px -8px rgba(34,211,238,0.45)",
       },
       keyframes: {
         "accordion-down": {

@@ -10,7 +10,6 @@ import {
 } from 'lucide-react';
 import Layout from '@/components/Layout';
 import DataTable from '@/components/DataTable';
-import Badge from '@/components/Badge';
 import {
   getPortfolio,
   getOrders,
@@ -20,6 +19,9 @@ import {
   type ApiOrder,
 } from '@/lib/api';
 import type { Position } from '@/types';
+
+const inputClass =
+  'w-full rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20';
 
 export default function PaperTrading() {
   const [portfolio, setPortfolio] = useState<ApiPortfolio | null>(null);
@@ -138,9 +140,9 @@ export default function PaperTrading() {
       key: 'side',
       header: 'Side',
       render: (row: ApiOrder) => (
-        <Badge variant={row.side === 'buy' ? 'success' : 'danger'}>
+        <span className={row.side === 'buy' ? 'pill-success' : 'pill-danger'}>
           {row.side.toUpperCase()}
-        </Badge>
+        </span>
       ),
     },
     {
@@ -154,14 +156,14 @@ export default function PaperTrading() {
       key: 'qty',
       header: 'Qty',
       render: (row: ApiOrder) => (
-        <span className="font-mono text-sm text-text-primary">{row.quantity}</span>
+        <span className="font-mono text-sm tabular-nums text-text-primary">{row.quantity}</span>
       ),
     },
     {
       key: 'price',
       header: 'Price',
       render: (row: ApiOrder) => (
-        <span className="font-mono text-sm text-text-primary">
+        <span className="font-mono text-sm tabular-nums text-text-primary">
           {row.price ? formatCurrency(row.price) : 'Market'}
         </span>
       ),
@@ -170,17 +172,17 @@ export default function PaperTrading() {
       key: 'status',
       header: 'Status',
       render: (row: ApiOrder) => (
-        <Badge
-          variant={
+        <span
+          className={
             row.status === 'filled'
-              ? 'success'
+              ? 'pill-success'
               : row.status === 'pending'
-              ? 'warning'
-              : 'neutral'
+              ? 'pill-warning'
+              : 'pill-neutral'
           }
         >
           {row.status}
-        </Badge>
+        </span>
       ),
     },
     {
@@ -190,7 +192,7 @@ export default function PaperTrading() {
         row.status === 'pending' ? (
           <button
             onClick={() => handleCancel(row.id)}
-            className="rounded-md p-1.5 text-danger-red hover:bg-danger-red/10 transition-colors"
+            className="rounded-lg border border-danger-red/30 bg-danger-red/10 p-1.5 text-danger-red transition-colors hover:bg-danger-red/20"
           >
             <X className="h-4 w-4" />
           </button>
@@ -200,7 +202,7 @@ export default function PaperTrading() {
 
   return (
     <Layout title="Paper Trading">
-      <div className="space-y-5">
+      <div className="space-y-6">
         {error && (
           <div className="rounded-lg border border-danger-red/30 bg-danger-red/10 px-4 py-2 text-sm text-danger-red">
             {error}
@@ -212,28 +214,28 @@ export default function PaperTrading() {
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-[10px] border border-border-subtle bg-bg-surface p-5 lg:col-span-1"
+            className="panel p-5 lg:col-span-1"
           >
-            <h2 className="mb-4 text-base font-semibold text-text-primary">Place Order</h2>
+            <h2 className="mb-4 text-sm font-semibold text-text-primary">Place Order</h2>
             <form onSubmit={handlePlaceOrder} className="space-y-3">
               <div>
-                <label className="mb-1 block text-xs text-text-muted">Symbol</label>
+                <label className="stat-label mb-1.5 block">Symbol</label>
                 <input
                   type="text"
                   value={symbol}
                   onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-                  className="w-full rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan"
+                  className={`${inputClass} font-mono`}
                 />
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-input p-0.5">
                 <button
                   type="button"
                   onClick={() => setSide('buy')}
-                  className={`flex-1 rounded-md py-2 text-xs font-medium transition-colors ${
+                  className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
                     side === 'buy'
-                      ? 'bg-success-green/20 text-success-green'
-                      : 'bg-bg-input text-text-secondary hover:text-text-primary'
+                      ? 'bg-success-green/15 text-success-green shadow-card'
+                      : 'text-text-muted hover:text-text-secondary'
                   }`}
                 >
                   <ArrowUpRight className="mr-1 inline h-3.5 w-3.5" />
@@ -242,10 +244,10 @@ export default function PaperTrading() {
                 <button
                   type="button"
                   onClick={() => setSide('sell')}
-                  className={`flex-1 rounded-md py-2 text-xs font-medium transition-colors ${
+                  className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
                     side === 'sell'
-                      ? 'bg-danger-red/20 text-danger-red'
-                      : 'bg-bg-input text-text-secondary hover:text-text-primary'
+                      ? 'bg-danger-red/15 text-danger-red shadow-card'
+                      : 'text-text-muted hover:text-text-secondary'
                   }`}
                 >
                   <ArrowDownRight className="mr-1 inline h-3.5 w-3.5" />
@@ -253,14 +255,14 @@ export default function PaperTrading() {
                 </button>
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-input p-0.5">
                 <button
                   type="button"
                   onClick={() => setOrderType('market')}
-                  className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${
+                  className={`flex-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                     orderType === 'market'
-                      ? 'bg-accent-cyan/20 text-accent-cyan'
-                      : 'bg-bg-input text-text-secondary'
+                      ? 'bg-bg-elevated text-text-primary shadow-card'
+                      : 'text-text-muted hover:text-text-secondary'
                   }`}
                 >
                   Market
@@ -268,10 +270,10 @@ export default function PaperTrading() {
                 <button
                   type="button"
                   onClick={() => setOrderType('limit')}
-                  className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${
+                  className={`flex-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                     orderType === 'limit'
-                      ? 'bg-accent-cyan/20 text-accent-cyan'
-                      : 'bg-bg-input text-text-secondary'
+                      ? 'bg-bg-elevated text-text-primary shadow-card'
+                      : 'text-text-muted hover:text-text-secondary'
                   }`}
                 >
                   Limit
@@ -279,26 +281,26 @@ export default function PaperTrading() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-text-muted">Quantity</label>
+                <label className="stat-label mb-1.5 block">Quantity</label>
                 <input
                   type="number"
                   step="any"
                   value={quantity}
                   onChange={(e) => setQuantity(e.target.value)}
-                  className="w-full rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan"
+                  className={`${inputClass} font-mono tabular-nums`}
                 />
               </div>
 
               {orderType === 'limit' && (
                 <div>
-                  <label className="mb-1 block text-xs text-text-muted">Limit Price</label>
+                  <label className="stat-label mb-1.5 block">Limit Price</label>
                   <input
                     type="number"
                     step="any"
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
                     placeholder="0.00"
-                    className="w-full rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan"
+                    className={`${inputClass} font-mono tabular-nums`}
                   />
                 </div>
               )}
@@ -306,12 +308,14 @@ export default function PaperTrading() {
               <button
                 type="submit"
                 disabled={placing}
-                className={`flex w-full items-center justify-center gap-2 rounded-md py-2.5 text-sm font-semibold text-text-inverse transition-colors ${
-                  side === 'buy' ? 'bg-success-green hover:brightness-110' : 'bg-danger-red hover:brightness-110'
+                className={`flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold text-text-inverse transition-colors ${
+                  side === 'buy'
+                    ? 'bg-success-green hover:bg-success-green/90'
+                    : 'bg-danger-red hover:bg-danger-red/90'
                 } disabled:opacity-50`}
               >
                 {placing ? (
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                 ) : (
                   <Send className="h-4 w-4" />
                 )}
@@ -323,22 +327,22 @@ export default function PaperTrading() {
           {/* Portfolio + Positions */}
           <div className="space-y-4 lg:col-span-2">
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-4">
+              <div className="panel p-4">
                 <div className="flex items-center gap-2 text-text-muted">
                   <Wallet className="h-4 w-4" />
-                  <span className="text-xs">Equity</span>
+                  <span className="stat-label">Equity</span>
                 </div>
-                <p className="mt-1 font-mono text-lg text-text-primary">
+                <p className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-text-primary">
                   {formatCurrency(portfolio?.total_equity ?? 0)}
                 </p>
               </div>
-              <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-4">
+              <div className="panel p-4">
                 <div className="flex items-center gap-2 text-text-muted">
                   <TrendingUp className="h-4 w-4" />
-                  <span className="text-xs">Unrealized P&L</span>
+                  <span className="stat-label">Unrealized P&L</span>
                 </div>
                 <p
-                  className={`mt-1 font-mono text-lg ${
+                  className={`mt-1.5 font-mono text-xl font-semibold tabular-nums ${
                     (portfolio?.unrealized_pnl ?? 0) >= 0 ? 'text-success-green' : 'text-danger-red'
                   }`}
                 >
@@ -346,13 +350,13 @@ export default function PaperTrading() {
                   {formatCurrency(portfolio?.unrealized_pnl ?? 0)}
                 </p>
               </div>
-              <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-4">
+              <div className="panel p-4">
                 <div className="flex items-center gap-2 text-text-muted">
                   <TrendingUp className="h-4 w-4" />
-                  <span className="text-xs">Realized P&L</span>
+                  <span className="stat-label">Realized P&L</span>
                 </div>
                 <p
-                  className={`mt-1 font-mono text-lg ${
+                  className={`mt-1.5 font-mono text-xl font-semibold tabular-nums ${
                     (portfolio?.realized_pnl ?? 0) >= 0 ? 'text-success-green' : 'text-danger-red'
                   }`}
                 >
@@ -360,12 +364,14 @@ export default function PaperTrading() {
                   {formatCurrency(portfolio?.realized_pnl ?? 0)}
                 </p>
               </div>
-              <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-4">
+              <div className="panel p-4">
                 <div className="flex items-center gap-2 text-text-muted">
                   <Wallet className="h-4 w-4" />
-                  <span className="text-xs">Positions</span>
+                  <span className="stat-label">Positions</span>
                 </div>
-                <p className="mt-1 font-mono text-lg text-text-primary">{positions.length}</p>
+                <p className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-text-primary">
+                  {positions.length}
+                </p>
               </div>
             </div>
 
@@ -374,13 +380,13 @@ export default function PaperTrading() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.1 }}
-              className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+              className="panel p-5"
             >
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-text-primary">Open Positions</h3>
                 {dustCount > 0 && (
                   <span
-                    className="text-[10px] italic text-text-muted"
+                    className="text-2xs italic text-text-muted"
                     title="Positions with market value < $0.01 — leftover from prior sells the broker won't accept a close order on. Backend purge endpoint can clear them on the next restart."
                   >
                     {dustCount} dust position{dustCount === 1 ? '' : 's'} hidden
@@ -388,46 +394,46 @@ export default function PaperTrading() {
                 )}
               </div>
               {positions.length === 0 ? (
-                <p className="text-sm text-text-muted">No open positions.</p>
+                <p className="py-8 text-center text-sm text-text-muted">No open positions.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
                     <thead>
-                      <tr className="border-b border-border-subtle text-xs text-text-muted">
-                        <th className="pb-2 font-medium">Symbol</th>
-                        <th className="pb-2 font-medium">Side</th>
-                        <th className="pb-2 font-medium">Size</th>
-                        <th className="pb-2 font-medium">Entry</th>
-                        <th className="pb-2 font-medium">Mark</th>
-                        <th className="pb-2 font-medium">SL</th>
-                        <th className="pb-2 font-medium">TP</th>
-                        <th className="pb-2 font-medium">P&L</th>
+                      <tr className="border-b border-border-subtle">
+                        <th className="stat-label pb-2">Symbol</th>
+                        <th className="stat-label pb-2">Side</th>
+                        <th className="stat-label pb-2">Size</th>
+                        <th className="stat-label pb-2">Entry</th>
+                        <th className="stat-label pb-2">Mark</th>
+                        <th className="stat-label pb-2">SL</th>
+                        <th className="stat-label pb-2">TP</th>
+                        <th className="stat-label pb-2">P&L</th>
                       </tr>
                     </thead>
                     <tbody>
                       {positions.map((p) => (
                         <tr key={p.id} className="border-b border-border-subtle/50">
-                          <td className="py-2 font-mono text-text-primary">{p.symbol}</td>
-                          <td className="py-2">
-                            <Badge variant={p.side === 'long' ? 'success' : 'danger'}>
+                          <td className="py-2.5 font-mono text-text-primary">{p.symbol}</td>
+                          <td className="py-2.5">
+                            <span className={p.side === 'long' ? 'pill-success' : 'pill-danger'}>
                               {p.side}
-                            </Badge>
+                            </span>
                           </td>
-                          <td className="py-2 font-mono text-text-primary">{p.size}</td>
-                          <td className="py-2 font-mono text-text-secondary">
+                          <td className="py-2.5 font-mono tabular-nums text-text-primary">{p.size}</td>
+                          <td className="py-2.5 font-mono tabular-nums text-text-secondary">
                             {formatPrice(p.entryPrice)}
                           </td>
-                          <td className="py-2 font-mono text-text-secondary">
+                          <td className="py-2.5 font-mono tabular-nums text-text-secondary">
                             {formatPrice(p.markPrice)}
                           </td>
-                          <td className="py-2 font-mono text-danger-red">
+                          <td className="py-2.5 font-mono tabular-nums text-danger-red">
                             {p.stopLoss ? formatPrice(p.stopLoss) : '—'}
                           </td>
-                          <td className="py-2 font-mono text-success-green">
+                          <td className="py-2.5 font-mono tabular-nums text-success-green">
                             {p.takeProfit ? formatPrice(p.takeProfit) : '—'}
                           </td>
                           <td
-                            className={`py-2 font-mono ${
+                            className={`py-2.5 font-mono tabular-nums ${
                               p.pnl >= 0 ? 'text-success-green' : 'text-danger-red'
                             }`}
                           >
@@ -447,11 +453,11 @@ export default function PaperTrading() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.2 }}
-              className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+              className="panel p-5"
             >
               <h3 className="mb-3 text-sm font-semibold text-text-primary">Recent Orders</h3>
               {orders.length === 0 ? (
-                <p className="text-sm text-text-muted">No orders yet.</p>
+                <p className="py-8 text-center text-sm text-text-muted">No orders yet.</p>
               ) : (
                 <DataTable
                   columns={orderColumns}

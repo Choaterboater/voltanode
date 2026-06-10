@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 import Layout from '@/components/Layout';
 import IdleStateBanner from '@/components/IdleStateBanner';
-import Badge from '@/components/Badge';
 import {
   getStrategies,
   getTrades,
@@ -159,20 +158,20 @@ export default function BotLab() {
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+          className="panel p-5"
         >
-          <h2 className="mb-3 text-base font-semibold text-text-primary">Create New Bot</h2>
+          <h2 className="mb-4 text-sm font-semibold text-text-primary">Create New Bot</h2>
           <div className="flex flex-wrap items-end gap-3 xl:gap-4">
             <div>
-              <label className="mb-1 block text-xs text-text-muted">Asset class</label>
-              <div className="inline-flex rounded-md border border-border-subtle bg-bg-input p-0.5">
+              <label className="stat-label mb-1.5 block">Asset class</label>
+              <div className="inline-flex items-center gap-0.5 rounded-lg border border-border-subtle bg-bg-input p-0.5">
                 <button
                   type="button"
                   onClick={() => handleAssetClassChange('crypto')}
-                  className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                     assetClass === 'crypto'
-                      ? 'bg-accent-cyan text-text-inverse'
-                      : 'text-text-secondary hover:text-text-primary'
+                      ? 'bg-bg-elevated text-text-primary shadow-card'
+                      : 'text-text-muted hover:text-text-secondary'
                   }`}
                 >
                   Crypto
@@ -180,10 +179,10 @@ export default function BotLab() {
                 <button
                   type="button"
                   onClick={() => handleAssetClassChange('stock')}
-                  className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                     assetClass === 'stock'
-                      ? 'bg-accent-cyan text-text-inverse'
-                      : 'text-text-secondary hover:text-text-primary'
+                      ? 'bg-bg-elevated text-text-primary shadow-card'
+                      : 'text-text-muted hover:text-text-secondary'
                   }`}
                 >
                   Stocks
@@ -191,11 +190,11 @@ export default function BotLab() {
               </div>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-text-muted">Strategy</label>
+              <label className="stat-label mb-1.5 block">Strategy</label>
               <select
                 value={selectedStrategy}
                 onChange={(e) => setSelectedStrategy(e.target.value)}
-                className="rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan"
+                className="rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               >
                 <option value="momentum">Momentum</option>
                 <option value="mean_reversion">Mean Reversion</option>
@@ -208,7 +207,7 @@ export default function BotLab() {
               </select>
             </div>
             <div className="flex flex-col">
-              <label className="mb-1 block text-xs text-text-muted">
+              <label className="stat-label mb-1.5 block">
                 {isMultiCapable ? 'Symbol(s) — comma-separated' : 'Symbol'}
               </label>
               <input
@@ -216,7 +215,7 @@ export default function BotLab() {
                 value={symbolInput}
                 onChange={(e) => setSymbolInput(e.target.value)}
                 placeholder={isMultiCapable ? 'BTC, ETH, SOL' : 'BTC'}
-                className="rounded-md border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-cyan min-w-[14rem]"
+                className="min-w-[14rem] rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               />
               <div className="mt-1 flex flex-wrap gap-1">
                 {POPULAR_SYMBOLS.slice(0, isMultiCapable ? 8 : 6).map((s) => {
@@ -246,7 +245,7 @@ export default function BotLab() {
                           return Array.from(set).join(', ');
                         });
                       }}
-                      className={`rounded border px-1.5 py-0.5 text-[10px] font-mono transition-colors ${
+                      className={`rounded-md border px-1.5 py-0.5 font-mono text-2xs transition-colors ${
                         isSelected
                           ? 'border-accent-cyan bg-accent-cyan/10 text-accent-cyan'
                           : 'border-border-subtle bg-bg-input/50 text-text-secondary hover:border-accent-cyan/50 hover:text-text-primary'
@@ -261,10 +260,10 @@ export default function BotLab() {
             <button
               onClick={handleCreateBot}
               disabled={registering}
-              className="flex items-center gap-1.5 rounded-md bg-accent-cyan px-4 py-2 text-sm font-semibold text-text-inverse hover:brightness-110 transition-all disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90 disabled:opacity-50"
             >
               {registering ? (
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-text-inverse border-t-transparent" />
               ) : (
                 <Plus className="h-4 w-4" />
               )}
@@ -280,9 +279,9 @@ export default function BotLab() {
 
         {/* Active Bots */}
         <div>
-          <h2 className="mb-3 text-lg font-semibold text-text-primary">Active Bots</h2>
+          <h2 className="mb-3 text-sm font-semibold text-text-primary">Active Bots</h2>
           {strategies.length === 0 ? (
-            <div className="rounded-[10px] border border-border-subtle bg-bg-surface p-8 text-center text-sm text-text-muted">
+            <div className="panel p-8 text-center text-sm text-text-muted">
               No active bots. Create one above.
             </div>
           ) : (
@@ -320,7 +319,7 @@ export default function BotLab() {
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.25, delay: i * 0.05 }}
-                    className="flex flex-col gap-3 rounded-[10px] border border-border-subtle bg-bg-surface p-4 sm:flex-row sm:items-center"
+                    className="panel panel-hover flex flex-col gap-4 p-5 sm:flex-row sm:items-center"
                   >
                     <div className="flex items-center gap-3">
                       <div className="rounded-lg bg-accent-cyan/10 p-2 text-accent-cyan">
@@ -329,15 +328,15 @@ export default function BotLab() {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-text-primary">{bot.strategy_type}</span>
-                          <Badge variant={bot.is_active ? 'success' : 'neutral'}>
+                          <span className={bot.is_active ? 'pill-success' : 'pill-neutral'}>
                             {bot.is_active ? 'Running' : 'Paused'}
-                          </Badge>
-                          <Badge variant={assetClassLabel === 'stock' ? 'info' : 'cyan'}>
+                          </span>
+                          <span className={assetClassLabel === 'stock' ? 'pill bg-info-purple/10 text-info-purple' : 'pill-info'}>
                             {assetClassLabel === 'stock' ? 'Stock' : 'Crypto'}
-                          </Badge>
+                          </span>
                           {fullSymbolList.length === 0 ? (
                             <span
-                              className="font-mono text-xs text-text-muted italic"
+                              className="font-mono text-xs italic text-text-muted"
                               title="No hardcoded symbols — this bot pulls candidates at runtime from the Watchlist / Scanner."
                             >
                               Dynamic universe
@@ -349,25 +348,25 @@ export default function BotLab() {
                             >
                               {previewSymbols.join(', ')}
                               {overflowCount > 0 && (
-                                <span className="ml-1.5 inline-block rounded border border-accent-cyan/30 bg-accent-cyan/10 px-1.5 py-0.5 text-[10px] text-accent-cyan">
+                                <span className="ml-1.5 inline-block rounded-md border border-accent-cyan/30 bg-accent-cyan/10 px-1.5 py-0.5 text-2xs text-accent-cyan">
                                   +{overflowCount} more
                                 </span>
                               )}
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-text-muted">{bot.strategy_id}</p>
+                        <p className="text-2xs text-text-muted">{bot.strategy_id}</p>
                       </div>
                     </div>
 
-                    <div className="flex flex-1 flex-wrap gap-4 sm:justify-center">
-                      <div className="text-center">
-                        <p className="text-xs text-text-muted">Trades</p>
-                        <p className="font-mono text-sm text-text-primary">
+                    <div className="grid flex-1 grid-cols-3 gap-2 sm:max-w-md sm:justify-self-center">
+                      <div className="rounded-lg bg-bg-input p-2.5 text-center">
+                        <p className="stat-label">Trades</p>
+                        <p className="font-mono text-sm tabular-nums text-text-primary">
                           {totalTrades}
                           {totalTrades > 0 && closedTrades < totalTrades && (
                             <span
-                              className="ml-1 text-[10px] text-text-muted"
+                              className="ml-1 text-2xs text-text-muted"
                               title={`${closedTrades} closed, ${totalTrades - closedTrades} open`}
                             >
                               ({closedTrades}c)
@@ -375,16 +374,16 @@ export default function BotLab() {
                           )}
                         </p>
                       </div>
-                      <div className="text-center">
-                        <p className="text-xs text-text-muted">Win Rate</p>
-                        <p className="font-mono text-sm text-text-primary">
+                      <div className="rounded-lg bg-bg-input p-2.5 text-center">
+                        <p className="stat-label">Win Rate</p>
+                        <p className="font-mono text-sm tabular-nums text-text-primary">
                           {winRate != null ? `${winRate.toFixed(1)}%` : '—'}
                         </p>
                       </div>
-                      <div className="text-center">
-                        <p className="text-xs text-text-muted">P&L</p>
+                      <div className="rounded-lg bg-bg-input p-2.5 text-center">
+                        <p className="stat-label">P&L</p>
                         <p
-                          className={`font-mono text-sm ${
+                          className={`font-mono text-sm tabular-nums ${
                             pnlValue > 0
                               ? 'text-success-green'
                               : pnlValue < 0
@@ -402,7 +401,7 @@ export default function BotLab() {
                         onClick={() => handleToggle(bot.strategy_id, bot.is_active)}
                         aria-label={bot.is_active ? `Pause ${bot.strategy_type} bot` : `Resume ${bot.strategy_type} bot`}
                         title={bot.is_active ? 'Pause bot' : 'Resume bot'}
-                        className={`rounded-md p-2 transition-colors ${
+                        className={`rounded-lg p-2 transition-colors ${
                           bot.is_active
                             ? 'text-warning-amber hover:bg-warning-amber/10'
                             : 'text-success-green hover:bg-success-green/10'
@@ -413,14 +412,14 @@ export default function BotLab() {
                       <button
                         aria-label={`${bot.strategy_type} bot settings`}
                         title="Bot settings"
-                        className="rounded-md p-2 text-text-secondary hover:bg-bg-input hover:text-text-primary transition-colors"
+                        className="rounded-lg p-2 text-text-secondary transition-colors hover:bg-bg-input hover:text-text-primary"
                       >
                         <Settings className="h-4 w-4" />
                       </button>
                       <button
                         aria-label={`Delete ${bot.strategy_type} bot`}
                         title="Delete bot"
-                        className="rounded-md p-2 text-danger-red hover:bg-danger-red/10 transition-colors"
+                        className="rounded-lg p-2 text-danger-red transition-colors hover:bg-danger-red/10"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>

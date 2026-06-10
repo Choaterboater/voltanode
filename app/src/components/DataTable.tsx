@@ -29,21 +29,21 @@ export default function DataTable<T>({
 }: DataTableProps<T>) {
   if (data.length === 0) {
     return (
-      <div className="flex h-32 items-center justify-center rounded-[10px] border border-border-subtle bg-bg-surface">
+      <div className="panel flex h-32 items-center justify-center">
         <p className="text-sm text-text-muted">{emptyMessage}</p>
       </div>
     );
   }
 
   return (
-    <div className="overflow-x-auto rounded-[10px] border border-border-subtle bg-bg-surface">
+    <div className="panel overflow-x-auto">
       <table className="w-full">
         <thead>
-          <tr className={`border-b border-border-subtle ${headerClassName}`}>
+          <tr className={`border-b border-border-subtle bg-bg-input/50 ${headerClassName}`}>
             {columns.map((col) => (
               <th
                 key={col.key}
-                className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-text-muted ${col.className || ''}`}
+                className={`px-4 py-2.5 text-left text-2xs font-semibold uppercase tracking-wider text-text-muted ${col.className || ''}`}
               >
                 {col.header}
               </th>
@@ -56,8 +56,8 @@ export default function DataTable<T>({
               key={keyExtractor(row)}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              transition={{ duration: 0.3, delay: index * 0.05 }}
-              className={`border-b border-border-subtle transition-colors hover:bg-bg-input ${rowClassName}`}
+              transition={{ duration: 0.3, delay: Math.min(index * 0.04, 0.4) }}
+              className={`border-b border-border-subtle/60 transition-colors last:border-b-0 hover:bg-bg-elevated/40 ${rowClassName}`}
             >
               {columns.map((col) => (
                 <td

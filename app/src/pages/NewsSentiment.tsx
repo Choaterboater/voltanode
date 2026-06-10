@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import Layout from '../components/Layout';
 import MetricCard from '../components/MetricCard';
-import Badge from '../components/Badge';
 import DataTable from '../components/DataTable';
 import { getNewsStatus, analyzeHeadline, getSymbolSentiment, getTrendingSymbols, getPriceMap } from '../lib/api';
 import type { SentimentResult, TrendingSymbol, NewsStatus } from '../types';
@@ -232,10 +231,11 @@ export default function NewsSentiment() {
     }
   };
 
-  const sentimentVariant = (compound: number): 'success' | 'danger' | 'neutral' => {
-    if (compound > 0.15) return 'success';
-    if (compound < -0.15) return 'danger';
-    return 'neutral';
+  // Maps a compound score to its pill class (pill-success / pill-danger / pill-neutral).
+  const sentimentPill = (compound: number): string => {
+    if (compound > 0.15) return 'pill-success';
+    if (compound < -0.15) return 'pill-danger';
+    return 'pill-neutral';
   };
 
   const sentimentLabel = (compound: number) => {
@@ -250,25 +250,25 @@ export default function NewsSentiment() {
       rightContent={
         <div className="flex items-center gap-2">
           {status?.ollamaAvailable ? (
-            <Badge variant="success"><CheckCircle2 className="mr-1 h-3 w-3" />Ollama</Badge>
+            <span className="pill-success"><CheckCircle2 className="h-3 w-3" />Ollama</span>
           ) : (
-            <Badge variant="danger"><XCircle className="mr-1 h-3 w-3" />Ollama</Badge>
+            <span className="pill-danger"><XCircle className="h-3 w-3" />Ollama</span>
           )}
           {status?.vaderAvailable ? (
-            <Badge variant="success">VADER</Badge>
+            <span className="pill-success">VADER</span>
           ) : (
-            <Badge variant="warning"><AlertTriangle className="mr-1 h-3 w-3" />VADER</Badge>
+            <span className="pill-warning"><AlertTriangle className="h-3 w-3" />VADER</span>
           )}
         </div>
       }
     >
       {/* Compact status strip — config goes in a single thin row instead
           of 4 big tiles. Trader cares about news, not which LLM is wired. */}
-      <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[10px] border border-border-subtle bg-bg-surface px-4 py-2 text-xs">
+      <div className="panel mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 text-xs">
         <span className="flex items-center gap-1.5 text-text-muted">
           <Brain className="h-3.5 w-3.5" />
           <span>LLM</span>
-          <span className="font-mono text-text-primary">{status?.llmProvider ?? '—'}</span>
+          <span className="font-mono tabular-nums text-text-primary">{status?.llmProvider ?? '—'}</span>
           {status?.llmConfigured ? (
             <CheckCircle2 className="h-3 w-3 text-success-green" />
           ) : (
@@ -294,7 +294,7 @@ export default function NewsSentiment() {
         <span className="flex items-center gap-1.5 text-text-muted">
           <Zap className="h-3.5 w-3.5" />
           <span>Threshold</span>
-          <span className="font-mono text-text-primary">{status?.hybridThreshold ?? 0.6}</span>
+          <span className="font-mono tabular-nums text-text-primary">{status?.hybridThreshold ?? 0.6}</span>
         </span>
       </div>
 
@@ -307,7 +307,7 @@ export default function NewsSentiment() {
         {advancedOpen ? null : (
           <button
             onClick={() => setAdvancedOpen(true)}
-            className="w-full rounded-[10px] border border-dashed border-border-subtle bg-bg-surface px-4 py-2 text-left text-xs text-text-muted transition-colors hover:border-accent-cyan/30 hover:text-text-secondary"
+            className="w-full rounded-xl border border-dashed border-border-subtle bg-bg-surface px-4 py-2 text-left text-xs text-text-muted transition-colors hover:border-accent-cyan/30 hover:text-text-secondary"
           >
             <span className="inline-flex items-center gap-1.5">
               <Brain className="h-3.5 w-3.5" />
@@ -320,11 +320,11 @@ export default function NewsSentiment() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.1 }}
-          className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+          className="panel p-5"
         >
-          <h2 className="mb-4 flex items-center justify-between text-base font-semibold text-text-primary">
+          <h2 className="mb-4 flex items-center justify-between text-sm font-semibold text-text-primary">
             <span className="flex items-center gap-2">
-              <Brain className="h-5 w-5 text-accent-cyan" />
+              <Brain className="h-4 w-4 text-accent-cyan" />
               Sentiment Analyzer
             </span>
             <button
@@ -336,39 +336,39 @@ export default function NewsSentiment() {
           </h2>
           <form onSubmit={handleAnalyze} className="space-y-3">
             <div>
-              <label className="mb-1 block text-xs text-text-muted">Headline</label>
+              <label className="stat-label mb-1.5 block">Headline</label>
               <input
                 type="text"
                 value={headline}
                 onChange={(e) => setHeadline(e.target.value)}
                 placeholder="Apple reports record earnings..."
-                className="w-full rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+                className="w-full rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-text-muted">Summary (optional)</label>
+              <label className="stat-label mb-1.5 block">Summary (optional)</label>
               <textarea
                 value={summary}
                 onChange={(e) => setSummary(e.target.value)}
                 placeholder="Additional context..."
                 rows={2}
-                className="w-full rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+                className="w-full rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-text-muted">Symbols (comma-separated)</label>
+              <label className="stat-label mb-1.5 block">Symbols (comma-separated)</label>
               <input
                 type="text"
                 value={symbolInput}
                 onChange={(e) => setSymbolInput(e.target.value)}
                 placeholder="AAPL, TSLA"
-                className="w-full rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+                className="w-full rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
               />
             </div>
             <button
               type="submit"
               disabled={analyzeLoading || !headline.trim()}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent-cyan px-4 py-2 text-sm font-medium text-text-inverse transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90 disabled:opacity-50"
             >
               {analyzeLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}
               {analyzeLoading ? 'Analyzing...' : 'Analyze Sentiment'}
@@ -379,44 +379,44 @@ export default function NewsSentiment() {
           {analyzeResults.length > 0 && (
             <div className="mt-4 space-y-3">
               {analyzeResults.map((r) => (
-                <div key={`${r.articleId}-${r.symbol}`} className="rounded-lg border border-border-subtle bg-bg-base p-4">
-                  <div className="mb-2 flex items-center justify-between">
+                <div key={`${r.articleId}-${r.symbol}`} className="panel p-4">
+                  <div className="mb-3 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-sm font-medium text-text-primary">{r.symbol}</span>
-                      <span className="font-mono text-xs text-text-secondary tabular-nums">{fmtPrice(r.symbol)}</span>
-                      <Badge variant={sentimentVariant(r.compoundScore)}>
+                      <span className="font-mono text-xs tabular-nums text-text-secondary">{fmtPrice(r.symbol)}</span>
+                      <span className={sentimentPill(r.compoundScore)}>
                         {sentimentLabel(r.compoundScore)}
-                      </Badge>
-                      <Badge variant="cyan">{r.model}</Badge>
+                      </span>
+                      <span className="pill-info">{r.model}</span>
                     </div>
-                    <span className="text-xs text-text-muted">
+                    <span className="text-2xs text-text-muted">
                       Impact: <span className="text-text-secondary">{r.impactAssessment}</span>
                     </span>
                   </div>
-                  <div className="mb-2 grid grid-cols-4 gap-2">
+                  <div className="mb-3 grid grid-cols-4 gap-2">
                     <div className="text-center">
-                      <p className="text-xs text-text-muted">Compound</p>
-                      <p className={`font-mono text-sm font-medium ${r.compoundScore > 0 ? 'text-success-green' : r.compoundScore < 0 ? 'text-danger-red' : 'text-text-secondary'}`}>
+                      <p className="stat-label">Compound</p>
+                      <p className={`font-mono text-sm font-medium tabular-nums ${r.compoundScore > 0 ? 'text-success-green' : r.compoundScore < 0 ? 'text-danger-red' : 'text-text-secondary'}`}>
                         {r.compoundScore > 0 ? '+' : ''}{r.compoundScore.toFixed(3)}
                       </p>
                     </div>
                     <div className="text-center">
-                      <p className="text-xs text-text-muted">Confidence</p>
-                      <p className="font-mono text-sm font-medium text-text-primary">{(r.confidence * 100).toFixed(0)}%</p>
+                      <p className="stat-label">Confidence</p>
+                      <p className="font-mono text-sm font-medium tabular-nums text-text-primary">{(r.confidence * 100).toFixed(0)}%</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-xs text-text-muted">Pos</p>
-                      <p className="font-mono text-sm font-medium text-success-green">{r.positiveScore.toFixed(2)}</p>
+                      <p className="stat-label">Pos</p>
+                      <p className="font-mono text-sm font-medium tabular-nums text-success-green">{r.positiveScore.toFixed(2)}</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-xs text-text-muted">Neg</p>
-                      <p className="font-mono text-sm font-medium text-danger-red">{r.negativeScore.toFixed(2)}</p>
+                      <p className="stat-label">Neg</p>
+                      <p className="font-mono text-sm font-medium tabular-nums text-danger-red">{r.negativeScore.toFixed(2)}</p>
                     </div>
                   </div>
                   {r.keyThemes.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
                       {r.keyThemes.map((theme) => (
-                        <span key={theme} className="rounded bg-bg-elevated px-2 py-0.5 text-xs text-text-secondary">
+                        <span key={theme} className="rounded-md bg-bg-elevated px-2 py-0.5 text-2xs text-text-secondary">
                           {theme}
                         </span>
                       ))}
@@ -436,10 +436,10 @@ export default function NewsSentiment() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.05 }}
-          className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+          className="panel p-5"
         >
-          <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-text-primary">
-            <Search className="h-5 w-5 text-accent-cyan" />
+          <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-text-primary">
+            <Search className="h-4 w-4 text-accent-cyan" />
             Symbol Sentiment Lookup
           </h2>
           <form
@@ -454,12 +454,12 @@ export default function NewsSentiment() {
               value={lookupSymbol}
               onChange={(e) => setLookupSymbol(e.target.value.toUpperCase())}
               placeholder="Search by ticker — AAPL, NVDA, TSLA, BTCUSD..."
-              className="flex-1 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 text-sm font-mono text-text-primary placeholder:text-text-muted focus:border-accent-cyan focus:outline-none"
+              className="flex-1 rounded-lg border border-border-subtle bg-bg-input px-3 py-2 font-mono text-sm text-text-primary placeholder:text-text-muted focus:border-accent-cyan/50 focus:outline-none focus:ring-2 focus:ring-accent-cyan/20"
             />
             <button
               type="submit"
               disabled={lookupLoading || !lookupSymbol.trim()}
-              className="flex items-center gap-2 rounded-lg bg-accent-cyan px-4 py-2 text-sm font-medium text-text-inverse transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg bg-accent-cyan px-3.5 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-cyan/90 disabled:opacity-50"
             >
               {lookupLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
               <span className="hidden sm:inline">Look up</span>
@@ -468,13 +468,13 @@ export default function NewsSentiment() {
           {/* Quick-pick chips so a user can score any of the usual suspects
               with one click, without having to know to scroll down to the
               Trending grid first. */}
-          <div className="mb-4 flex flex-wrap gap-1.5">
-            <span className="text-[10px] uppercase tracking-wider text-text-muted">Quick</span>
+          <div className="mb-4 flex flex-wrap items-center gap-1.5">
+            <span className="stat-label">Quick</span>
             {['AAPL','NVDA','TSLA','MSFT','GOOGL','META','AMD','BTCUSD','ETHUSD'].map((sym) => (
               <button
                 key={sym}
                 onClick={() => runLookup(sym)}
-                className="rounded-full border border-border-subtle bg-bg-input px-2.5 py-0.5 text-[11px] font-mono text-text-secondary transition-colors hover:border-accent-cyan/40 hover:text-accent-cyan"
+                className="rounded-full border border-border-subtle bg-bg-input px-2.5 py-0.5 font-mono text-2xs text-text-secondary transition-colors hover:border-accent-cyan/40 hover:text-accent-cyan"
               >
                 {sym}
               </button>
@@ -482,15 +482,15 @@ export default function NewsSentiment() {
           </div>
 
           {lookupResult?.summary && (
-            <div className="mb-4 rounded-lg border border-border-subtle bg-bg-base p-4">
-              <div className="mb-2 flex items-center justify-between">
+            <div className="panel mb-4 p-4">
+              <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-sm font-medium text-text-primary">{lookupResult.symbol}</span>
-                  <span className="font-mono text-xs text-text-secondary tabular-nums">{fmtPrice(lookupResult.symbol)}</span>
+                  <span className="font-mono text-xs tabular-nums text-text-secondary">{fmtPrice(lookupResult.symbol)}</span>
                 </div>
-                <Badge variant={sentimentVariant(lookupResult.summary.avgCompound)}>
+                <span className={sentimentPill(lookupResult.summary.avgCompound)}>
                   {lookupResult.summary.sentimentLabel}
-                </Badge>
+                </span>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <MetricCard label="Avg Compound" value={lookupResult.summary.avgCompound.toFixed(3)} />
@@ -505,21 +505,21 @@ export default function NewsSentiment() {
               columns={[
                 { key: 'symbol', header: 'Symbol', className: 'w-20' },
                 { key: 'compoundScore', header: 'Compound', render: (r) => (
-                  <span className={`font-mono ${r.compoundScore > 0 ? 'text-success-green' : r.compoundScore < 0 ? 'text-danger-red' : 'text-text-secondary'}`}>
+                  <span className={`font-mono tabular-nums ${r.compoundScore > 0 ? 'text-success-green' : r.compoundScore < 0 ? 'text-danger-red' : 'text-text-secondary'}`}>
                     {r.compoundScore.toFixed(3)}
                   </span>
                 )},
-                { key: 'confidence', header: 'Conf', render: (r) => <span className="font-mono">{(r.confidence * 100).toFixed(0)}%</span> },
-                { key: 'model', header: 'Model', render: (r) => <Badge variant="cyan">{r.model}</Badge> },
+                { key: 'confidence', header: 'Conf', render: (r) => <span className="font-mono tabular-nums">{(r.confidence * 100).toFixed(0)}%</span> },
+                { key: 'model', header: 'Model', render: (r) => <span className="pill-info">{r.model}</span> },
                 { key: 'impactAssessment', header: 'Impact', render: (r) => (
-                  <Badge variant={r.impactAssessment === 'high' ? 'danger' : r.impactAssessment === 'medium' ? 'warning' : 'neutral'}>
+                  <span className={r.impactAssessment === 'high' ? 'pill-danger' : r.impactAssessment === 'medium' ? 'pill-warning' : 'pill-neutral'}>
                     {r.impactAssessment}
-                  </Badge>
+                  </span>
                 )},
                 { key: 'keyThemes', header: 'Themes', render: (r) => (
                   <div className="flex flex-wrap gap-1">
                     {r.keyThemes.slice(0, 3).map((t) => (
-                      <span key={t} className="rounded bg-bg-elevated px-1.5 py-0.5 text-xs text-text-muted">{t}</span>
+                      <span key={t} className="rounded-md bg-bg-elevated px-1.5 py-0.5 text-2xs text-text-muted">{t}</span>
                     ))}
                   </div>
                 )},
@@ -537,17 +537,17 @@ export default function NewsSentiment() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.3 }}
-        className="mt-6 rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+        className="panel mt-6 p-5"
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="flex items-center gap-2 text-base font-semibold text-text-primary">
-            <TrendingUp className="h-5 w-5 text-accent-cyan" />
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+            <TrendingUp className="h-4 w-4 text-accent-cyan" />
             Trending by News Volume
           </h2>
           <button
             onClick={loadTrending}
             disabled={trendingLoading}
-            className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-input px-3 py-1.5 text-xs text-text-secondary transition-colors hover:text-text-primary"
+            className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated/60 px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:border-accent-cyan/30 hover:text-text-primary"
           >
             {trendingLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <TrendingUp className="h-3 w-3" />}
             Refresh
@@ -556,7 +556,7 @@ export default function NewsSentiment() {
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {trending.length === 0 && !trendingLoading && (
-            <div className="col-span-full flex h-32 items-center justify-center rounded-lg border border-border-subtle bg-bg-base">
+            <div className="panel col-span-full flex h-32 items-center justify-center">
               <p className="text-sm text-text-muted">No trending symbols. Set Alpaca API keys to fetch news.</p>
             </div>
           )}
@@ -568,24 +568,24 @@ export default function NewsSentiment() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.25, delay: i * 0.05 }}
-              className="text-left rounded-lg border border-border-subtle bg-bg-base p-4 transition-colors hover:border-accent-cyan/40 hover:bg-bg-elevated cursor-pointer"
+              className="panel panel-hover cursor-pointer p-4 text-left"
               title={`Click to look up ${t.symbol} sentiment + headlines`}
             >
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-baseline gap-2">
                   <span className="font-mono text-base font-semibold text-accent-cyan">{t.symbol}</span>
-                  <span className="font-mono text-xs text-text-secondary tabular-nums">{fmtPrice(t.symbol)}</span>
+                  <span className="font-mono text-xs tabular-nums text-text-secondary">{fmtPrice(t.symbol)}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={sentimentVariant(t.avgCompound)}>{t.sentimentLabel}</Badge>
-                  <span className="text-xs text-text-muted">{t.articleCount} articles</span>
+                  <span className={sentimentPill(t.avgCompound)}>{t.sentimentLabel}</span>
+                  <span className="font-mono text-2xs tabular-nums text-text-muted">{t.articleCount} articles</span>
                 </div>
               </div>
               <div className="mb-2 flex items-baseline gap-2">
-                <span className={`font-mono text-lg font-medium ${t.avgCompound > 0 ? 'text-success-green' : t.avgCompound < 0 ? 'text-danger-red' : 'text-text-secondary'}`}>
+                <span className={`font-mono text-lg font-medium tabular-nums ${t.avgCompound > 0 ? 'text-success-green' : t.avgCompound < 0 ? 'text-danger-red' : 'text-text-secondary'}`}>
                   {t.avgCompound > 0 ? '+' : ''}{t.avgCompound.toFixed(3)}
                 </span>
-                <span className="text-xs text-text-muted">avg sentiment</span>
+                <span className="text-2xs text-text-muted">avg sentiment</span>
               </div>
               {t.latestHeadlines.length > 0 ? (
                 <div className="space-y-1">
@@ -594,7 +594,7 @@ export default function NewsSentiment() {
                   ))}
                 </div>
               ) : (
-                <p className="text-[11px] italic text-text-muted">Click to load headlines →</p>
+                <p className="text-2xs italic text-text-muted">Click to load headlines →</p>
               )}
             </motion.button>
           ))}

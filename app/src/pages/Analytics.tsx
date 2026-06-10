@@ -9,7 +9,6 @@ import {
 } from 'lucide-react';
 import Layout from '@/components/Layout';
 import DataTable from '@/components/DataTable';
-import Badge from '@/components/Badge';
 import {
   getPortfolio,
   getTrades,
@@ -125,7 +124,7 @@ export default function Analytics() {
       key: 'time',
       header: 'Time',
       render: (row: ApiTrade) => (
-        <span className="font-mono text-xs text-text-muted">
+        <span className="font-mono text-xs tabular-nums text-text-muted">
           {new Date(row.timestamp).toLocaleString()}
         </span>
       ),
@@ -145,9 +144,9 @@ export default function Analytics() {
         // 'BUY' compare painted every row red.
         const side = String(row.side ?? '').toLowerCase();
         return (
-          <Badge variant={side === 'buy' ? 'success' : 'danger'}>
+          <span className={side === 'buy' ? 'pill-success' : 'pill-danger'}>
             {side.toUpperCase()}
-          </Badge>
+          </span>
         );
       },
     },
@@ -155,21 +154,21 @@ export default function Analytics() {
       key: 'qty',
       header: 'Qty',
       render: (row: ApiTrade) => (
-        <span className="font-mono text-sm text-text-primary">{row.quantity}</span>
+        <span className="font-mono text-sm tabular-nums text-text-primary">{row.quantity}</span>
       ),
     },
     {
       key: 'price',
       header: 'Price',
       render: (row: ApiTrade) => (
-        <span className="font-mono text-sm text-text-primary">{formatPrice(row.price)}</span>
+        <span className="font-mono text-sm tabular-nums text-text-primary">{formatPrice(row.price)}</span>
       ),
     },
     {
       key: 'fee',
       header: 'Fee',
       render: (row: ApiTrade) => (
-        <span className="font-mono text-sm text-text-muted">{formatCurrency(row.fee)}</span>
+        <span className="font-mono text-sm tabular-nums text-text-muted">{formatCurrency(row.fee)}</span>
       ),
     },
     {
@@ -178,7 +177,11 @@ export default function Analytics() {
       render: (row: ApiTrade) => {
         const pnl = row.realized_pnl ?? 0;
         return (
-          <span className={`font-mono text-sm ${pnl >= 0 ? 'text-success-green' : 'text-danger-red'}`}>
+          <span
+            className={`font-mono text-sm tabular-nums ${
+              pnl >= 0 ? 'text-success-green' : 'text-danger-red'
+            }`}
+          >
             {pnl >= 0 ? '+' : ''}
             {formatCurrency(pnl)}
           </span>
@@ -212,10 +215,10 @@ export default function Analytics() {
   const breakevenCount = trades.filter((t) => t.realized_pnl === 0).length;
   const openCount = trades.filter((t) => t.realized_pnl == null).length;
   const pieData = [
-    { name: 'Wins', value: summary.winCount, color: '#10B981' },
-    { name: 'Losses', value: summary.lossCount, color: '#EF4444' },
-    { name: 'Breakeven', value: breakevenCount, color: '#64748B' },
-    { name: 'Open', value: openCount, color: '#0EA5E9' },
+    { name: 'Wins', value: summary.winCount, color: '#34D399' },
+    { name: 'Losses', value: summary.lossCount, color: '#F87171' },
+    { name: 'Breakeven', value: breakevenCount, color: '#6E7E96' },
+    { name: 'Open', value: openCount, color: '#22D3EE' },
   ].filter((d) => d.value > 0);
   void closedCount;
 
@@ -231,7 +234,7 @@ export default function Analytics() {
 
   return (
     <Layout title="Analytics">
-      <div className="space-y-5">
+      <div className="space-y-6">
         {error && (
           <div className="rounded-lg border border-danger-red/30 bg-danger-red/10 px-4 py-2 text-sm text-danger-red">
             {error}
@@ -243,37 +246,45 @@ export default function Analytics() {
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-[10px] border border-border-subtle bg-bg-surface p-4"
+            className="panel p-4"
           >
             <div className="flex items-center gap-2 text-text-muted">
               <Activity className="h-4 w-4" />
-              <span className="text-xs">Total Trades</span>
+              <span className="stat-label">Total Trades</span>
             </div>
-            <p className="mt-1 font-mono text-xl text-text-primary">{summary.totalTrades}</p>
+            <p className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-text-primary">
+              {summary.totalTrades}
+            </p>
           </motion.div>
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.05 }}
-            className="rounded-[10px] border border-border-subtle bg-bg-surface p-4"
+            className="panel p-4"
           >
             <div className="flex items-center gap-2 text-text-muted">
               <Target className="h-4 w-4" />
-              <span className="text-xs">Win Rate</span>
+              <span className="stat-label">Win Rate</span>
             </div>
-            <p className="mt-1 font-mono text-xl text-text-primary">{summary.winRate.toFixed(1)}%</p>
+            <p className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-text-primary">
+              {summary.winRate.toFixed(1)}%
+            </p>
           </motion.div>
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="rounded-[10px] border border-border-subtle bg-bg-surface p-4"
+            className="panel p-4"
           >
             <div className="flex items-center gap-2 text-text-muted">
               <TrendingUp className="h-4 w-4" />
-              <span className="text-xs">Total P&L</span>
+              <span className="stat-label">Total P&L</span>
             </div>
-            <p className={`mt-1 font-mono text-xl ${summary.totalPnl >= 0 ? 'text-success-green' : 'text-danger-red'}`}>
+            <p
+              className={`mt-1.5 font-mono text-xl font-semibold tabular-nums ${
+                summary.totalPnl >= 0 ? 'text-success-green' : 'text-danger-red'
+              }`}
+            >
               {summary.totalPnl >= 0 ? '+' : ''}
               {formatCurrency(summary.totalPnl)}
             </p>
@@ -282,13 +293,13 @@ export default function Analytics() {
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.15 }}
-            className="rounded-[10px] border border-border-subtle bg-bg-surface p-4"
+            className="panel p-4"
           >
             <div className="flex items-center gap-2 text-text-muted">
               <BarChart3 className="h-4 w-4" />
-              <span className="text-xs">Strategies Active</span>
+              <span className="stat-label">Strategies Active</span>
             </div>
-            <p className="mt-1 font-mono text-xl text-text-primary">
+            <p className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-text-primary">
               {strategies.filter((s) => s.is_active).length}
             </p>
           </motion.div>
@@ -301,7 +312,7 @@ export default function Analytics() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.2 }}
-            className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+            className="panel p-5"
           >
             <h3 className="mb-3 text-sm font-semibold text-text-primary">P&L by Symbol</h3>
             {barData.length === 0 ? (
@@ -311,15 +322,38 @@ export default function Analytics() {
             ) : (
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={barData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" strokeOpacity={0.3} vertical={false} />
-                    <XAxis dataKey="symbol" tick={{ fill: '#64748B', fontSize: 12 }} axisLine={{ stroke: '#1E293B' }} tickLine={false} />
-                    <YAxis tick={{ fill: '#64748B', fontSize: 12 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
+                  <BarChart data={barData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                    <CartesianGrid stroke="#1C2840" strokeDasharray="3 3" vertical={false} />
+                    <XAxis
+                      dataKey="symbol"
+                      tick={{ fontSize: 11, fill: '#6E7E96' }}
+                      axisLine={false}
+                      tickLine={false}
+                      minTickGap={28}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: '#6E7E96' }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(v: number) => `$${v.toFixed(0)}`}
+                    />
                     <Tooltip
-                      contentStyle={{ backgroundColor: '#1A2235', border: '1px solid #1E293B', borderRadius: '8px', fontSize: '12px', color: '#F8FAFC' }}
+                      contentStyle={{
+                        backgroundColor: '#0D1424',
+                        border: '1px solid #1C2840',
+                        borderRadius: 12,
+                        fontSize: 12,
+                      }}
+                      labelStyle={{ color: '#A8B7CC' }}
+                      itemStyle={{ color: '#F2F6FC' }}
+                      cursor={{ fill: 'rgba(34, 211, 238, 0.06)' }}
                       formatter={(value: number) => [formatCurrency(value), 'P&L']}
                     />
-                    <Bar dataKey="pnl" fill="#06B6D4" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
+                      {barData.map((d) => (
+                        <Cell key={d.symbol} fill={d.pnl >= 0 ? '#34D399' : '#F87171'} />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -331,7 +365,7 @@ export default function Analytics() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.25 }}
-            className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+            className="panel p-5"
           >
             <h3 className="mb-3 text-sm font-semibold text-text-primary">Win / Loss Distribution</h3>
             {pieData.length === 0 ? (
@@ -348,6 +382,16 @@ export default function Analytics() {
                           <Cell key={entry.name} fill={entry.color} />
                         ))}
                       </Pie>
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: '#0D1424',
+                          border: '1px solid #1C2840',
+                          borderRadius: 12,
+                          fontSize: 12,
+                        }}
+                        labelStyle={{ color: '#A8B7CC' }}
+                        itemStyle={{ color: '#F2F6FC' }}
+                      />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -356,7 +400,7 @@ export default function Analytics() {
                     <div key={d.name} className="flex items-center gap-2">
                       <div className="h-3 w-3 rounded-sm" style={{ backgroundColor: d.color }} />
                       <span className="text-sm text-text-secondary">{d.name}</span>
-                      <span className="font-mono text-sm text-text-primary">{d.value}</span>
+                      <span className="font-mono text-sm tabular-nums text-text-primary">{d.value}</span>
                     </div>
                   ))}
                 </div>
@@ -370,13 +414,13 @@ export default function Analytics() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.3 }}
-          className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+          className="panel p-5"
         >
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-text-primary">Trade History</h3>
             <button
               onClick={() => window.open('/api/trades/export?format=csv', '_blank')}
-              className="flex items-center gap-1.5 rounded-md bg-bg-input px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
+              className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-elevated/60 px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:border-accent-cyan/30 hover:text-text-primary"
             >
               <Download className="h-3.5 w-3.5" />
               Export CSV
@@ -396,7 +440,7 @@ export default function Analytics() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.35 }}
-          className="rounded-[10px] border border-border-subtle bg-bg-surface p-5"
+          className="panel p-5"
         >
           <h3 className="mb-3 text-sm font-semibold text-text-primary">Strategy Performance</h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -405,25 +449,31 @@ export default function Analytics() {
               return (
                 <div key={s.strategy_id} className="rounded-lg border border-border-subtle bg-bg-base p-4">
                   <div className="flex items-center justify-between">
-                    <span className="font-medium text-text-primary">{s.strategy_type}</span>
-                    <Badge variant={s.is_active ? 'success' : 'neutral'}>
+                    <span className="text-sm font-medium text-text-primary">{s.strategy_type}</span>
+                    <span className={s.is_active ? 'pill-success' : 'pill-neutral'}>
                       {s.is_active ? 'Active' : 'Idle'}
-                    </Badge>
+                    </span>
                   </div>
-                  <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                     <div>
-                      <p className="text-text-muted">Trades</p>
-                      <p className="font-mono text-text-primary">{metrics?.total_trades ?? 0}</p>
+                      <p className="stat-label">Trades</p>
+                      <p className="mt-0.5 font-mono tabular-nums text-text-primary">
+                        {metrics?.total_trades ?? 0}
+                      </p>
                     </div>
                     <div>
-                      <p className="text-text-muted">Win Rate</p>
-                      <p className="font-mono text-text-primary">
+                      <p className="stat-label">Win Rate</p>
+                      <p className="mt-0.5 font-mono tabular-nums text-text-primary">
                         {metrics?.win_rate ? `${metrics.win_rate.toFixed(1)}%` : '-'}
                       </p>
                     </div>
                     <div>
-                      <p className="text-text-muted">P&L</p>
-                      <p className={`font-mono ${(metrics?.total_pnl ?? 0) >= 0 ? 'text-success-green' : 'text-danger-red'}`}>
+                      <p className="stat-label">P&L</p>
+                      <p
+                        className={`mt-0.5 font-mono tabular-nums ${
+                          (metrics?.total_pnl ?? 0) >= 0 ? 'text-success-green' : 'text-danger-red'
+                        }`}
+                      >
                         {metrics?.total_pnl ? formatCurrency(metrics.total_pnl) : '-'}
                       </p>
                     </div>
