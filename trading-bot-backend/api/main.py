@@ -149,6 +149,8 @@ async def _run_funding_loop(app: FastAPI) -> None:
                 has_consumer = False
                 for _strats in (getattr(eng, "_strategies", {}) or {}).values():
                     for _s in _strats:
+                        if not getattr(_s, "is_active", True):
+                            continue  # benched/toggled-off bots consume nothing
                         _fg = (getattr(_s, "config", {}) or {}).get("funding_gate") or {}
                         if _fg.get("enabled") or getattr(_s, "name", "") == "funding_carry":
                             has_consumer = True
@@ -217,15 +219,16 @@ async def _run_learning_loop(app: FastAPI) -> None:
 
                     eng = getattr(app.state, "engine", None)
                     notifier = getattr(eng, "notifier", None) if eng is not None else None
-                    actions = await asyncio.to_thread(
+                    # tm.all() re-reads the whole jsonl — keep it off the event
+                    # loop (the 5s engine tick shares this loop).
+                    records = await asyncio.to_thread(tm.all)
+                    await asyncio.to_thread(
                         supervisor.run,
-                        tm.all(),
+                        records,
                         strategies_routes._registered_strategies,
                         strategies_routes._persist,
                         notifier.alert if notifier is not None else None,
                     )
-                    for a in actions:
-                        logger.warning(f"Supervisor benched {a['strategy_id']}: {a['reason']}")
                 except Exception as exc:
                     logger.warning(f"Supervisor pass failed: {exc}")
             except Exception as exc:

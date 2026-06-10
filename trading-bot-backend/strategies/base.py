@@ -117,8 +117,29 @@ class BaseStrategy(ABC):
             config: Strategy-specific configuration.
         """
         self.strategy_id = strategy_id
-        self.config = {**self.DEFAULT_CONFIG, **config}
+        merged = {**self.DEFAULT_CONFIG, **config}
+        # Deep-merge ONE level of dict-valued defaults (regime_gate, cost_gate,
+        # volatility_target, ...). A registered config carrying a PARTIAL block
+        # — e.g. {"regime_gate": {"trend_ema": 50}} — must not silently drop
+        # the default's "enabled" key the way a shallow replace did. Copying
+        # also stops instances from sharing (and mutating) the class-level
+        # default dict. An explicit non-dict user value always wins untouched.
+        for _key, _default in self.DEFAULT_CONFIG.items():
+            if not isinstance(_default, dict):
+                continue
+            if _key in config:
+                _user = config[_key]
+                if isinstance(_user, dict):
+                    merged[_key] = {**_default, **_user}
+            else:
+                merged[_key] = dict(_default)
+        self.config = merged
         self.is_active = True
+        # Supervisor bench flag: True = veto NEW entries (BUY -> HOLD) while
+        # exits keep flowing. Distinct from is_active, which the engine treats
+        # as "skip on_tick entirely" — benching a bot must never disarm the
+        # agentic exits on its open positions.
+        self.entries_disabled = False
         self.trade_count = 0
         self.win_count = 0
         self.loss_count = 0
@@ -386,6 +407,7 @@ class BaseStrategy(ABC):
             ohlcv_data = ohlcv_data.copy()
             ohlcv_data.attrs["symbol"] = tick.symbol
             self._signal_context = sig_ctx  # available to generate_signal subclasses
+            self._portfolio = portfolio    # ditto — lets latches resync with held state
             # Snapshot live equity so pct-based sizing (auto_discovery,
             # squeeze, simple_trend, news_sentiment) scales against the
             # actual account, not a hardcoded $1k baseline.
@@ -411,6 +433,24 @@ class BaseStrategy(ABC):
             except Exception:
                 self._equity = 100_000.0
             signal = self.generate_signal(ohlcv_data, tick.price)
+            # Supervisor bench: entries-only veto. SELLs/holds pass untouched
+            # so a benched bot still exits its open positions agentically.
+            if (
+                signal is not None
+                and signal.signal_type == SignalType.BUY
+                and getattr(self, "entries_disabled", False)
+            ):
+                return Signal(
+                    strategy_id=self.strategy_id,
+                    symbol=tick.symbol,
+                    signal_type=SignalType.HOLD,
+                    confidence=0.0,
+                    timestamp=signal.timestamp,
+                    metadata={
+                        "trigger": "supervisor_benched",
+                        "original_trigger": (signal.metadata or {}).get("trigger"),
+                    },
+                )
             # Volatility-target overlay (opt-in, default off). Scales a BUY's
             # suggested size inversely to recent realized volatility so calm
             # names get more capital and choppy names less — equalizing risk

@@ -30,24 +30,31 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger("volta.learning.supervisor")
 
-#: Engine-level exit/bookkeeping ids that must never be evaluated or benched.
-PROTECTED_IDS = {
-    "sltp_manager",
-    "trailing_stop",
-    "partial_take_profit",
-    "broker_sync",
-    "manual",
-    "manual_flatten",
-    "unknown",
-    "",
-}
+
+def _protective_ids() -> frozenset:
+    """The engine's protective exit ids — single source of truth."""
+    try:
+        from bot.engine import LiveTradingEngine
+
+        return LiveTradingEngine._PROTECTIVE_STRATEGY_IDS
+    except Exception:
+        return frozenset({"sltp_manager", "partial_take_profit", "trailing_stop"})
+
+
+#: Exit/bookkeeping ids that must never be evaluated or benched. Protective
+#: ids come from the engine's kill-switch exemption set so the two lists
+#: cannot drift apart.
+PROTECTED_IDS = frozenset(
+    {"broker_sync", "manual", "manual_flatten", "unknown", ""}
+) | _protective_ids()
 
 _STATE_PATH = Path("data") / "supervisor_state.json"
 
@@ -114,11 +121,14 @@ class StrategySupervisor:
         return {}
 
     def _save_state(self) -> None:
+        """Atomic write (tmp + replace): a torn state file would silently
+        reset bench watermarks and let a freshly re-enabled bot be instantly
+        re-benched on stale evidence."""
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(
-                json.dumps(self._state, indent=2), encoding="utf-8"
-            )
+            tmp = self.state_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
+            os.replace(tmp, self.state_path)
         except Exception as exc:
             logger.warning("Could not persist supervisor state: %s", exc)
 
@@ -164,6 +174,7 @@ class StrategySupervisor:
         """
         actions: List[Dict[str, Any]] = []
         perf = self.aggregate(records)
+        dirty = False
 
         for sid, rec in perf.items():
             strategy = registered.get(sid)
@@ -171,22 +182,24 @@ class StrategySupervisor:
                 continue  # engine-level id or already deleted — nothing to bench
             if sid in PROTECTED_IDS:
                 continue
-            if rec.n < self.min_trades or rec.profit_factor >= self.min_pf:
-                continue
 
             prior = self._state.get(sid) or {}
-            if not getattr(strategy, "is_active", True):
-                # Already benched (by us or the operator) — refresh the
-                # evidence snapshot but take no action.
-                self._state[sid] = {
-                    **prior,
-                    "last_eval_n": rec.n,
-                    "last_eval_pf": round(rec.profit_factor, 4),
-                }
+            benched_n = int(prior.get("benched_at_n", 0) or 0)
+            # TradeMemory is wiped + rebuilt from fills.jsonl every cycle, so
+            # n can SHRINK (log rotation / restore). Re-anchor the watermark
+            # downward or the rebench guard goes unreachable.
+            if benched_n and rec.n < benched_n:
+                prior["benched_at_n"] = benched_n = rec.n
+                self._state[sid] = prior
+                dirty = True
+
+            if rec.n < self.min_trades or rec.profit_factor >= self.min_pf:
+                continue
+            if getattr(strategy, "entries_disabled", False) or not getattr(strategy, "is_active", True):
+                # Already benched (by us) or fully off (operator) — nothing to do.
                 continue
             # Operator re-enabled after a bench: require fresh evidence
             # (new round trips beyond the bench watermark) before re-benching.
-            benched_n = int(prior.get("benched_at_n", 0) or 0)
             if benched_n and rec.n < benched_n + self.rebench_fresh_trades:
                 continue
 
@@ -194,7 +207,11 @@ class StrategySupervisor:
                 f"entry-attributed PF {rec.profit_factor:.2f} < {self.min_pf} "
                 f"over {rec.n} closed round trips (total {rec.total_pnl:+.2f})"
             )
-            strategy.is_active = False
+            # Entries-only veto — NEVER is_active=False: the engine skips
+            # on_tick entirely for inactive strategies, which would disarm
+            # the agentic exits (score-decay / trend-flip SELLs) on the
+            # benched bot's open positions and leave only blunt hard stops.
+            strategy.entries_disabled = True
             self._state[sid] = {
                 "benched_at": datetime.now(timezone.utc).isoformat(),
                 "benched_at_n": rec.n,
@@ -202,6 +219,7 @@ class StrategySupervisor:
                 "last_eval_n": rec.n,
                 "last_eval_pf": round(rec.profit_factor, 4),
             }
+            dirty = True
             actions.append({"strategy_id": sid, "reason": reason, **rec.to_dict()})
             logger.warning("Supervisor benched %s: %s", sid, reason)
             if notify is not None:
@@ -215,7 +233,8 @@ class StrategySupervisor:
                 persist()
             except Exception as exc:
                 logger.warning("Registry persist after benching failed: %s", exc)
-        self._save_state()
+        if dirty:
+            self._save_state()
         return actions
 
     # ── Reporting (GET /learning/stats) ──
@@ -225,40 +244,36 @@ class StrategySupervisor:
         records: List[Dict[str, Any]],
         registered: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
-        """Per-strategy entry-attributed performance + bench status."""
+        """Per-strategy entry-attributed performance + bench status.
+
+        One row per strategy that has either closed round trips or a registry
+        entry — registered bots with no evidence yet still show up (n=0,
+        PF None) so the UI can honestly say "no evidence" instead of omitting
+        exactly the newly enabled bots the operator most needs to watch.
+        """
         perf = self.aggregate(records)
-        rows: List[Dict[str, Any]] = []
-        seen: set = set()
-        for sid, rec in sorted(perf.items(), key=lambda kv: kv[1].total_pnl):
+        ids = (set(perf) | set(registered)) - set(PROTECTED_IDS)
+
+        def _row(sid: str) -> Dict[str, Any]:
+            rec = perf.get(sid)
             strategy = registered.get(sid)
             state = self._state.get(sid) or {}
-            rows.append(
-                {
-                    **rec.to_dict(),
-                    "registered": strategy is not None,
-                    "active": bool(getattr(strategy, "is_active", False)) if strategy is not None else None,
-                    "bench_reason": state.get("bench_reason"),
-                    "benched_at": state.get("benched_at"),
-                }
+            base = (
+                rec.to_dict()
+                if rec is not None
+                else {"strategy_id": sid, "n": 0, "profit_factor": None,
+                      "win_rate": None, "total_pnl": 0.0}
             )
-            seen.add(sid)
-        # Registered bots with no closed round trips yet still show up, so the
-        # UI can honestly say "no evidence yet" instead of omitting them.
-        for sid, strategy in registered.items():
-            if sid in seen or sid in PROTECTED_IDS:
-                continue
-            state = self._state.get(sid) or {}
-            rows.append(
-                {
-                    "strategy_id": sid,
-                    "n": 0,
-                    "profit_factor": None,
-                    "win_rate": None,
-                    "total_pnl": 0.0,
-                    "registered": True,
-                    "active": bool(getattr(strategy, "is_active", False)),
-                    "bench_reason": state.get("bench_reason"),
-                    "benched_at": state.get("benched_at"),
-                }
-            )
-        return rows
+            return {
+                **base,
+                "registered": strategy is not None,
+                "active": bool(getattr(strategy, "is_active", False)) if strategy is not None else None,
+                "entries_disabled": bool(getattr(strategy, "entries_disabled", False)) if strategy is not None else None,
+                "bench_reason": state.get("bench_reason"),
+                "benched_at": state.get("benched_at"),
+            }
+
+        return sorted(
+            (_row(sid) for sid in ids),
+            key=lambda r: (r["total_pnl"], r["strategy_id"]),
+        )

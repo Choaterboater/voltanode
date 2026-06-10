@@ -198,6 +198,24 @@ class TestRegimeGateDefaults:
         s = MACDStrategy("macd_x", {"symbol": "TEST", "regime_gate": {"enabled": False}})
         assert s.config["regime_gate"]["enabled"] is False
 
+    def test_partial_gate_dict_keeps_enabled_default(self) -> None:
+        # Review 2026-06-09: a shallow merge let {"regime_gate": {"trend_ema": 50}}
+        # silently drop "enabled": True and disable the gate.
+        from strategies.macd import MACDStrategy
+
+        s = MACDStrategy("macd_x", {"symbol": "TEST", "regime_gate": {"trend_ema": 50}})
+        assert s.config["regime_gate"]["enabled"] is True
+        assert s.config["regime_gate"]["trend_ema"] == 50
+
+    def test_instances_do_not_share_default_dicts(self) -> None:
+        from strategies.macd import MACDStrategy
+
+        a = MACDStrategy("macd_a", {"symbol": "A"})
+        b = MACDStrategy("macd_b", {"symbol": "B"})
+        a.config["regime_gate"]["enabled"] = False
+        assert b.config["regime_gate"]["enabled"] is True
+        assert MACDStrategy.DEFAULT_CONFIG["regime_gate"]["enabled"] is True
+
     def test_gate_blocks_buy_in_downtrend(self) -> None:
         from bot.config import SignalType
         from strategies.macd import MACDStrategy
@@ -278,6 +296,32 @@ class TestAtrAwareExits:
         pos = portfolio.get_position("TEST")
         assert pos is not None and pos.status == "open"
 
+    def test_atr_remeasured_for_restored_positions(self) -> None:
+        # Review 2026-06-09: atr_stop_pct is in-memory only — a restart kept
+        # the stop price but lost the measurement, silently reverting the cap
+        # and the profit manager to fixed percents. The tick loop re-measures.
+        engine = _mk_engine()
+        portfolio = engine.get_portfolio("default")
+        # Restored position: stop already attached, no ATR measurement.
+        pos = portfolio.open_position("TEST", PositionSide.LONG, 10.0, 100.0,
+                                      stop_loss=92.0, take_profit=200.0)
+        assert pos.atr_stop_pct is None
+        engine.on_tick(TickData(symbol="TEST", price=99.0), ohlcv_data=_ohlcv(day_range=4.0))
+        assert pos.atr_stop_pct == pytest.approx(0.10, abs=0.02)
+        assert pos.stop_loss == pytest.approx(92.0)  # re-measure never moves the stop
+
+    def test_operator_switch_disables_cap_widening(self) -> None:
+        engine = _mk_engine()
+        engine._max_position_loss_pct = 0.06
+        engine._atr_widens_loss_cap = False
+        portfolio = engine.get_portfolio("default")
+        pos = portfolio.open_position("TEST", PositionSide.LONG, 10.0, 100.0,
+                                      stop_loss=50.0, take_profit=200.0)
+        pos.atr_stop_pct = 0.10
+        engine.on_tick(TickData(symbol="TEST", price=93.0))  # -7% > absolute 6% cap
+        pos = portfolio.get_position("TEST")
+        assert pos is None or pos.status != "open" or pos.size == pytest.approx(0.0)
+
     def test_breakeven_scales_with_atr(self) -> None:
         engine = _mk_engine()
         portfolio = engine.get_portfolio("default")
@@ -290,6 +334,21 @@ class TestAtrAwareExits:
 
         engine._profit_manager_order(pos, TickData(symbol="TEST", price=109.0), "default")
         assert pos.stop_loss >= 100.0  # +9% > 8.75%: at least breakeven
+
+    def test_trail_arm_scales_with_atr(self) -> None:
+        # Review 2026-06-09: trail_arm stuck at the fixed 8% armed the trail
+        # BEFORE breakeven on high-vol names, re-tightening the stop inside
+        # the noise band. It must scale with the same ATR floor.
+        engine = _mk_engine()
+        portfolio = engine.get_portfolio("default")
+        pos = portfolio.open_position("TEST", PositionSide.LONG, 10.0, 100.0,
+                                      stop_loss=90.0, take_profit=200.0)
+        pos.atr_stop_pct = 0.07  # scaled trail_arm = 1.25*7% = 8.75%
+
+        # +8.2%: above the legacy fixed 8% arm, below the scaled 8.75% arm —
+        # neither breakeven nor trail may touch the stop.
+        engine._profit_manager_order(pos, TickData(symbol="TEST", price=108.2), "default")
+        assert pos.stop_loss == pytest.approx(90.0)
 
     def test_breakeven_default_without_atr(self) -> None:
         engine = _mk_engine()
@@ -411,6 +470,41 @@ class TestPhantomLotGuard:
         assert tara[0]["entry_price"] == pytest.approx(4.34)
         assert tara[0]["pnl"] == pytest.approx(-306.2, abs=1.0)
 
+    def test_average_cost_scale_in_keeps_fifo(self, tmp_path) -> None:
+        # Review 2026-06-09: the engine books partial-close P&L from the
+        # AVERAGE basis; re-anchoring to the nearest lot would mis-attribute
+        # every normal scaled-in position. Blended basis matches no single
+        # lot, so plain FIFO must be preserved.
+        from learning.trade_memory import TradeMemory
+
+        fills_path = tmp_path / "fills.jsonl"
+        rows = [
+            {"order_id": "o1", "symbol": "AAPL", "filled_qty": 100.0,
+             "filled_price": 10.0, "fee": 0.0, "slippage": 0.0,
+             "timestamp": "2026-06-01T00:00:00+00:00", "side": "buy",
+             "realized_pnl": None, "broker_order_id": "", "strategy_id": "auto_discovery_1"},
+            {"order_id": "o2", "symbol": "AAPL", "filled_qty": 300.0,
+             "filled_price": 20.0, "fee": 0.0, "slippage": 0.0,
+             "timestamp": "2026-06-02T00:00:00+00:00", "side": "buy",
+             "realized_pnl": None, "broker_order_id": "", "strategy_id": "squeeze_1"},
+            # Partial sell booked off the blended avg basis 17.50:
+            # (18 - 17.50) * 100 = +50.
+            {"order_id": "o3", "symbol": "AAPL", "filled_qty": 100.0,
+             "filled_price": 18.0, "fee": 0.0, "slippage": 0.0,
+             "timestamp": "2026-06-03T00:00:00+00:00", "side": "sell",
+             "realized_pnl": 50.0, "broker_order_id": "", "strategy_id": "sltp_manager"},
+        ]
+        fills_path.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
+                              encoding="utf-8")
+        tm = TradeMemory(memory_path=str(tmp_path / "memory.jsonl"),
+                         vault_dir=str(tmp_path / "vault"))
+        tm.backfill_from_fills(fills_path=str(fills_path))
+        recs = tm.all()
+        # Implied basis 17.50 matches neither lot -> FIFO front lot (10.0,
+        # auto_discovery's win) keeps the round trip.
+        assert recs[0]["entry_price"] == pytest.approx(10.0)
+        assert recs[0]["strategy"] == "auto_discovery_1"
+
     def test_plain_fifo_when_no_recorded_pnl(self, tmp_path) -> None:
         from learning.trade_memory import TradeMemory
 
@@ -439,6 +533,41 @@ class TestPhantomLotGuard:
         assert recs[0]["entry_price"] == pytest.approx(100.0)
 
 
+class TestEntriesDisabledVeto:
+    def test_benched_bot_buy_vetoed_sell_passes(self) -> None:
+        from bot.config import SignalType
+        from strategies.base import BaseStrategy, Signal
+
+        class AlwaysSignal(BaseStrategy):
+            name = "always"
+            SIGNAL = SignalType.BUY
+
+            def generate_signal(self, data, current_price):
+                return Signal(
+                    strategy_id=self.strategy_id, symbol="TEST",
+                    signal_type=self.SIGNAL, confidence=1.0,
+                    timestamp=datetime.now(timezone.utc), suggested_size=1.0,
+                )
+
+        from strategies.base import TickData as STick
+
+        portfolio = Portfolio("default", {"USD": 10_000.0})
+        s = AlwaysSignal("always_1", {"symbol": "TEST"})
+        s.entries_disabled = True
+
+        buy = s.on_tick(STick(symbol="TEST", price=100.0), portfolio,
+                        ohlcv_data=_ohlcv())
+        assert buy.signal_type == SignalType.HOLD
+        assert buy.metadata["trigger"] == "supervisor_benched"
+
+        # SELL on a held position must still flow — benching is entries-only.
+        portfolio.open_position("TEST", PositionSide.LONG, 5.0, 100.0)
+        s.SIGNAL = SignalType.SELL
+        sell = s.on_tick(STick(symbol="TEST", price=100.0), portfolio,
+                         ohlcv_data=_ohlcv())
+        assert sell.signal_type == SignalType.SELL
+
+
 # ── 6. auto-disable supervisor ───────────────────────────────────────────────
 
 
@@ -458,14 +587,21 @@ class TestSupervisor:
 
         return StrategySupervisor(state_path=tmp_path / "state.json")
 
+    @staticmethod
+    def _bot():
+        return SimpleNamespace(is_active=True, entries_disabled=False)
+
     def test_benches_proven_loser(self, tmp_path) -> None:
         sup = self._supervisor(tmp_path)
         records = _round_trips("bot_a", wins=4, losses=8)  # PF = 40/320 = 0.125
-        bot = SimpleNamespace(is_active=True)
+        bot = self._bot()
         persisted = []
         actions = sup.run(records, {"bot_a": bot},
                           persist=lambda: persisted.append(1))
-        assert bot.is_active is False
+        # Entries-only veto: is_active stays True so the engine keeps calling
+        # on_tick and the bot's agentic exits stay armed.
+        assert bot.entries_disabled is True
+        assert bot.is_active is True
         assert len(actions) == 1 and actions[0]["strategy_id"] == "bot_a"
         assert persisted  # registry persisted
         assert (tmp_path / "state.json").exists()
@@ -473,60 +609,80 @@ class TestSupervisor:
     def test_too_few_trades_untouched(self, tmp_path) -> None:
         sup = self._supervisor(tmp_path)
         records = _round_trips("bot_a", wins=1, losses=8)  # only 9 trades
-        bot = SimpleNamespace(is_active=True)
+        bot = self._bot()
         actions = sup.run(records, {"bot_a": bot}, persist=lambda: None)
-        assert bot.is_active is True and not actions
+        assert bot.entries_disabled is False and not actions
 
     def test_protective_ids_never_evaluated(self, tmp_path) -> None:
         sup = self._supervisor(tmp_path)
         records = _round_trips("sltp_manager", wins=0, losses=30)
-        bot = SimpleNamespace(is_active=True)
+        bot = self._bot()
         actions = sup.run(records, {"sltp_manager": bot}, persist=lambda: None)
-        assert bot.is_active is True and not actions
+        assert bot.entries_disabled is False and not actions
 
     def test_positive_edge_untouched(self, tmp_path) -> None:
         sup = self._supervisor(tmp_path)
         records = _round_trips("bot_a", wins=8, losses=4,
                                win_pnl=50.0, loss_pnl=-10.0)  # PF = 10
-        bot = SimpleNamespace(is_active=True)
+        bot = self._bot()
         actions = sup.run(records, {"bot_a": bot}, persist=lambda: None)
-        assert bot.is_active is True and not actions
+        assert bot.entries_disabled is False and not actions
 
     def test_manual_reenable_needs_fresh_evidence(self, tmp_path) -> None:
         sup = self._supervisor(tmp_path)
         records = _round_trips("bot_a", wins=4, losses=8)
-        bot = SimpleNamespace(is_active=True)
+        bot = self._bot()
         sup.run(records, {"bot_a": bot}, persist=lambda: None)
-        assert bot.is_active is False
+        assert bot.entries_disabled is True
 
-        bot.is_active = True  # operator re-enables
+        bot.entries_disabled = False  # operator re-enables (toggle clears it)
         actions = sup.run(records, {"bot_a": bot}, persist=lambda: None)
-        assert bot.is_active is True and not actions  # same stale evidence
+        assert bot.entries_disabled is False and not actions  # stale evidence
 
         # 5 fresh losing round trips later: bench again.
         fresh = records + _round_trips("bot_a", wins=0, losses=5)
         actions = sup.run(fresh, {"bot_a": bot}, persist=lambda: None)
-        assert bot.is_active is False and len(actions) == 1
+        assert bot.entries_disabled is True and len(actions) == 1
 
     def test_watermark_survives_restart(self, tmp_path) -> None:
         from learning.supervisor import StrategySupervisor
 
         records = _round_trips("bot_a", wins=4, losses=8)
-        bot = SimpleNamespace(is_active=True)
+        bot = self._bot()
         sup1 = StrategySupervisor(state_path=tmp_path / "state.json")
         sup1.run(records, {"bot_a": bot}, persist=lambda: None)
-        bot.is_active = True  # operator re-enables, then backend restarts
+        bot.entries_disabled = False  # operator re-enables, then backend restarts
 
         sup2 = StrategySupervisor(state_path=tmp_path / "state.json")
         actions = sup2.run(records, {"bot_a": bot}, persist=lambda: None)
-        assert bot.is_active is True and not actions
+        assert bot.entries_disabled is False and not actions
+
+    def test_watermark_reanchors_when_history_shrinks(self, tmp_path) -> None:
+        # Review 2026-06-09: trade memory is rebuilt from fills.jsonl every
+        # cycle;
+        # a rotated/restored log shrinks n and a fixed watermark would make
+        # re-benching unreachable.
+        sup = self._supervisor(tmp_path)
+        records = _round_trips("bot_a", wins=4, losses=8)  # n=12, benched
+        bot = self._bot()
+        sup.run(records, {"bot_a": bot}, persist=lambda: None)
+        bot.entries_disabled = False  # operator re-enables
+
+        # History rotated: only 6 round trips survive, all bad (PF 0.125),
+        # plus 5 FRESH losers => n=11 >= re-anchored 6+5.
+        shrunk = _round_trips("bot_a", wins=2, losses=4)
+        sup.run(shrunk, {"bot_a": bot}, persist=lambda: None)  # re-anchors to 6
+        fresh = shrunk + _round_trips("bot_a", wins=0, losses=5)
+        actions = sup.run(fresh, {"bot_a": bot}, persist=lambda: None)
+        assert bot.entries_disabled is True and len(actions) == 1
 
     def test_stats_reports_unbenched_and_no_evidence(self, tmp_path) -> None:
         sup = self._supervisor(tmp_path)
         records = _round_trips("bot_a", wins=4, losses=8)
-        bot_a = SimpleNamespace(is_active=True)
-        bot_b = SimpleNamespace(is_active=True)  # no closed trades yet
+        bot_a = self._bot()
+        bot_b = self._bot()  # no closed trades yet
         rows = sup.stats(records, {"bot_a": bot_a, "bot_b": bot_b})
         by_id = {r["strategy_id"]: r for r in rows}
         assert by_id["bot_a"]["n"] == 12
         assert by_id["bot_b"]["n"] == 0 and by_id["bot_b"]["profit_factor"] is None
+        assert by_id["bot_a"]["entries_disabled"] is False

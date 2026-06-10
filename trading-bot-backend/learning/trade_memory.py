@@ -368,23 +368,36 @@ class TradeMemory:
                 # the broker never actually held (the 1,035-share TARA lot:
                 # FIFO booked -$717 against the phantom 4.81 basis while the
                 # engine's broker-true number was -$306 off the real 4.34 lot).
-                # Re-anchor matching to the open lot closest to the implied
-                # basis. rec_pnl == 0.0 exactly is the engine's unknown-basis
+                # Re-anchor ONLY when some lot matches the implied basis
+                # closely (0.5%) and the FIFO front lot does not — an averaged
+                # multi-lot position implies the BLENDED basis, which matches
+                # no single lot, and must keep plain FIFO (re-anchoring on
+                # nearest-to-average mis-attributes normal scale-ins). Partial
+                # closes book P&L net of fee, full closes gross — accept
+                # either. rec_pnl == 0.0 exactly is the engine's unknown-basis
                 # sentinel — skip those.
                 rec_pnl = f.get("realized_pnl")
                 if rec_pnl is not None and lots and qty > 0:
                     try:
                         rp = float(rec_pnl)
                         if rp != 0.0:
-                            implied_basis = price - (rp + fee) / qty
-                            best = min(
-                                range(len(lots)),
-                                key=lambda i: abs(lots[i]["price"] - implied_basis),
-                            )
-                            if best > 0:
-                                best_lot = lots[best]
-                                del lots[best]
-                                lots.appendleft(best_lot)
+                            implied = (price - rp / qty, price - (rp + fee) / qty)
+
+                            def _matches(lot_price: float) -> bool:
+                                return any(
+                                    abs(lot_price - b) <= max(0.005 * abs(b), 1e-9)
+                                    for b in implied
+                                )
+
+                            if not _matches(lots[0]["price"]):
+                                best = next(
+                                    (i for i in range(1, len(lots)) if _matches(lots[i]["price"])),
+                                    None,
+                                )
+                                if best is not None:
+                                    best_lot = lots[best]
+                                    del lots[best]
+                                    lots.appendleft(best_lot)
                     except Exception:
                         pass
                 while remaining > 1e-12 and lots:

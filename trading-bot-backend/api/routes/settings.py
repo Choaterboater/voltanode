@@ -529,15 +529,9 @@ async def get_safety_status(request: Request) -> dict:
     def _risk_alerts(eng) -> list:
         """Serialize active RiskManager alerts (drawdown halt, concentration)."""
         try:
-            return [
-                {
-                    "level": a.level,
-                    "rule": a.rule,
-                    "message": a.message,
-                    "timestamp": a.timestamp.isoformat(),
-                }
-                for a in (eng.get_risk_alerts() if eng is not None and hasattr(eng, "get_risk_alerts") else [])
-            ]
+            if eng is None or not hasattr(eng, "get_risk_alerts"):
+                return []
+            return [a.to_dict() for a in eng.get_risk_alerts()]
         except Exception:
             return []
 

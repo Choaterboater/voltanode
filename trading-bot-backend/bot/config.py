@@ -99,6 +99,14 @@ class RiskConfig(BaseModel):
     pm_trail_arm_pct: float = 0.08
     pm_trail_giveback_pct: float = 0.08
     pm_partial_enabled: bool = False
+    # ATR multipliers for the scaling above (review 2026-06-09: hardcoding
+    # them re-created the unconfigurable-exit-policy problem the pm_* keys
+    # exist to solve). breakeven AND trail-arm both scale by the same floor —
+    # arming the trail before breakeven re-tightens the stop inside the noise
+    # band the ATR sizing is meant to stay out of.
+    pm_atr_breakeven_mult: float = 1.25
+    pm_atr_trail_arm_mult: float = 1.25
+    pm_atr_giveback_mult: float = 1.0
 
 
 class CapitalDeploymentConfig(BaseModel):
@@ -249,6 +257,12 @@ class SafetyConfig(BaseModel):
     # win-rate masking a 0.58 profit factor, because a few names ran to -8/-10%
     # (META -$292, ENLT -$401) while winners were trimmed at +8%. 0 = off.
     max_position_loss_pct: float = 6.0
+    # When True, a position whose ATR-sized stop is WIDER than the cap above
+    # keeps its ATR distance (the cap would otherwise front-run the stop and
+    # re-create the churn the ATR floor fixes). Operator-facing switch so the
+    # safety knob is never silently overridden without consent (review
+    # 2026-06-09); set False to make max_position_loss_pct absolute.
+    atr_widens_position_loss_cap: bool = True
     require_confirmation: bool = True
     kill_switch_on_disconnect: bool = True
     max_orders_per_minute: int = 300

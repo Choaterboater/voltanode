@@ -28,11 +28,14 @@ supervisor = StrategySupervisor()
 @router.get("/stats")
 async def learning_stats() -> Dict[str, Any]:
     """Entry-attributed per-strategy performance and supervisor bench status."""
+    import asyncio
+
     from learning.trade_memory import TradeMemory
     from api.routes import strategies as strategies_routes
 
     try:
-        records: List[Dict[str, Any]] = TradeMemory().all()
+        # Full jsonl read — keep it off the event loop shared with the 5s tick.
+        records: List[Dict[str, Any]] = await asyncio.to_thread(lambda: TradeMemory().all())
     except Exception as exc:
         logger.warning("learning stats: trade memory unavailable: %s", exc)
         records = []

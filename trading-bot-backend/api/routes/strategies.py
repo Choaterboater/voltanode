@@ -39,6 +39,8 @@ def _persist() -> None:
                 "strategy_type": s.name,
                 "config": s.config,
                 "is_active": s.is_active,
+                # Supervisor bench flag (entries-only veto; exits keep flowing).
+                "entries_disabled": bool(getattr(s, "entries_disabled", False)),
             }
             for sid, s in _registered_strategies.items()
         ]
@@ -70,6 +72,7 @@ def restore_strategies(eng: PaperTradingEngine) -> int:
                 config=entry.get("config") or {},
             )
             strategy.is_active = bool(entry.get("is_active", True))
+            strategy.entries_disabled = bool(entry.get("entries_disabled", False))
             _registered_strategies[sid] = strategy
             eng.register_strategy(strategy)
             count += 1
@@ -148,7 +151,13 @@ async def register_strategy(request: StrategyRegisterRequest) -> Dict[str, Any]:
 async def toggle_strategy(strategy_id: str, request: StrategyToggleRequest) -> Dict[str, Any]:
     """Toggle strategy active state."""
     if strategy_id in _registered_strategies:
-        _registered_strategies[strategy_id].is_active = request.active
+        strategy = _registered_strategies[strategy_id]
+        strategy.is_active = request.active
+        if request.active:
+            # An explicit operator re-enable also clears a supervisor bench —
+            # the rebench watermark in learning/supervisor.py then demands
+            # fresh round trips before it may bench again.
+            strategy.entries_disabled = False
         _persist()
         return {"strategy_id": strategy_id, "active": request.active}
     raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")

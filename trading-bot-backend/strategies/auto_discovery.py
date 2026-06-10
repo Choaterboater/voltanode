@@ -185,6 +185,32 @@ class AutoDiscoveryStrategy(BaseStrategy):
             metadata={"trigger": trigger, **meta},
         )
 
+    def _held_position(self, symbol: str) -> tuple[bool, bool] | None:
+        """Portfolio truth for the latch: ``(held, opened_by_me)``.
+
+        Returns ``None`` when no portfolio is available (direct
+        ``generate_signal`` callers, warm-up) — trust the latch then. The
+        in-memory ``_last_side`` latch lies in two directions: a position
+        closed EXTERNALLY (hard loss cap, kill switch, manual flatten) leaves
+        it stuck at "entered" (blocking re-entry forever), and a restart wipes
+        it while still holding (disarming the score-decay exit). Dust rules
+        mirror the base position-aware gate.
+        """
+        pf = getattr(self, "_portfolio", None)
+        if pf is None:
+            return None
+        try:
+            pos = pf.get_position(symbol)
+        except Exception:
+            return None
+        if pos is None or getattr(pos, "status", "open") != "open":
+            return (False, False)
+        size = float(getattr(pos, "size", 0) or 0)
+        mv = float(getattr(pos, "market_value", 0) or 0)
+        if size <= 1e-6 or (mv != 0 and abs(mv) < 1.0):
+            return (False, False)
+        return (True, getattr(pos, "opened_by_strategy_id", None) == self.strategy_id)
+
     def generate_signal(self, data: pd.DataFrame, current_price: float) -> Signal:
         data = self._ensure_columns(data)
         cfg = self.config
@@ -234,7 +260,15 @@ class AutoDiscoveryStrategy(BaseStrategy):
         # ── Entry leg ──
         if score.score >= entry and (wants_long or wants_short):
             if last_side == "entered":
-                return self._hold(symbol, "already_entered", score=score.score)
+                held = self._held_position(symbol)
+                if held is None or held[0]:
+                    return self._hold(symbol, "already_entered", score=score.score)
+                # Stale latch: the position was closed externally (hard loss
+                # cap / kill switch / manual flatten) — without this reset the
+                # symbol is locked out of re-entry until the score decays
+                # below exit_score or the backend restarts.
+                self._last_side[symbol] = "neutral"
+                last_side = "neutral"
             if in_cooldown:
                 return self._hold(symbol, "min_hold_cooldown", score=score.score)
 
@@ -322,14 +356,19 @@ class AutoDiscoveryStrategy(BaseStrategy):
             return sig
 
         # ── Exit leg ──
-        # Close when score decays below exit_score OR direction flips against us.
+        # Close when score decays below exit_score OR direction flips against
+        # us. "Entered" is the latch OR portfolio truth: a restart wipes the
+        # in-memory latch while still holding, and origin-stamped positions
+        # (opened_by_strategy_id) let us re-arm the exit for our own book.
+        held = self._held_position(symbol)
+        is_entered = last_side == "entered" or (held is not None and held[0] and held[1])
         score_decayed = score.score <= exit_
         direction_flipped = (
-            (last_side == "entered")
+            is_entered
             and direction_mode == "long_only"
             and score.direction == "short"
         )
-        if last_side == "entered" and (score_decayed or direction_flipped):
+        if is_entered and (score_decayed or direction_flipped):
             self._last_side[symbol] = "exited"
             self._last_signal_bar[symbol] = latest_bar
             self._last_fire_ts[symbol] = now

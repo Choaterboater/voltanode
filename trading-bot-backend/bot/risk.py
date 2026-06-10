@@ -71,6 +71,14 @@ class RiskAlert:
     message: str
     timestamp: datetime
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "level": self.level,
+            "rule": self.rule,
+            "message": self.message,
+            "timestamp": self.timestamp.isoformat(),
+        }
+
 
 class PositionSizer:
     """Static methods for position sizing calculations."""

@@ -238,6 +238,9 @@ risk:
   pm_trail_arm_pct: 0.08
   pm_trail_giveback_pct: 0.08
   pm_partial_enabled: false  # keep the 40%-trim retired (exit-sizing inversion)
+  pm_atr_breakeven_mult: 1.25  # ATR-scaled floors for the three knobs above
+  pm_atr_trail_arm_mult: 1.25
+  pm_atr_giveback_mult: 1.0
 capital_deployment:
   # 2026-06-09 feature-hunt: disabled. An always-on 30-min loop buying toward
   # 95% target exposure with no regime gate, no base.py gates, and no
@@ -372,6 +375,7 @@ safety:
   max_position_size_pct: 20.0
   max_exposure_pct: 300.0
   max_position_loss_pct: 6.0  # hard per-position loss cap (% of entry); 0 disables
+  atr_widens_position_loss_cap: true  # ATR-sized stops wider than the cap keep their distance
   require_confirmation: true
   kill_switch_on_disconnect: true
   max_orders_per_minute: 300
