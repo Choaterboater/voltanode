@@ -292,20 +292,23 @@ def _call_ollama(prompt: str, model: str, timeout: float = 60.0) -> Optional[str
 # models first and parks the broken ones at the tail so when OR restores
 # them the chain auto-benefits.
 _HEAVY_MODELS = [
-    "nvidia/nemotron-3-ultra-550b-a55b:free",  # 550B MoE, 1M ctx — strongest free; reasoning-heavy (added 2026-06-05)
-    "openai/gpt-oss-120b:free",                # 120B reasoning, JSON via prompt
-    "nvidia/nemotron-3-super-120b-a12b:free",  # 120B MoE, JSON-native
-    "z-ai/glm-4.5-air:free",                   # solid mid-large
+    "nvidia/nemotron-3-ultra-550b-a55b:free",  # 550B MoE, 1M ctx — strongest free; 2.0s in 2026-06-11 probe
+    "openai/gpt-oss-120b:free",                # 120B reasoning, JSON via prompt — 2.1s in 2026-06-11 probe
+    "nex-agi/nex-n2-pro:free",                 # new on OR 2026-06-08, 262k ctx — 1.4s, clean JSON (added 2026-06-11)
+    "nvidia/nemotron-3-super-120b-a12b:free",  # 120B MoE, JSON-native — demoted: 35s response 2026-06-11
+    # removed 2026-06-11: z-ai/glm-4.5-air:free (delisted from OpenRouter)
     "inclusionai/ring-2.6-1t:free",            # parked: now paid (404) as of 2026-05-18
     # removed 2026-06-05: minimax/minimax-m2.5:free (delisted from OpenRouter)
 ]
 
 _FAST_MODELS = [
-    "openrouter/owl-alpha",                    # 1M ctx, workhorse — 198/204 success in live probe
-    "openai/gpt-oss-120b:free",                # 120B reasoning, deeper fallback
-    "nvidia/nemotron-3-super-120b-a12b:free",  # 120B MoE, JSON-native
+    "openrouter/owl-alpha",                    # 1M ctx, workhorse — congested 2026-06-11 (429/42s) but high historical success
+    "openai/gpt-oss-120b:free",                # 120B reasoning — 2.1s in 2026-06-11 probe
+    "nex-agi/nex-n2-pro:free",                 # new on OR 2026-06-08, 262k ctx — 1.4s, clean JSON (added 2026-06-11)
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",  # 0.7s, fastest in 2026-06-11 probe
     "meta-llama/llama-3.3-70b-instruct:free",  # 70B, fast & reliable
     "nvidia/nemotron-3-ultra-550b-a55b:free",  # 550B deep fallback — reasoning-heavy/slower (added 2026-06-05)
+    "nvidia/nemotron-3-super-120b-a12b:free",  # demoted: 35s response 2026-06-11
     "nvidia/nemotron-3-nano-30b-a3b:free",     # parked: transient 429s as of 2026-05-18
     # removed 2026-06-05: minimax/minimax-m2.5:free + arcee-ai/trinity-large-thinking:free (delisted)
     "google/gemma-4-31b-it:free",              # parked: provider errors as of 2026-05-18
