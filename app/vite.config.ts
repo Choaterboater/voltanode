@@ -13,6 +13,10 @@ export default defineConfig({
     // default ('localhost') sometimes binds IPv6-only on Windows, making
     // the UI look "down" to any IPv4 client.
     host: true,
+    // Vite 7 rejects requests whose Host header isn't localhost (403
+    // "Blocked request"), which makes the UI look down behind a remote
+    // preview/tunnel proxy. Allow any host for the dev server.
+    allowedHosts: true,
     port: 3001,
     strictPort: false,
     proxy: {
