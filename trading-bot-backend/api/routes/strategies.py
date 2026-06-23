@@ -694,7 +694,7 @@ async def execute_capital_deploy(
     max_positions = int(max_new_positions if max_new_positions is not None else getattr(alloc_cfg, "max_new_positions_per_cycle", 6))
     score_floor = float(min_score if min_score is not None else getattr(alloc_cfg, "min_score", 45.0))
     min_sources = int(min_source_count if min_source_count is not None else getattr(alloc_cfg, "min_source_count", 2) or 2)
-    max_open = int(getattr(alloc_cfg, "max_open_positions", 28) or 28)
+    max_open = int(getattr(alloc_cfg, "max_open_positions", 50) or 50)
     stop_pct = float(getattr(alloc_cfg, "initial_stop_loss_pct", 0.07) or 0.07)
     tp_pct = float(getattr(alloc_cfg, "initial_take_profit_pct", 0.20) or 0.20)
     asset = str(asset_class or getattr(alloc_cfg, "asset_class", "crypto")).lower()
@@ -714,6 +714,8 @@ async def execute_capital_deploy(
         raise ValueError("min_cash_reserve_pct cannot exceed max_cash_pct")
     if not (0 < target <= 300):
         raise ValueError("target_exposure_pct must be between 0 and 300")
+    if min_sources < 1:
+        raise ValueError("min_source_count must be positive")
 
     portfolio = engine.get_portfolio("default")
     broker_balances: Dict[str, float] | None = None
