@@ -644,6 +644,52 @@ class TestSupervisor:
         actions = sup.run(fresh, {"bot_a": bot}, persist=lambda: None)
         assert bot.entries_disabled is True and len(actions) == 1
 
+    def test_cohort_benches_subthreshold_family(self, tmp_path) -> None:
+        # 3 instances of one strategy_type, each BELOW min_trades (4 trips) so
+        # the per-strategy rule can't touch them, but combined (12 trips, PF 0)
+        # the family has proven no edge — the news_sentiment blind spot.
+        sup = self._supervisor(tmp_path)
+        ids = ("news_sentiment_a", "news_sentiment_b", "news_sentiment_c")
+        records = []
+        for sid in ids:
+            records += _round_trips(sid, wins=0, losses=4)
+        bots = {sid: self._bot() for sid in ids}
+        actions = sup.run(records, bots, persist=lambda: None)
+        assert all(b.entries_disabled for b in bots.values())  # cohort-benched
+        assert all(b.is_active for b in bots.values())         # entries-only veto
+        assert len(actions) == 3
+
+    def test_cohort_spares_individually_strong_member(self, tmp_path) -> None:
+        # Weak family overall, but one member individually earned its keep
+        # (>= min_trades AND PF above the floor) — it must not be dragged down.
+        sup = self._supervisor(tmp_path)
+        records = (
+            _round_trips("news_sentiment_a", wins=0, losses=8)                       # n=8, PF 0
+            + _round_trips("news_sentiment_b", wins=0, losses=8)                     # n=8, PF 0
+            + _round_trips("news_sentiment_c", wins=10, losses=2,
+                           win_pnl=20.0, loss_pnl=-10.0)                             # n=12, PF 10
+        )
+        bots = {sid: self._bot() for sid in
+                ("news_sentiment_a", "news_sentiment_b", "news_sentiment_c")}
+        actions = sup.run(records, bots, persist=lambda: None)
+        assert bots["news_sentiment_a"].entries_disabled is True
+        assert bots["news_sentiment_b"].entries_disabled is True
+        assert bots["news_sentiment_c"].entries_disabled is False  # spared
+        assert {a["strategy_id"] for a in actions} == {"news_sentiment_a", "news_sentiment_b"}
+
+    def test_cohort_guard_off_restores_per_strategy_only(self, tmp_path) -> None:
+        from learning.supervisor import StrategySupervisor
+
+        sup = StrategySupervisor(state_path=tmp_path / "state.json", cohort_bench=False)
+        ids = ("news_sentiment_a", "news_sentiment_b", "news_sentiment_c")
+        records = []
+        for sid in ids:
+            records += _round_trips(sid, wins=0, losses=4)  # each below min_trades
+        bots = {sid: self._bot() for sid in ids}
+        actions = sup.run(records, bots, persist=lambda: None)
+        assert not any(b.entries_disabled for b in bots.values())  # no family bench
+        assert not actions
+
     def test_watermark_survives_restart(self, tmp_path) -> None:
         from learning.supervisor import StrategySupervisor
 

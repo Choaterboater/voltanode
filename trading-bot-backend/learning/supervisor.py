@@ -100,13 +100,30 @@ class StrategySupervisor:
         min_trades: int = 10,
         min_pf: float = 0.7,
         rebench_fresh_trades: int = 5,
+        cohort_bench: bool = True,
         state_path: Path | str = _STATE_PATH,
     ) -> None:
         self.min_trades = int(min_trades)
         self.min_pf = float(min_pf)
         self.rebench_fresh_trades = int(rebench_fresh_trades)
+        # Cohort guard: bench a whole strategy_type family whose COMBINED
+        # entry-attributed record proves no edge, even when each instance has
+        # too few round trips to trip the per-strategy rule. Closes the blind
+        # spot that let 5 sub-min_trades news_sentiment bots bleed -$1,910
+        # uncaught. Set False to restore strict per-strategy benching only.
+        self.cohort_bench = bool(cohort_bench)
         self.state_path = Path(state_path)
         self._state: Dict[str, Dict[str, Any]] = self._load_state()
+
+    @staticmethod
+    def _cohort_key(strategy_id: str) -> str:
+        """Strategy-type family for a registry id (``<type>_<timestamp>``).
+
+        Ids follow ``{strategy_type}_{epoch_ms}`` and the type itself may
+        contain underscores (news_sentiment, mean_reversion, auto_discovery),
+        so split off only the trailing timestamp segment.
+        """
+        return str(strategy_id).rsplit("_", 1)[0] or str(strategy_id)
 
     # ── State persistence ──
 
@@ -227,6 +244,76 @@ class StrategySupervisor:
                     notify("warning", f"Supervisor benched {sid}: {reason}")
                 except Exception:
                     pass
+
+        # ── Cohort guard ──
+        # A strategy_type FAMILY whose COMBINED entry-attributed record proves
+        # no edge gets benched even when each instance is below min_trades on
+        # its own (the news_sentiment blind spot: 5 bots at n=1-4, 0% win,
+        # -$1,910 combined, none individually benchable). Entries-only veto,
+        # same watermark/protection rules as the per-strategy pass.
+        if self.cohort_bench:
+            cohorts: Dict[str, StrategyRecord] = {}
+            members: Dict[str, List[str]] = {}
+            for sid, rec in perf.items():
+                if registered.get(sid) is None or sid in PROTECTED_IDS:
+                    continue
+                ckey = self._cohort_key(sid)
+                crec = cohorts.setdefault(ckey, StrategyRecord(strategy_id=f"<cohort:{ckey}>"))
+                crec.n += rec.n
+                crec.wins += rec.wins
+                crec.gross_profit += rec.gross_profit
+                crec.gross_loss += rec.gross_loss
+                crec.total_pnl += rec.total_pnl
+                members.setdefault(ckey, []).append(sid)
+
+            for ckey, crec in cohorts.items():
+                sids = members.get(ckey, [])
+                # Single-instance "cohorts" add nothing over the per-strategy
+                # pass; skip them so this can only bench on FAMILY evidence.
+                if len(sids) < 2:
+                    continue
+                if crec.n < self.min_trades or crec.profit_factor >= self.min_pf:
+                    continue
+                for sid in sids:
+                    strategy = registered.get(sid)
+                    if strategy is None or sid in PROTECTED_IDS:
+                        continue
+                    if getattr(strategy, "entries_disabled", False) or not getattr(strategy, "is_active", True):
+                        continue
+                    rec = perf.get(sid)
+                    # Never drag down an instance that has individually earned
+                    # its keep (enough trips AND PF above the floor).
+                    if rec is not None and rec.n >= self.min_trades and rec.profit_factor >= self.min_pf:
+                        continue
+                    # Respect the rebench watermark: an operator re-enable needs
+                    # fresh round trips before the cohort may re-bench it.
+                    prior = self._state.get(sid) or {}
+                    benched_n = int(prior.get("benched_at_n", 0) or 0)
+                    this_n = rec.n if rec is not None else 0
+                    if benched_n and this_n < benched_n + self.rebench_fresh_trades:
+                        continue
+                    reason = (
+                        f"cohort '{ckey}' entry-attributed PF {crec.profit_factor:.2f} "
+                        f"< {self.min_pf} over {crec.n} combined round trips across "
+                        f"{len(sids)} instances"
+                    )
+                    strategy.entries_disabled = True
+                    self._state[sid] = {
+                        "benched_at": datetime.now(timezone.utc).isoformat(),
+                        "benched_at_n": this_n,
+                        "bench_reason": reason,
+                        "last_eval_n": this_n,
+                        "last_eval_pf": round(rec.profit_factor, 4) if rec is not None else None,
+                    }
+                    dirty = True
+                    row = rec.to_dict() if rec is not None else {"strategy_id": sid, "n": this_n}
+                    actions.append({"strategy_id": sid, "reason": reason, **row})
+                    logger.warning("Supervisor cohort-benched %s: %s", sid, reason)
+                    if notify is not None:
+                        try:
+                            notify("warning", f"Supervisor cohort-benched {sid}: {reason}")
+                        except Exception:
+                            pass
 
         if actions:
             try:
