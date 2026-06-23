@@ -120,7 +120,7 @@ class CapitalDeploymentConfig(BaseModel):
     deploy_interval_minutes: float = 30.0
     min_score: float = 48.0
     min_source_count: int = 2
-    max_open_positions: int = 28
+    max_open_positions: int = 50
     initial_stop_loss_pct: float = 0.07
     initial_take_profit_pct: float = 0.20
     asset_class: str = "stock"

@@ -677,6 +677,7 @@ async def execute_capital_deploy(
     max_new_positions: int | None = None,
     asset_class: str | None = None,
     min_score: float | None = None,
+    min_source_count: int | None = None,
     dry_run: bool = False,
     nocache: bool = False,
 ) -> Dict[str, Any]:
@@ -692,7 +693,7 @@ async def execute_capital_deploy(
     per_position = float(position_pct if position_pct is not None else getattr(alloc_cfg, "position_pct", 5.0))
     max_positions = int(max_new_positions if max_new_positions is not None else getattr(alloc_cfg, "max_new_positions_per_cycle", 6))
     score_floor = float(min_score if min_score is not None else getattr(alloc_cfg, "min_score", 45.0))
-    min_sources = int(getattr(alloc_cfg, "min_source_count", 2) or 2)
+    min_sources = int(min_source_count if min_source_count is not None else getattr(alloc_cfg, "min_source_count", 2) or 2)
     max_open = int(getattr(alloc_cfg, "max_open_positions", 28) or 28)
     stop_pct = float(getattr(alloc_cfg, "initial_stop_loss_pct", 0.07) or 0.07)
     tp_pct = float(getattr(alloc_cfg, "initial_take_profit_pct", 0.20) or 0.20)
@@ -861,6 +862,7 @@ async def capital_deploy(
     max_new_positions: int | None = None,
     asset_class: str | None = None,
     min_score: float | None = None,
+    min_source_count: int | None = None,
     dry_run: bool = False,
     nocache: bool = False,
 ) -> Dict[str, Any]:
@@ -881,6 +883,7 @@ async def capital_deploy(
             max_new_positions=max_new_positions,
             asset_class=asset_class,
             min_score=min_score,
+            min_source_count=min_source_count,
             dry_run=dry_run,
             nocache=nocache,
         )
