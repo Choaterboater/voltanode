@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
@@ -21,6 +22,8 @@ from data.fetcher import (
 )
 
 router = APIRouter()
+
+logger = logging.getLogger("volta.api.market")
 
 bot_config = BotConfig()
 
@@ -240,11 +243,21 @@ async def get_ohlcv(
     """Get OHLCV data for a symbol."""
     cache = DataCache()
     market_data = MarketData(cache=cache, config=bot_config)
+    synthetic = False
     try:
         ac = AssetClass(asset_class)
         df = await market_data.get_ohlcv(symbol, ac, timeframe, limit)
     except Exception:
-        # Fallback to synthetic data
+        # Fallback to synthetic data. Log loudly and flag the response —
+        # silently returning fabricated ~$100 bars masks real fetch failures
+        # (e.g. wrong asset_class, e.g. SPY requested as crypto) and has
+        # produced bogus benchmarks. Callers must inspect `synthetic`.
+        synthetic = True
+        logger.warning(
+            "OHLCV fetch failed for %s (asset_class=%s, timeframe=%s); "
+            "returning SYNTHETIC data.",
+            symbol, asset_class, timeframe, exc_info=True,
+        )
         import numpy as np
         dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq="D")
         np.random.seed(hash(symbol) % (2**31))
@@ -279,6 +292,7 @@ async def get_ohlcv(
         symbol=symbol,
         timeframe=timeframe,
         data=bars,
+        synthetic=synthetic,
     )
 
 

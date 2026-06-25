@@ -154,6 +154,11 @@ class OHLCVResponse(BaseModel):
     symbol: str
     timeframe: str
     data: List[OHLCVBar]
+    # True when the real fetch failed and `data` is a synthetic random walk
+    # (~$100 base), NOT real prices. Callers using this for benchmarking or
+    # any decision MUST check this flag — synthetic bars look plausible but
+    # are fabricated. Defaults False so existing consumers stay compatible.
+    synthetic: bool = False
 
 
 # ── Engine ──
