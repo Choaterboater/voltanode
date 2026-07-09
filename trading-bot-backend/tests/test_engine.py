@@ -262,6 +262,15 @@ class TestSymbolNormalization:
         assert symbols_equivalent("BTC", "BTCUSD")
         assert not symbols_equivalent("BTC", "ETH")
 
+    def test_lookup_price_from_portfolio_positions(self) -> None:
+        portfolio = Portfolio("default", {"USD": 10_000.0})
+        portfolio.open_position("BTC", PositionSide.LONG, 0.1, 50_000.0)
+        pos = portfolio.get_position("BTC")
+        assert pos is not None
+        pos.update_price(75_000.0)
+        assert lookup_price(portfolio, "BTCUSD") == 75_000.0
+        assert lookup_price(portfolio, "ETH") is None
+
     def test_lookup_price_across_aliases(self) -> None:
         prices = {"BTC": 75000.0}
         assert lookup_price(prices, "BTCUSD") == 75000.0

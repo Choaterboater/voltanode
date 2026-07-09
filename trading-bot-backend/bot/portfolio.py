@@ -32,8 +32,35 @@ def symbols_equivalent(a: str, b: str) -> bool:
     return bool(set(symbol_lookup_keys(a)) & set(symbol_lookup_keys(b)))
 
 
-def lookup_price(prices: Dict[str, float], symbol: str) -> float | None:
-    """Look up a mark price using bare or suffixed symbol keys."""
+def lookup_price(prices: Any, symbol: str) -> float | None:
+    """Look up a mark price using bare or suffixed symbol keys.
+
+    Accepts a ``dict`` of symbol→price, or a ``Portfolio`` (uses each open
+    position's ``current_price`` / ``entry_price``). Passing a Portfolio used
+    to raise ``TypeError: argument of type 'Portfolio' is not a container``
+    and abort live order placement.
+    """
+    if prices is None:
+        return None
+    if not isinstance(prices, dict):
+        # Portfolio (or duck-typed) — build a mark map from open positions.
+        get_all = getattr(prices, "get_all_positions", None)
+        if callable(get_all):
+            marks: Dict[str, float] = {}
+            try:
+                for pos in get_all() or []:
+                    px = float(getattr(pos, "current_price", 0) or 0) or float(
+                        getattr(pos, "entry_price", 0) or 0
+                    )
+                    sym = str(getattr(pos, "symbol", "") or "")
+                    if sym and px > 0:
+                        for k in symbol_lookup_keys(sym):
+                            marks[k] = px
+            except Exception:
+                return None
+            prices = marks
+        else:
+            return None
     for key in symbol_lookup_keys(symbol):
         if key in prices:
             return prices[key]
