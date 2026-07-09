@@ -134,6 +134,9 @@ def _live_broker_to_response(account_id: str, eng: Any) -> PortfolioResponse | N
         side = (p.get("side") or ("long" if size >= 0 else "short")).lower()
         # Recompute mark-to-market with the fresher price.
         market_value = abs(size) * current
+        # Hide sub-cent broker dust leftovers (can't flatten; clutter UI/ticks).
+        if market_value < 0.01 and abs(size) * max(entry, current, 0.0) < 0.01:
+            continue
         if current and entry:
             sign = 1 if side == "long" else -1
             unrealized_pnl = sign * (current - entry) * abs(size)
@@ -542,6 +545,9 @@ async def purge_dust(
         raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
 
     purged: List[Dict[str, Any]] = []
+    broker_closed: List[Dict[str, Any]] = []
+    broker_errors: List[Dict[str, Any]] = []
+
     # Iterate over a snapshot so we can mutate ``_positions`` mid-loop.
     for p in list(portfolio.get_all_positions()):
         mv = abs(getattr(p, "market_value", 0.0) or (p.size * (getattr(p, "current_price", 0.0) or 0.0)))
@@ -557,6 +563,48 @@ async def purge_dust(
                     "size": p.size,
                     "market_value": mv,
                 })
+
+    # Also try to liquidate dust on the live broker (Alpaca often rejects
+    # sub-min notional; best-effort). Then drop matching local rows again
+    # if the broker still reports them — UI filters sub-cent MV either way.
+    broker = getattr(engine, "broker", None)
+    if (
+        broker is not None
+        and getattr(engine, "live_mode", False)
+        and broker.is_connected()
+        and getattr(broker, "name", "mock") != "mock"
+        and hasattr(broker, "get_positions")
+    ):
+        try:
+            raw = broker.get_positions() or []
+        except Exception as exc:
+            raw = []
+            broker_errors.append({"error": f"get_positions: {exc}"})
+        for bp in raw:
+            sym = str(bp.get("symbol") or "")
+            if not sym:
+                continue
+            qty = abs(float(bp.get("qty", bp.get("size", 0)) or 0))
+            entry = float(bp.get("avg_entry_price", bp.get("entry_price", 0)) or 0)
+            px = float(bp.get("current_price", bp.get("market_price", entry)) or entry)
+            mv = qty * px
+            if mv >= mv_threshold and qty * max(entry, px, 0.0) >= mv_threshold:
+                continue
+            if hasattr(broker, "close_position"):
+                try:
+                    result = broker.close_position(sym)
+                    if isinstance(result, dict) and result.get("error"):
+                        broker_errors.append({"symbol": sym, "error": result["error"]})
+                    else:
+                        broker_closed.append({"symbol": sym, "size": qty, "market_value": mv})
+                except Exception as exc:
+                    broker_errors.append({"symbol": sym, "error": str(exc)})
+            # Keep local ledger clean even if broker reject.
+            if sym in portfolio._positions:
+                del portfolio._positions[sym]
+            if not any(x["symbol"] == sym for x in purged):
+                purged.append({"symbol": sym, "size": qty, "market_value": mv})
+
     logger.info(f"Purged {len(purged)} dust position(s) under ${mv_threshold:.4f}: "
                 f"{', '.join(x['symbol'] for x in purged) if purged else '(none)'}")
     return {
@@ -564,6 +612,8 @@ async def purge_dust(
         "mv_threshold": mv_threshold,
         "purged_count": len(purged),
         "purged": purged,
+        "broker_closed": broker_closed,
+        "broker_errors": broker_errors[:20],
     }
 
 

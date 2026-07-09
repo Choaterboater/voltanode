@@ -544,6 +544,11 @@ def create_app() -> FastAPI:
             entry = float(p.get("avg_entry_price", p.get("entry_price", 0)) or 0)
             if qty <= 0 or entry <= 0:
                 continue
+            # Skip broker dust leftovers (sub-cent notional). They can't be
+            # flattened via the API and would reappear after every purge-dust
+            # + restart, cluttering the book and tick loops.
+            if qty * entry < 0.01:
+                continue
             side = (p.get("side") or "long").lower()
             pside = _PS.SHORT if side == "short" else _PS.LONG
             if portfolio_obj.get_position(sym) is None:

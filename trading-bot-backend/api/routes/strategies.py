@@ -163,6 +163,74 @@ async def toggle_strategy(strategy_id: str, request: StrategyToggleRequest) -> D
     raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
 
 
+# Per-type paper-aggressive knobs applied to already-registered bots.
+# New DEFAULT_CONFIG values only affect freshly registered strategies;
+# this endpoint rewrites live + persisted configs in place.
+_PAPER_AGGRESSIVE_BY_TYPE: Dict[str, Dict[str, Any]] = {
+    "simple_trend": {"min_hold_minutes": 5, "hysteresis_pct": 0.001},
+    "auto_discovery": {"min_hold_minutes": 15},
+    "squeeze": {"min_hold_minutes": 30},
+}
+
+
+@router.post("/apply-paper-aggressive")
+async def apply_paper_aggressive() -> Dict[str, Any]:
+    """Loosen registered bots for paper churn: regime gate off, shorter holds.
+
+    Mutates each bot's live ``config`` and persists to
+    ``data/registered_strategies.json``. Takes effect on the next tick —
+    no restart required.
+    """
+    updated: List[Dict[str, Any]] = []
+    for sid, strat in _registered_strategies.items():
+        cfg = dict(strat.config or {})
+        before = {
+            "regime_gate": (cfg.get("regime_gate") or {}).get("enabled"),
+            "min_hold_minutes": cfg.get("min_hold_minutes"),
+            "hysteresis_pct": cfg.get("hysteresis_pct"),
+        }
+        changed = False
+
+        rg = cfg.get("regime_gate")
+        if isinstance(rg, dict) and rg.get("enabled") is not False:
+            cfg["regime_gate"] = {**rg, "enabled": False}
+            changed = True
+        elif rg is None and strat.name in (
+            "momentum", "macd", "news_sentiment", "auto_discovery", "simple_trend",
+        ):
+            cfg["regime_gate"] = {"enabled": False, "trend_ema": 100}
+            changed = True
+
+        type_knobs = _PAPER_AGGRESSIVE_BY_TYPE.get(strat.name) or {}
+        for key, val in type_knobs.items():
+            if cfg.get(key) != val:
+                cfg[key] = val
+                changed = True
+
+        if not changed:
+            continue
+        strat.config = cfg
+        updated.append({
+            "strategy_id": sid,
+            "strategy_type": strat.name,
+            "before": before,
+            "after": {
+                "regime_gate": (cfg.get("regime_gate") or {}).get("enabled"),
+                "min_hold_minutes": cfg.get("min_hold_minutes"),
+                "hysteresis_pct": cfg.get("hysteresis_pct"),
+            },
+        })
+
+    if updated:
+        _persist()
+
+    return {
+        "updated_count": len(updated),
+        "skipped_count": len(_registered_strategies) - len(updated),
+        "updated": updated,
+    }
+
+
 @router.get("/{strategy_id}/metrics")
 async def get_strategy_metrics(strategy_id: str) -> Dict[str, Any]:
     """Get strategy performance metrics."""
