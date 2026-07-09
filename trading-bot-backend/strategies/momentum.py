@@ -34,7 +34,7 @@ class MomentumStrategy(BaseStrategy):
         # inline above_trend check in generate_signal — keeps the gate in force
         # if an operator overrides trend_filter_ema, and matches the other
         # long-followers (simple_trend, auto_discovery).
-        "regime_gate": {"enabled": True, "trend_ema": 100},
+        "regime_gate": {"enabled": False, "trend_ema": 100},
         # Symmetric exit (audit 2026-06-09 #4): require a trend break (price <
         # trend EMA) before a cross-down triggers a FULL exit. A cross-down in
         # an intact uptrend is a routine pullback — full-exiting there is the

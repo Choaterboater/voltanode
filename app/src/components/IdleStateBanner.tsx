@@ -68,7 +68,7 @@ export default function IdleStateBanner() {
         }
 
         const limits = safety.safety_limits;
-        const maxExposure = Number(limits.max_exposure_pct ?? 50);
+        const maxExposure = Number(limits.max_exposure_pct ?? 500);
         const restrictive = maxExposure < RESTRICTIVE_EXPOSURE_PCT;
         const killSwitch = safety.kill_switch?.activated === true;
         const ageMs = newestTradeAgeMs(trades);

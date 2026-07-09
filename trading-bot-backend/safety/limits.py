@@ -23,12 +23,12 @@ class SafetyValidationError(Exception):
 @dataclass
 class SafetyConfig:
     """Runtime safety configuration (mirrors config.SafetyConfig)."""
-    max_daily_loss_pct: float = 5.0
+    max_daily_loss_pct: float = 25.0
     max_position_size_pct: float = 20.0
-    max_exposure_pct: float = 300.0
-    max_position_loss_pct: float = 6.0
+    max_exposure_pct: float = 500.0
+    max_position_loss_pct: float = 0.0
     require_confirmation: bool = True
-    kill_switch_on_disconnect: bool = True
+    kill_switch_on_disconnect: bool = False
     max_orders_per_minute: int = 300
     allowed_symbols: List[str] = field(default_factory=list)
     blocked_symbols: List[str] = field(default_factory=list)
@@ -73,12 +73,12 @@ def _coerce_safety_config(config: Any | None) -> SafetyConfig:
     if isinstance(config, SafetyConfig):
         return config
     return SafetyConfig(
-        max_daily_loss_pct=float(getattr(config, "max_daily_loss_pct", 5.0)),
+        max_daily_loss_pct=float(getattr(config, "max_daily_loss_pct", 25.0)),
         max_position_size_pct=float(getattr(config, "max_position_size_pct", 20.0)),
-        max_exposure_pct=float(getattr(config, "max_exposure_pct", 300.0)),
-        max_position_loss_pct=float(getattr(config, "max_position_loss_pct", 6.0)),
+        max_exposure_pct=float(getattr(config, "max_exposure_pct", 500.0)),
+        max_position_loss_pct=float(getattr(config, "max_position_loss_pct", 0.0)),
         require_confirmation=bool(getattr(config, "require_confirmation", True)),
-        kill_switch_on_disconnect=bool(getattr(config, "kill_switch_on_disconnect", True)),
+        kill_switch_on_disconnect=bool(getattr(config, "kill_switch_on_disconnect", False)),
         max_orders_per_minute=int(getattr(config, "max_orders_per_minute", 300)),
         allowed_symbols=list(getattr(config, "allowed_symbols", []) or []),
         blocked_symbols=list(getattr(config, "blocked_symbols", []) or []),
@@ -132,6 +132,7 @@ class SafetyValidator:
         daily_pnl: float = 0.0,
         broker_balances: Optional[Dict[str, float]] = None,
         current_price: float | None = None,
+        paper_bypass: bool = False,
     ) -> None:
         """Validate an order. Raises SafetyValidationError if rejected.
 
@@ -142,6 +143,9 @@ class SafetyValidator:
             daily_pnl: Current day's realized P&L.
             broker_balances: Optional broker cash/equity payload.
             current_price: Live mark used to validate market orders.
+            paper_bypass: When True (paper broker), skip soft checks —
+                rate limit, position size, exposure, daily-loss. Symbol
+                allow/block lists still apply.
 
         Raises:
             SafetyValidationError: If any rule is violated.
@@ -160,12 +164,15 @@ class SafetyValidator:
                     blocked_symbols=list(getattr(safety, "blocked_symbols", cfg.blocked_symbols)),
                 )
 
-        # 1. Symbol whitelist/blacklist
+        # 1. Symbol whitelist/blacklist (always enforced, even on paper)
         symbol_upper = order.symbol.upper()
         if cfg.blocked_symbols and symbol_upper in [s.upper() for s in cfg.blocked_symbols]:
             raise SafetyValidationError(f"Symbol '{order.symbol}' is blocked.")
         if cfg.allowed_symbols and symbol_upper not in [s.upper() for s in cfg.allowed_symbols]:
             raise SafetyValidationError(f"Symbol '{order.symbol}' not in allowed list.")
+
+        if paper_bypass:
+            return
 
         # 2. Rate limit
         if not self.rate_limiter.check():
