@@ -176,35 +176,35 @@ class TestAutoDiscoveryExitLatch:
         assert strategy._last_side["TEST"] == "neutral"
 
 
-# ── 3. regime_gate default-on for macd / news_sentiment ─────────────────────
+# ── 3. regime_gate defaults (paper-aggressive: off) + merge semantics ───────
 
 
 class TestRegimeGateDefaults:
-    def test_macd_default_config_has_gate(self) -> None:
+    def test_macd_default_config_gate_off(self) -> None:
         from strategies.macd import MACDStrategy
 
         s = MACDStrategy("macd_x", {"symbol": "TEST"})
-        assert s.config["regime_gate"]["enabled"] is True
+        assert s.config["regime_gate"]["enabled"] is False
 
-    def test_news_sentiment_default_config_has_gate(self) -> None:
+    def test_news_sentiment_default_config_gate_off(self) -> None:
         from strategies.news_sentiment import NewsSentimentStrategy
 
         s = NewsSentimentStrategy("news_x", {"symbol": "TEST"})
-        assert s.config["regime_gate"]["enabled"] is True
-
-    def test_explicit_disable_wins_merge(self) -> None:
-        from strategies.macd import MACDStrategy
-
-        s = MACDStrategy("macd_x", {"symbol": "TEST", "regime_gate": {"enabled": False}})
         assert s.config["regime_gate"]["enabled"] is False
 
+    def test_explicit_enable_wins_merge(self) -> None:
+        from strategies.macd import MACDStrategy
+
+        s = MACDStrategy("macd_x", {"symbol": "TEST", "regime_gate": {"enabled": True}})
+        assert s.config["regime_gate"]["enabled"] is True
+
     def test_partial_gate_dict_keeps_enabled_default(self) -> None:
-        # Review 2026-06-09: a shallow merge let {"regime_gate": {"trend_ema": 50}}
-        # silently drop "enabled": True and disable the gate.
+        # Deep merge must keep DEFAULT enabled (False) when only trend_ema is
+        # overridden — not silently drop the key.
         from strategies.macd import MACDStrategy
 
         s = MACDStrategy("macd_x", {"symbol": "TEST", "regime_gate": {"trend_ema": 50}})
-        assert s.config["regime_gate"]["enabled"] is True
+        assert s.config["regime_gate"]["enabled"] is False
         assert s.config["regime_gate"]["trend_ema"] == 50
 
     def test_instances_do_not_share_default_dicts(self) -> None:
@@ -212,9 +212,9 @@ class TestRegimeGateDefaults:
 
         a = MACDStrategy("macd_a", {"symbol": "A"})
         b = MACDStrategy("macd_b", {"symbol": "B"})
-        a.config["regime_gate"]["enabled"] = False
-        assert b.config["regime_gate"]["enabled"] is True
-        assert MACDStrategy.DEFAULT_CONFIG["regime_gate"]["enabled"] is True
+        a.config["regime_gate"]["enabled"] = True
+        assert b.config["regime_gate"]["enabled"] is False
+        assert MACDStrategy.DEFAULT_CONFIG["regime_gate"]["enabled"] is False
 
     def test_gate_blocks_buy_in_downtrend(self) -> None:
         from bot.config import SignalType

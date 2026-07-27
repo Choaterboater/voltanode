@@ -84,7 +84,7 @@ class SqueezeStrategy(BaseStrategy):
         "stop_loss_pct": 0.08,    # squeeze names are volatile — wider stop
         "take_profit_pct": 0.30,  # let winners run, this is the squeeze thesis
         # Cooldowns / latches.
-        "min_hold_minutes": 120,  # 2h — still patient, but less idle than 4h
+        "min_hold_minutes": 30,  # paper-aggressive: faster flips than 2h
         # Indicator lookbacks.
         "rsi_period": 14,
         "breakout_lookback": 20,

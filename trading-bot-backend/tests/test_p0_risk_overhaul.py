@@ -183,10 +183,37 @@ class TestExitSizing:
 
 def test_momentum_inherits_regime_gate_from_default_config() -> None:
     # Registered-style config (no explicit regime_gate); inheritance via
-    # {**DEFAULT_CONFIG, **config} must still leave the gate enabled.
+    # deep-merge must keep the paper-aggressive default (gate off).
     strat = MomentumStrategy("m1", {"symbols": ["BTC", "ETH"], "fast_ema": 12, "slow_ema": 26})
     rg = strat.config.get("regime_gate")
-    assert rg and rg.get("enabled") is True
+    assert rg and rg.get("enabled") is False
+
+
+# ── 5b. Paper broker soft-bypass ─────────────────────────────────────────────
+
+class TestPaperBrokerSafetyBypass:
+    def test_alpaca_paper_is_detected(self, config: BotConfig) -> None:
+        eng = LiveTradingEngine(config=config, broker=AlpacaBroker(paper=True))
+        assert eng._is_paper_broker() is True
+
+    def test_alpaca_live_is_not_paper(self, config: BotConfig) -> None:
+        eng = LiveTradingEngine(config=config, broker=AlpacaBroker(paper=False))
+        assert eng._is_paper_broker() is False
+
+    def test_daily_loss_kill_latch_skipped_on_paper(self, config: BotConfig) -> None:
+        eng = LiveTradingEngine(config=config, broker=AlpacaBroker(paper=True))
+        eng.create_account("default", {"USD": 10_000.0})
+        eng.daily_tracker.daily_pnl = -9_000.0  # 90% loss — would latch live
+        eng._check_safety_after_fill()
+        assert eng.kill_switch.activated is False
+
+    def test_daily_loss_kill_latch_fires_on_live(self, config: BotConfig) -> None:
+        config.safety.max_daily_loss_pct = 5.0
+        eng = LiveTradingEngine(config=config, broker=AlpacaBroker(paper=False))
+        eng.create_account("default", {"USD": 10_000.0})
+        eng.daily_tracker.daily_pnl = -1_000.0  # 10% loss > 5%
+        eng._check_safety_after_fill()
+        assert eng.kill_switch.activated is True
 
 
 # ── 6. ATR-adaptive stop floor (timeframe-mismatch fix) ──────────────────────

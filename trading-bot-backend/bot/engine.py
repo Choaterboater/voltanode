@@ -327,7 +327,7 @@ class PaperTradingEngine:
 
         Returns True if a matching order was submitted within the cooldown
         window and is either still pending or was rejected — caller should
-        drop the new order silently. 5-minute cooldown so structural
+        drop the new order silently. 1-minute cooldown so structural
         rejections (no holdings, dust, market-closed) don't churn while
         still letting transient errors retry within a reasonable window.
         """
@@ -341,7 +341,9 @@ class PaperTradingEngine:
         if sup_until is not None and sup_until > datetime.now(timezone.utc):
             return True
         from datetime import timedelta as _td
-        cutoff = datetime.now(timezone.utc) - _td(minutes=5)
+        # 1-minute rejected-order cooldown (paper-aggressive): still stops
+        # tick-spam on structural rejects without parking a symbol for 5 min.
+        cutoff = datetime.now(timezone.utc) - _td(minutes=1)
         for o in self._orders.get(order.account_id, {}).values():
             if o.id == order.id:
                 continue
@@ -1254,8 +1256,7 @@ class LiveTradingEngine(PaperTradingEngine):
         # so the daily-loss breaker isn't blind to those losers (audit 2026-06-09).
         self.daily_tracker = DailyPnlTracker(position_provider=self._tracker_position_basis)
         # Pass config.safety so the validator reflects operator-tuned limits
-        # (e.g. max_exposure_pct, max_orders_per_minute) instead of the
-        # hardcoded SafetyConfig defaults (50% / 10/min). Mutating
+        # (e.g. max_exposure_pct, max_orders_per_minute). Mutating
         # config.safety via POST /settings/safety is then immediately
         # visible to get_status / get_remaining via the shared reference.
         self.safety_validator = SafetyValidator(config.safety)
@@ -1291,6 +1292,32 @@ class LiveTradingEngine(PaperTradingEngine):
         # broker / opened before a restart) instead of opening a phantom short
         # with realized_pnl=None (audit 2026-06-09 bug #6).
         self._pending_close_basis: Dict[str, float] = {}
+
+    def _is_paper_broker(self) -> bool:
+        """True when the connected broker is paper (no real money at risk).
+
+        Soft safety rejects and the daily-loss kill latch are skipped on
+        paper so the book can churn; live money keeps full rails.
+
+        Prefer the adapter's own ``_paper`` / ``paper`` flag when present so
+        a live Alpaca instance is not misclassified via config.yaml defaults.
+        """
+        broker = getattr(self, "broker", None)
+        if broker is None:
+            return False
+        if hasattr(broker, "_paper"):
+            return bool(getattr(broker, "_paper"))
+        if hasattr(broker, "paper"):
+            return bool(getattr(broker, "paper"))
+        try:
+            name = str(getattr(broker, "name", "") or "").lower()
+            brokers = getattr(self.config, "brokers", None) or {}
+            bc = brokers.get(name) if isinstance(brokers, dict) else getattr(brokers, name, None)
+            if bc is not None:
+                return bool(getattr(bc, "paper", False))
+        except Exception:
+            pass
+        return False
 
     def _tracker_position_basis(self) -> Dict[str, tuple]:
         """Provider for ``DailyPnlTracker``: ``{symbol: (entry_price, qty)}``
@@ -1520,6 +1547,7 @@ class LiveTradingEngine(PaperTradingEngine):
                     self.daily_tracker.daily_pnl,
                     broker_balances=broker_balances,
                     current_price=price_hint,
+                    paper_bypass=self._is_paper_broker(),
                 )
         except SafetyValidationError as sv_exc:
             order.status = OrderStatus.REJECTED
@@ -1678,10 +1706,17 @@ class LiveTradingEngine(PaperTradingEngine):
         return local_order.status
 
     def _check_safety_after_fill(self) -> None:
-        """Check safety limits after a fill and activate kill switch if needed."""
+        """Check safety limits after a fill and activate kill switch if needed.
+
+        Skipped on paper brokers — daily-loss latch would halt churn after a
+        few percent of fake money; keep the latch for true live only.
+        """
+        if self._is_paper_broker():
+            return
+
         from safety.limits import compute_portfolio_equity
 
-        max_loss = getattr(self.config.safety, "max_daily_loss_pct", 5.0)
+        max_loss = getattr(self.config.safety, "max_daily_loss_pct", 25.0)
         # daily_tracker.daily_pnl is in DOLLARS; max_daily_loss_pct is a PERCENT.
         # Convert the loss to a percent of total equity before comparing —
         # otherwise the kill switch trips at a $5 loss (or never).

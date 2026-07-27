@@ -66,11 +66,11 @@ class SizingMethod(Enum):
 
 class RiskConfig(BaseModel):
     """Risk management configuration."""
-    max_drawdown_pct: float = 0.10
+    max_drawdown_pct: float = 0.35
     max_position_size_pct: float = 0.20
     max_exposure_per_asset_pct: float = 0.30
-    default_stop_loss_pct: float = 0.02
-    default_take_profit_pct: float = 0.06
+    default_stop_loss_pct: float = 0.04
+    default_take_profit_pct: float = 0.03
     position_sizing_method: SizingMethod = SizingMethod.PERCENTAGE
     position_sizing_value: float = 0.02
     fee_rate: float = 0.001
@@ -190,8 +190,8 @@ class EngineConfig(BaseModel):
     tick_interval_seconds: float = 5.0
     max_accounts: int = 10
     auto_start_strategies: bool = True
-    # Shorter window in paper mode so take-profit exits can re-enter sooner.
-    post_close_cooldown_minutes: float = 15.0
+    # Short window so take-profit exits can re-enter sooner (paper-aggressive).
+    post_close_cooldown_minutes: float = 2.0
 
 
 class AppConfig(BaseModel):
@@ -242,21 +242,20 @@ class BrokerConfig(BaseModel):
 class SafetyConfig(BaseModel):
     """Live trading safety limits configuration.
 
-    Defaults match paper-mode operator tuning (see config.yaml):
-    - 5% max daily loss
+    Defaults match paper-aggressive operator tuning (see config.yaml):
+    - 25% max daily loss (soft; paper brokers skip soft rejects + kill latch)
     - 20% max single position
-    - 300% max total exposure (multi-bot crypto books)
+    - 500% max total exposure (multi-bot crypto books)
     - 300 orders/minute rate budget
+    - hard per-position loss cap off (0)
     """
-    max_daily_loss_pct: float = 5.0
+    max_daily_loss_pct: float = 25.0
     max_position_size_pct: float = 20.0
-    max_exposure_pct: float = 300.0
+    max_exposure_pct: float = 500.0
     # Hard per-position loss cap, as a PERCENT of entry (engine converts to a
     # fraction). Force-closes any position down more than this regardless of its
-    # own stop — bounds the tail. Tightened 10 -> 6: realized P&L was a high
-    # win-rate masking a 0.58 profit factor, because a few names ran to -8/-10%
-    # (META -$292, ENLT -$401) while winners were trimmed at +8%. 0 = off.
-    max_position_loss_pct: float = 6.0
+    # own stop — bounds the tail. 0 = off (paper-aggressive default).
+    max_position_loss_pct: float = 0.0
     # When True, a position whose ATR-sized stop is WIDER than the cap above
     # keeps its ATR distance (the cap would otherwise front-run the stop and
     # re-create the churn the ATR floor fixes). Operator-facing switch so the
@@ -264,7 +263,7 @@ class SafetyConfig(BaseModel):
     # 2026-06-09); set False to make max_position_loss_pct absolute.
     atr_widens_position_loss_cap: bool = True
     require_confirmation: bool = True
-    kill_switch_on_disconnect: bool = True
+    kill_switch_on_disconnect: bool = False
     max_orders_per_minute: int = 300
     allowed_symbols: List[str] = Field(default_factory=list)
     blocked_symbols: List[str] = Field(default_factory=list)

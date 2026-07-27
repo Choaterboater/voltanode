@@ -38,9 +38,9 @@ class SimpleTrendStrategy(BaseStrategy):
         "take_profit_pct": 0.08,
         # Hysteresis: price must clear EMA band by this fraction before flip.
         # 0.005 = 0.5% buffer kills "barely above EMA" noise oscillation.
-        "hysteresis_pct": 0.003,
+        "hysteresis_pct": 0.001,
         # Minimum hold time after a fire before allowing the opposite side.
-        "min_hold_minutes": 15,
+        "min_hold_minutes": 5,
         # Regime gate (base.py _apply_regime_gate): don't open longs below the
         # 100-EMA — keeps this permissive trend-follower out of confirmed
         # downtrends (the crypto-bear bleed). SELLs unaffected.

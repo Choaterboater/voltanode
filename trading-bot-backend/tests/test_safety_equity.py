@@ -99,3 +99,32 @@ def test_market_buy_without_price_is_rejected_not_skipped() -> None:
 
     with pytest.raises(SafetyValidationError, match="No market price"):
         validator.validate_order(order, portfolio)
+
+
+def test_paper_bypass_skips_exposure_and_position_caps() -> None:
+    """Paper brokers skip soft rejects so oversized books can still trade."""
+    portfolio = Portfolio("default", {"USDT": 10_000.0})
+    portfolio.open_position("BTC", PositionSide.LONG, 1.0, 50_000.0)
+    pos = portfolio.get_position("BTC")
+    assert pos is not None
+    pos.update_price(50_000.0)
+
+    validator = SafetyValidator(
+        SafetyConfig(max_exposure_pct=50.0, max_position_size_pct=5.0)
+    )
+    # Would fail live: huge notional vs tiny equity/caps.
+    order = Order.limit("ETH", OrderSide.BUY, 10.0, price=3_000.0)
+    with pytest.raises(SafetyValidationError):
+        validator.validate_order(order, portfolio)
+
+    validator.validate_order(order, portfolio, paper_bypass=True)
+
+
+def test_paper_bypass_still_enforces_blocked_symbols() -> None:
+    portfolio = Portfolio("default", {"USDT": 100_000.0})
+    validator = SafetyValidator(
+        SafetyConfig(blocked_symbols=["SCAM"], max_exposure_pct=500.0)
+    )
+    order = Order.limit("SCAM", OrderSide.BUY, 1.0, price=10.0)
+    with pytest.raises(SafetyValidationError, match="blocked"):
+        validator.validate_order(order, portfolio, paper_bypass=True)

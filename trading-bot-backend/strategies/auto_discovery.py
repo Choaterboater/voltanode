@@ -67,14 +67,14 @@ class AutoDiscoveryStrategy(BaseStrategy):
         "stop_loss_pct": 0.05,
         "take_profit_pct": 0.12,
         # Cooldowns / latches.
-        "min_hold_minutes": 60,
+        "min_hold_minutes": 15,
         # Indicator lookbacks (must match scanner defaults unless tuning).
         "rsi_period": 14,
         "breakout_lookback": 20,
         "volume_lookback": 20,
-        # Regime gate (base.py _apply_regime_gate): don't open longs below the
-        # 100-EMA — the dynamic scanner was buying crypto/stocks into the bear.
-        "regime_gate": {"enabled": True, "trend_ema": 100},
+        # Regime gate off by default (paper-aggressive); re-enable to skip
+        # longs below the trend EMA.
+        "regime_gate": {"enabled": False, "trend_ema": 100},
         # Direction filter: "long_only" (default), "short_only", or "both". Most
         # paper/live brokers don't support shorting crypto so long_only is safe.
         "direction_mode": "long_only",

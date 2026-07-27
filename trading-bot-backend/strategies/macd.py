@@ -25,7 +25,7 @@ class MACDStrategy(BaseStrategy):
         # broader downtrend (live: 44% win rate, net negative). Veto BUYs
         # below the trend EMA by default; explicit {"enabled": false}
         # in a registered config still wins via the shallow config merge.
-        "regime_gate": {"enabled": True, "trend_ema": 100},
+        "regime_gate": {"enabled": False, "trend_ema": 100},
     }
 
     @classmethod

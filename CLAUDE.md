@@ -55,30 +55,33 @@ Base: `http://localhost:8000`
 - `GET /advisor/squeeze` — 7-factor squeeze screener (SI%, float, DTC, off-ex short, etc.).
 - `GET /watchlist/`, `POST /watchlist/`, `DELETE /watchlist/{symbol}` — persistent watchlist.
 
-## Safety limits — operator defaults
+## Safety limits — paper-aggressive defaults
 
-The backend ships with conservative defaults that **are not what we run in paper mode**. On a fresh start the engine boots with:
+Defaults favor **more fills per day** on paper (Alpaca paper / local sim). Soft SafetyValidator rejects (exposure, position size, rate, daily-loss) and the daily-loss kill latch are **skipped when the broker is paper**. True live money still enforces the full rails.
 
-| limit | default | paper-mode value |
-|---|---|---|
-| `max_exposure_pct` | 50.0 | 150–300 |
-| `max_position_size_pct` | 20.0 | 20 (keep) |
-| `max_orders_per_minute` | 10 | 60–300 |
-| `max_daily_loss_pct` | 5.0 | 5 (keep) |
+| limit | default |
+|---|---|
+| `max_exposure_pct` | 500.0 |
+| `max_position_size_pct` | 20.0 |
+| `max_orders_per_minute` | 300 |
+| `max_daily_loss_pct` | 25.0 (live soft + kill latch; unused on paper) |
+| `max_position_loss_pct` | 0 (off) |
+| `post_close_cooldown_minutes` | 2 |
+| `risk.max_drawdown_pct` | 0.35 |
 
-Symptom of the defaults biting: bots stop trading because every BUY would push total exposure past 50%. Diagnose with `GET /settings/safety-status` + compute current `sum(|market_value|)/total_equity` from `/portfolio/default`.
+Diagnose idle bots with `GET /settings/safety-status` + `sum(|market_value|)/total_equity` from `/portfolio/default`. Existing bots keep persisted config until redeployed — new DEFAULT_CONFIG only applies to new/merged bots.
 
 ## Engine gating logic — why bots may be idle
 
 A BUY signal can be silently rejected at multiple layers:
 
-1. **`max_exposure_pct`** — total long+short MV / equity > cap → reject (most common).
-2. **`max_position_size_pct`** — this single symbol > cap → reject.
-3. **`max_orders_per_minute`** — rate limit (`orders_remaining_this_minute` in `/settings/safety-status`).
-4. **Position-aware BUY gate** (in `strategies/base.py:BaseStrategy.on_tick`) — if portfolio already holds the symbol, BUY signal downgrades to HOLD. Stops the "every restart adds another BUY" bug.
-5. **Same-side dedup** — multiple bots firing BUY on the same symbol same tick → keep highest-confidence, drop rest.
-6. **Hysteresis / per-bar latches / min_hold_minutes** — strategy-level cooldowns.
-7. **Kill switch** — if latched, engine.on_tick early-returns.
+1. **`max_exposure_pct`** — total long+short MV / equity > cap → reject (**live only**; paper bypasses).
+2. **`max_position_size_pct`** — this single symbol > cap → reject (**live only**).
+3. **`max_orders_per_minute`** — rate limit (**live only**).
+4. **Position-aware BUY gate** (in `strategies/base.py:BaseStrategy.on_tick`) — if portfolio already holds the symbol, BUY signal downgrades to HOLD. Stops the "every restart adds another BUY" bug. **Always on.**
+5. **Same-side dedup** — multiple bots firing BUY on the same symbol same tick → keep highest-confidence, drop rest. **Always on.**
+6. **Hysteresis / per-bar latches / min_hold_minutes** — strategy-level cooldowns (paper-aggressive defaults are shorter).
+7. **Kill switch** — if latched, engine.on_tick early-returns. Daily-loss auto-latch is **live only**; manual activate still works on paper.
 
 SELL signals bypass exposure checks (closing a position can't add exposure).
 
